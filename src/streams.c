@@ -24,6 +24,8 @@
 #include "anim.h"
 #include "layout.h"
 #include "ajustes.h"   /* ajustes_qualidade: o teto de "Qualidade maxima" */
+#include "linguas.h"   /* ling_audio: o idioma de audio da pessoa */
+#include "idiomacod.h" /* idioma_iso: o da interface, quando nao ha preferencia */
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -88,8 +90,9 @@ static void medirCabecalho(void);
 #define FOLHA_LINHA_H  112.0f  // linha sem marca e sem arquivo
 #define FOLHA_MARCA_H   30.0f  // "SUA ESCOLHA ANTERIOR" / "REPRODUZINDO AGORA"
 #define FOLHA_FIT_H     32.0f  // StreamFit: evidencia da conexao, so na linha em foco
-#define FOLHA_IDIOMA_H  30.0f  // bandeiras de audio e legenda, quando o addon diz
-#define FOLHA_BANDEIRA_H 18.0f
+#define FOLHA_IDIOMA_H  32.0f  // bandeiras de audio e legenda, quando o addon diz
+// 22 e nao 18: a 3 m de uma TV de 55" a de 18 lia como mancha de cor.
+#define FOLHA_BANDEIRA_H 22.0f
 #define FOLHA_LINHA_GAP  4.0f
 #define FOLHA_SEC_H     64.0f  // cabecalho "4K  ULTRA HD ... 3 fontes"
 #define FOLHA_SEC_GAP   26.0f
@@ -887,6 +890,9 @@ static long penalAudioTv(const Stream *s) {
 }
 #endif
 
+static int idiomaMeu(int explicito, char *dst);
+static int audioNoIdioma(const Stream *s, const char *fam);
+
 // AS MULTAS de pontos() (teto, cache, origem, P2P, StreamFit, sem resolucao),
 // em separado: o "MP4 primeiro" da LG (mp4PrimeiroNaFaixa) so reordena fontes
 // com as MESMAS multas — e desempate, nunca passa por cima delas.
@@ -902,6 +908,14 @@ static long multasDe(const Stream *s) {
   // cache: a altura desconhecida nao e prova de nada (#284). Maior que a
   // qualidade (< 50000), menor que cache/origem/teto.
   if (s->altura <= 0) m += 60000;
+  // IDIOMA DE AUDIO: com preferencia escolhida (Ajustes ou conta, linguas.h),
+  // a fonte cujo addon declara SO outros idiomas vai para depois das que tem o
+  // da pessoa ou nao dizem. Pesa mais que um degrau de resolucao (10000): o
+  // 1080p em espanhol passa na frente do 4K so em ingles. Longe das multas de
+  // cache/origem (>= 140000). Fonte que nao declara idioma nao perde nada:
+  // sem dado, nao se chuta.
+  { char fam[8];
+    if (idiomaMeu(1, fam) && audioNoIdioma(s, fam) == 0) m += 25000; }
   if (!cabeNoTeto(s)) m += 1000000;
   // Fora de cache conhecido tambem sai do automatico (foraDoAuto, #402).
   // O peso continua util para quem inspeciona a pontuacao de uma fonte.
@@ -2349,12 +2363,14 @@ static char provedores[13][96];
 static int nProvedores;
 
 static int temAudioPt(const Stream *s);
+static int temAudioMeu(const Stream *s);
+static int filtroEmPortugues(void);
 // Os chips (MP4, cache, dublado) valem para a lista E para a contagem de cada
 // aba; o addon so para a lista.
 static int passaChips(int i) {
   if (soMp4 && !lista[i].mp4) return 0;
   if (soCache && lista[i].foraCache) return 0;
-  if (soDub && !temAudioPt(&lista[i])) return 0;
+  if (soDub && !temAudioMeu(&lista[i])) return 0;
   return 1;
 }
 static int passaFiltro(int i) {
@@ -2462,13 +2478,24 @@ static int grupoRes(const Stream *s) {
 // para esta TV" fica acima de todos os cabecalhos de grupo e nao dizia a
 // resolucao, e o dono pediu o rotulo dentro da linha em foco. Sai como texto
 // universal ("4K", "1080p", "DV", "HDR10", "SDR"), sem palavra para traduzir.
+static int ehDv(const Stream *s) {
+  return s->dolbyVision || (s->badges & (badges_bit("v-dv") | badges_bit("a-atmos-dv") |
+                                          badges_bit("a-truehd-dv") | badges_bit("a-dd-dv"))) != 0;
+}
 static void rotuloQualidade(const Stream *s, char *res, size_t nr, char *faixa, size_t nf, int *hdr) {
   static const char *const RES[FOLHA_RES] = { "4K", "1080p", "720p", "SD" };
   uint64_t b = s->badges;
   if (s->altura <= 0 && !(b & (badges_bit("r-4k") | badges_bit("r-1080") | badges_bit("r-720")))) snprintf(res, nr, "?");
   else snprintf(res, nr, "%s", RES[grupoRes(s) / 2]);
   *hdr = ehHdr(s);
-  if (s->dolbyVision || (b & (badges_bit("v-dv") | badges_bit("a-atmos-dv") | badges_bit("a-truehd-dv") | badges_bit("a-dd-dv")))) snprintf(faixa, nf, "DV");
+#ifdef NV_TPK
+  // SAMSUNG NAO TEM DOLBY VISION (nunca anunciar DV): o rotulo diz a camada que
+  // a TV mostra. Perfil 8 (ou base HDR10 marcada) toca como HDR10; perfil 5 nao
+  // tem base compativel e a linha ganha o aviso de cor (dvSemBase).
+  if (ehDv(s)) snprintf(faixa, nf, "%s", (b & badges_bit("v-hdr10plus")) ? "HDR10+" : perfil8(s) ? "HDR10" : "HDR");
+#else
+  if (ehDv(s)) snprintf(faixa, nf, "DV");
+#endif
   else if (b & badges_bit("v-hdr10plus")) snprintf(faixa, nf, "HDR10+");
   else if (b & badges_bit("v-hdr10")) snprintf(faixa, nf, "HDR10");
   else if (b & badges_bit("v-hlg")) snprintf(faixa, nf, "HLG");
@@ -2649,6 +2676,32 @@ static const char *bandeiraDe(const char *idioma) {
   return NULL;
 }
 static int temIdiomas(const Stream *s) { return s->nIdiomasAudio || s->nIdiomasLegenda; }
+// A textura da bandeira do pais e a largura dela na altura h, pela proporcao
+// do arquivo (1.5 enquanto ainda decodifica). 0 = ainda nao carregou.
+static GLuint bandeiraTex(const char *pais, float h, float *w) {
+  char cam[640];
+  float asp;
+  GLuint t;
+  snprintf(cam, sizeof cam, "%s/%s.png", dirBandeiras, pais);
+  t = tex_obter_larg(cam, 2.0f * h);
+  asp = tex_aspecto(cam);
+  *w = h * (asp > .3f ? asp : 1.5f);
+  return t;
+}
+static void bandeiraRect(GLuint t, float x, float y, float w, float h, float a) {
+  gfx_tex_aspect_atual = 0.0f;
+  gfx_rect((GfxRect){x, floorf(y), w, h}, t, GFX_TEXTO, 0, 0, 0, 0.0f, 1, 1, 1, a);
+}
+// A mesma bandeira fora da folha (o seletor de faixas do player, faixas.c).
+int stream_bandeira_desenhar(const char *idioma, float cx, float cy, float h, float a) {
+  const char *cod = stream_idioma_codigo(idioma), *pais = cod ? bandeiraDe(cod) : NULL;
+  float w;
+  GLuint t;
+  if (!pais || !dirBandeiras[0]) return 0;
+  if (!(t = bandeiraTex(pais, h, &w))) return 0;
+  bandeiraRect(t, cx - w * .5f, cy - h * .5f, w, h, a);
+  return 1;
+}
 // Um grupo: o icone e uma bandeira por idioma, sem repetir pais. "multi" e o
 // globo; idioma sem bandeira sai em sigla. Todas na mesma altura, a largura
 // pela proporcao do pais. Devolve onde o grupo terminou.
@@ -2656,34 +2709,26 @@ static float grupoBandeiras(const char *icone, const char (*lista)[6], int n,
                             float x, float y, float maxX, int tinta, float a) {
   const char *feitos[STREAM_IDIOMAS];
   int nf = 0;
-  float c = tinta / 255.0f, meio = y + FOLHA_SELO_H * .5f;
+  float c = tinta / 255.0f, meio = y + (FOLHA_IDIOMA_H - 6.0f) * .5f;
   if (!n || x + 60 > maxX) return x;
-  gfx_icone((GfxRect){x, meio - 10, 20, 20}, icone, c, c, c, a);
-  x += 20 + 10;
+  gfx_icone((GfxRect){x, meio - 11, 22, 22}, icone, c, c, c, a);
+  x += 22 + 10;
   for (int k = 0; k < n; k++) {
     const char *pais = bandeiraDe(lista[k]);
     float w;
     if (!strcmp(lista[k], "multi")) {
-      if (x + 20 > maxX) break;
-      gfx_icone((GfxRect){x, meio - 10, 20, 20}, "aj_globe", c, c, c, a);
-      w = 20;
+      if (x + 22 > maxX) break;
+      gfx_icone((GfxRect){x, meio - 11, 22, 22}, "aj_globe", c, c, c, a);
+      w = 22;
     } else if (pais && dirBandeiras[0]) {
-      char cam[640];
       int rep = 0;
       for (int j = 0; j < nf; j++) rep |= !strcmp(feitos[j], pais);
       if (rep) continue;
       feitos[nf++] = pais;
-      snprintf(cam, sizeof cam, "%s/%s.png", dirBandeiras, pais);
-      GLuint t = tex_obter_larg(cam, 40);
-      float asp = tex_aspecto(cam);
-      w = FOLHA_BANDEIRA_H * (asp > .3f ? asp : 1.5f);
+      GLuint t = bandeiraTex(pais, FOLHA_BANDEIRA_H, &w);
       if (x + w > maxX) break;
       // Ainda decodificando: o lugar fica reservado, sem a sigla piscar antes.
-      if (t) {
-        gfx_tex_aspect_atual = 0.0f;
-        gfx_rect((GfxRect){x, floorf(meio - FOLHA_BANDEIRA_H * .5f), w, FOLHA_BANDEIRA_H}, t,
-                 GFX_TEXTO, 0, 0, 0, 0.0f, 1, 1, 1, a);
-      }
+      if (t) bandeiraRect(t, x, meio - FOLHA_BANDEIRA_H * .5f, w, FOLHA_BANDEIRA_H, a);
     } else {
       char up[8];
       size_t i;
@@ -2697,6 +2742,64 @@ static float grupoBandeiras(const char *icone, const char (*lista)[6], int n,
     x += w + 8;
   }
   return x;
+}
+
+// O IDIOMA DE AUDIO DA PESSOA, como familia ("es", "pt", "en"): a preferencia
+// de linguas.h (Ajustes desta TV, senao a conta; "Original" vira o idioma do
+// titulo aberto). `explicito` = so essa preferencia; sem ela cai no idioma da
+// interface. O filtro "Dublado" sempre tem um idioma; a escolha automatica so
+// muda quando a pessoa disse qual quer ouvir.
+//
+// BARATO DE PROPOSITO: multasDe chama isto por fonte, varias vezes por quadro.
+// Codigo de duas letras (o que a conta grava, e o idioma_iso) nao passa pela
+// tabela de stream_idioma_codigo.
+static const char *familiaFonte(const char *cod) {
+  return !strcmp(cod, "lat") ? "es" : !strcmp(cod, "ptbr") ? "pt" : cod;
+}
+static int familiaDe(const char *etiqueta, char *dst) {
+  const char *c;
+  if (!etiqueta || !etiqueta[0]) return 0;
+  if (strlen(etiqueta) == 2 && isalpha((unsigned char)etiqueta[0]) && isalpha((unsigned char)etiqueta[1])) {
+    dst[0] = (char)tolower((unsigned char)etiqueta[0]);
+    dst[1] = (char)tolower((unsigned char)etiqueta[1]);
+    dst[2] = 0;
+    return 1;
+  }
+  if (!(c = stream_idioma_codigo(etiqueta)) || !strcmp(c, "multi")) return 0;
+  snprintf(dst, 6, "%s", familiaFonte(c));
+  return 1;
+}
+static int idiomaMeu(int explicito, char *dst) {
+  const char *a = ling_audio();
+  if (a && strcasecmp(a, "none") && strcasecmp(a, "device") && strcasecmp(a, "default") &&
+      strcasecmp(a, "original") && familiaDe(a, dst)) return 1;
+  return !explicito && familiaDe(idioma_iso(ajustes_idioma()), dst);
+}
+// A fonte tem audio no idioma `fam`? 1 sim, 0 nao (o addon declara so outros),
+// -1 nao se sabe (nao declara, ou so "multi").
+static int audioNoIdioma(const Stream *s, const char *fam) {
+  int multi = 0;
+  if (!s->nIdiomasAudio) return -1;
+  for (int k = 0; k < s->nIdiomasAudio; k++) {
+    if (!strcmp(s->idiomasAudio[k], "multi")) { multi = 1; continue; }
+    if (!strcmp(familiaFonte(s->idiomasAudio[k]), fam)) return 1;
+  }
+  return multi ? -1 : 0;
+}
+// O FILTRO "DUBLADO": audio no idioma da pessoa. Era "audio em portugues"
+// cravado; para quem fala espanhol nao filtrava nada de util. Fonte que nao
+// declara idioma fica de fora, salvo em portugues, onde vale a deteccao antiga
+// ("dublado", "dual" no texto).
+static int temAudioMeu(const Stream *s) {
+  char fam[8];
+  int r;
+  if (!idiomaMeu(0, fam)) return temAudioPt(s);
+  if ((r = audioNoIdioma(s, fam)) >= 0) return r;
+  return !strcmp(fam, "pt") && temAudioPt(s);
+}
+static int filtroEmPortugues(void) {
+  char fam[8];
+  return !idiomaMeu(0, fam) || !strcmp(fam, "pt");
 }
 
 // O TITULO DA LINHA, modo "Do Nuvio": o NOME DO CONTEUDO (dono, 02/10: "deixar
@@ -2851,6 +2954,12 @@ static uint64_t logosDa(const Stream *s, uint64_t tira) {
     m |= badges_bit("v-dv");
     for (size_t k = 0; k < sizeof COMB / sizeof COMB[0]; k++)
       if (m & badges_bit(COMB[k][0])) m = (m & ~badges_bit(COMB[k][0])) | badges_bit(COMB[k][1]);
+#ifdef NV_TPK
+    // Samsung: sem o logo Dolby Vision (a TV nao tem); o perfil 8 mostra a base.
+    m &= ~badges_bit("v-dv");
+    if (perfil8(s) && !(m & (badges_bit("v-hdr10plus") | badges_bit("v-hdr10"))))
+      m |= badges_bit("v-hdr10");
+#endif
   }
   return m;
 }
@@ -2858,12 +2967,26 @@ static uint64_t logosDa(const Stream *s, uint64_t tira) {
 // A linha de marca e so para o que esta tocando e para a escolha anterior.
 // A fonte que o automatico tocaria ganha o selo "Melhor para esta TV" ao
 // lado do titulo (melhorDaFolha), e nao mais uma linha "Escolha automatica".
+// DOLBY VISION SEM BASE HDR10 numa Samsung: 2 = perfil 5 (cor errada com
+// certeza: a base e IPT-PQ), 1 = perfil nao declarado (pode ser 5), 0 = nada a
+// avisar. A escolha automatica ja as poe abaixo do HDR10 (nivelHdr); o aviso
+// e para quem escolhe a mao.
+static int dvSemBase(const Stream *s) {
+#ifdef NV_TPK
+  if (!ehDv(s) || perfil8(s)) return 0;
+  return perfil5(s) ? 2 : 1;
+#else
+  (void)s;
+  return 0;
+#endif
+}
 static int melhorFolha = -1;   // stream_automatico() do quadro, posto antes de montar()
 static int temMarca(int i, int automatica) {
   (void)automatica;
   // StreamFit (F03): a measured-heavy source carries its reason on the mark line.
   return i >= 0 && (i == atual || i == preferida || (i == melhorFolha && nFiltrados() > 1) ||
-                    fitPesada(i) || lista[i].foraCache || (!canalFolha && stream_vod_falhou_ha(i) >= 0));
+                    fitPesada(i) || lista[i].foraCache || dvSemBase(&lista[i]) ||
+                    (!canalFolha && stream_vod_falhou_ha(i) >= 0));
 }
 // Altura de uma linha: base, marca, e o nome do arquivo que abre por mola na
 // linha em foco. Usa nOrdem como o indice que a linha vai receber.
@@ -3745,9 +3868,11 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         ? "Mostrando só fontes que o debrid já tem: tocam na hora. OK tira o filtro."
         : "Filtra para fontes que o debrid já tem (tocam na hora, sem baixar antes). OK liga o filtro.";
     else if(botaoDe(foco)==BT_DUB)
-      ajuda=soDub
-        ? "Mostrando só fontes com áudio em português. OK tira o filtro."
-        : "Filtra para fontes dubladas ou com áudio em português. OK liga o filtro.";
+      ajuda=filtroEmPortugues()
+        ? (soDub ? "Mostrando só fontes com áudio em português. OK tira o filtro."
+                 : "Filtra para fontes dubladas ou com áudio em português. OK liga o filtro.")
+        : (soDub ? "Mostrando só fontes com áudio no seu idioma. OK tira o filtro."
+                 : "Filtra para fontes com áudio no seu idioma. OK liga o filtro.");
     else if(botaoDe(foco)==BT_SO_MP4)
       ajuda=soMp4
         ? "Mostrando só containers MP4 (útil para achar Dolby Vision em MP4). OK tira o filtro."
@@ -3911,7 +4036,10 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
           snprintf(pv,sizeof pv,"%d seeds · %s",s->semeadores,s->provedor);
         else snprintf(pv,sizeof pv,"%s",s->provedor);
         lp=txt_linha_corta(TXT_PG_FIM,pv,sel?150:110,sel?150:110,sel?148:108,255,340); }
-      colW=lp.w;
+      // +30: o icone Info da linha em foco fica a esquerda do addon, na altura
+      // da fileira de selos. Reservado em TODA linha, e nao so na focada, para a
+      // fileira nao perder um selo quando o foco chega nela.
+      colW=lp.w+30;
       if(gb[0] && lg.w+6+lu.w>colW) colW=lg.w+6+lu.w;
       cy=y+20+(temMarca(i,automatica)?FOLHA_MARCA_H:0);
       if(gb[0]){
@@ -3970,6 +4098,8 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         mx += caixaAlta(dica,135,130,125,mx,cy,anim)+18;
       }
       if(s->foraCache) mx += caixaAlta("Fora do cache",185,179,171,mx,cy,anim)+18;
+      if(dvSemBase(s)) mx += caixaAlta(dvSemBase(s)==2 ? "Cores erradas nesta TV" : "Pode ter cores erradas",
+                                       204,178,132,mx,cy,anim)+18;
       if(fitPesada(i)){
         gfx_cor((GfxRect){mx,cy+5,7,7},.5f,.80f,.70f,.52f,anim);
         caixaAlta("Acima da conexão",204,178,132,mx+16,cy,anim);

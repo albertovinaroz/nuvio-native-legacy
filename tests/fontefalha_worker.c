@@ -98,6 +98,11 @@ int ajustes_tamanho_max_gb(void) { return 0; }
 int ajustes_tamanho_min_gb(void) { return 0; }
 int ajustes_selos_coloridos(void) { return 0; }
 const char *ajustes_qualidade(void) { return "Automatica"; }
+// Idioma de audio da pessoa (streams.c, idiomaMeu): sem preferencia, como a
+// TV sem conta. A escolha automatica nao muda por idioma neste teste.
+int ajustes_idioma(void) { return 0; }
+const char *ling_audio(void) { return ""; }
+const char *stream_idioma_codigo(const char *etiqueta) { (void)etiqueta; return NULL; }
 unsigned fonteregra_versao(void) { return 1; }
 int fonteregra_grupo(const FonteRegraCfg *c, const char *nome, int plugin, const char *texto) {
   (void)c; (void)plugin; (void)texto;

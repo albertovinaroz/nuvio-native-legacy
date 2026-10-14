@@ -116,6 +116,14 @@ typedef struct {
   unsigned       selosPacoteVer;
 } Stream;
 
+// Etiqueta de idioma de qualquer origem ("spa", "pt-BR", "es-419", "Spanish",
+// "lat") -> codigo das fontes ("es", "ptbr", "lat"...), ou NULL (stream_parse.c).
+const char *stream_idioma_codigo(const char *etiqueta);
+// BANDEIRA do idioma (codigo da fonte ou etiqueta de faixa, como acima),
+// centrada em (cx, cy) com altura h. 0 = sem bandeira (idioma sem pais ou
+// imagem ainda carregando): quem chama desenha a sigla no lugar.
+int stream_bandeira_desenhar(const char *idioma, float cx, float cy, float h, float a);
+
 // Parser sem rede: o chamador libera *saida. Retorna -1 se a alocacao falhar.
 int stream_extrair(const char *json, const char *provedor, Stream **saida);
 void stream_definir_atual(int indice);

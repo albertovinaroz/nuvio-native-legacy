@@ -16,6 +16,7 @@
 #include "ajustes.h"
 #include "catalogo.h"
 #include "linguas.h"
+#include "streams.h"   /* stream_bandeira_desenhar */
 #include "plrui.h"
 #include "plrilha.h"
 #include "legendasui.h"
@@ -1387,7 +1388,8 @@ static void partirRotulo(const char *r, char *nome, size_t tn, char *sub, size_t
   plrui_limpar_sep(nome); plrui_limpar_sep(sub);
 }
 
-// O "rosto" do idioma: o codigo em caixa alta num quadrado de 52.
+// O "rosto" do idioma num quadrado de 52: a BANDEIRA do idioma (a mesma da
+// folha de fontes, streams.c) e, sem bandeira, o codigo em caixa alta.
 static void rostoIdioma(GfxRect r, const char *idioma, const char *icone, int sel, float a) {
   if (ajustes_vidro()) gfx_cor(r, 16.0f / r.h, 1, 1, 1, (sel ? 0.12f : 0.07f) * a);
   else if (sel) gfx_cor(r, 16.0f / r.h, 0.22f, 0.227f, 0.259f, a);
@@ -1395,6 +1397,8 @@ static void rostoIdioma(GfxRect r, const char *idioma, const char *icone, int se
   if (icone) {
     gfx_icone((GfxRect){ r.x + 15.0f, r.y + 15.0f, 22.0f, 22.0f }, icone, 1, 1, 1, (sel ? 1.0f : 0.7f) * a);
   } else if (idioma && idioma[0]) {
+    if (stream_bandeira_desenhar(idioma, r.x + r.w * 0.5f, r.y + r.h * 0.5f, 22.0f, (sel ? 1.0f : 0.8f) * a))
+      return;
     const char *c = ling_selo(idioma);
     int k = sel ? 255 : 178;
     TxtLinha l = txt_linha(strlen(c) > 3 ? TXT_ILHA_APOIO : TXT_G16B, c, k, k, k, 255);

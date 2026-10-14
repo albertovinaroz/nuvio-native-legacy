@@ -607,17 +607,37 @@ static void idiomasDasLegendas(Stream *s, const char *obj, const char *fim) {
   while (e < fim && isspace((unsigned char)*e)) e++;
   while (e && e < fim && *e == '{') {
     const char *ef = js_fim(e);
-    char lang[32] = "", low[32];
-    size_t k;
+    char lang[32] = "";
     if (!ef || ef > fim) break;
     js_texto_raiz_em(e, ef, "lang", lang, sizeof lang);
-    for (k = 0; lang[k] && k + 1 < sizeof low; k++) low[k] = (char)tolower((unsigned char)lang[k]);
-    low[k] = 0;
-    const char *cod = idiomaTabela(IDIOMA_CODIGOS, IDIOMA_N(IDIOMA_CODIGOS), low);
-    if (!cod) cod = idiomaTabela(IDIOMA_NOMES, IDIOMA_N(IDIOMA_NOMES), low);
-    if (cod) idiomaPor(s->idiomasLegenda, &s->nIdiomasLegenda, cod);
+    const char *cod = stream_idioma_codigo(lang);
+    if (cod && strcmp(cod, "multi")) idiomaPor(s->idiomasLegenda, &s->nIdiomasLegenda, cod);
     e = js_prox(ef);
   }
+}
+
+// Etiqueta de idioma de qualquer origem ("spa", "pt-BR", "es-419", "Spanish",
+// ou o proprio codigo da fonte "lat"/"ptbr") -> codigo da fonte, ou NULL.
+// "en-US"/"fr-CA" sem entrada propria caem na familia antes do tracinho.
+const char *stream_idioma_codigo(const char *etiqueta) {
+  char low[32];
+  size_t k;
+  const char *cod;
+  if (!etiqueta || !etiqueta[0]) return NULL;
+  for (k = 0; etiqueta[k] && k + 1 < sizeof low; k++) {
+    char c = (char)tolower((unsigned char)etiqueta[k]);
+    low[k] = c == '_' ? '-' : c;
+  }
+  low[k] = 0;
+  if (!strcmp(low, "lat") || !strcmp(low, "ptbr") || !strcmp(low, "multi")) {
+    static const char *const PROPRIOS[] = { "lat", "ptbr", "multi" };
+    for (k = 0; k < 3; k++) if (!strcmp(low, PROPRIOS[k])) return PROPRIOS[k];
+  }
+  if ((cod = idiomaTabela(IDIOMA_CODIGOS, IDIOMA_N(IDIOMA_CODIGOS), low))) return cod;
+  if ((cod = idiomaTabela(IDIOMA_NOMES, IDIOMA_N(IDIOMA_NOMES), low))) return cod;
+  { char *h = strchr(low, '-');
+    if (h && h > low) { *h = 0; return idiomaTabela(IDIOMA_CODIGOS, IDIOMA_N(IDIOMA_CODIGOS), low); } }
+  return NULL;
 }
 
 static void idiomasLer(Stream *s, const char *titulo, const char *obj, const char *fim) {
