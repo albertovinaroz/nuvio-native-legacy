@@ -1111,6 +1111,19 @@ int main(int argc, char **argv) {
 #ifdef NV_LINUX_DESKTOP
   windowTitle = "Nuvio - Linux UI preview";
 #endif
+#ifdef __APPLE__
+  // PREVIA NO MAC: 1920x1080 PONTOS nao cabe numa tela de notebook retina (a
+  // de 16" "parece" 1728x1117) e a janela saia pelas laterais. Ajusta a area
+  // util da tela em 16:9; o desenho acompanha pelo drawable (dw/NV_TELA_W), o
+  // mesmo caminho do retina, e o ponteiro pela razao janela/drawable.
+  { SDL_Rect util;
+    if (SDL_GetDisplayUsableBounds(0, &util) == 0 && (pedeW > util.w || pedeH > util.h - 28)) {
+      int w = util.w, h = util.h - 28;   // 28: a barra de titulo da janela
+      if (w * 9 > h * 16) w = h * 16 / 9; else h = w * 9 / 16;
+      printf("[janela] previa no Mac: %dx%d nao cabe na tela, abrindo %dx%d\n", pedeW, pedeH, w, h);
+      pedeW = w; pedeH = h;
+    } }
+#endif
   NV_ETAPA("SDL_CreateWindow");
   arranque_etapa("SDL_CreateWindow");
   win = SDL_CreateWindow(windowTitle, SDL_WINDOWPOS_CENTERED,
