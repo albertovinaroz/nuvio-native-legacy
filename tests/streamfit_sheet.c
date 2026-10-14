@@ -163,8 +163,8 @@ int main(void) {
   assert(fitTexto(2,txt,sizeof txt)==SF_DESCONHECIDA && !strcmp(txt,"Conexão: servidor ainda não medido"));
   // Heavy rows keep their place inside the group (moved after the adequate/unknown).
   { int seen0=linhaDe(0),seen1=linhaDe(1),seen2=linhaDe(2); assert(seen0>=0 && seen2>=0 && seen1>seen0 && seen1>seen2); }
-  // The focused row opens the connection line even when there is no file name.
-  { int r=linhaDe(2); lista[2].arquivo[0]=0; assert(!arquivoDa(&lista[2])[0]);
+  // The focused row opens the connection line (the file name is no longer drawn).
+  { int r=linhaDe(2); lista[2].arquivo[0]=0;
     foco=r; grupo=1; abreFoco=1; nOrdem=r; float h=alturaLinha(2,-1);
     assert(h>=FOLHA_LINHA_H+FOLHA_FIT_H-.01f); nOrdem=r+1; float o=alturaLinha(2,-1);
     assert(o<FOLHA_LINHA_H+FOLHA_MARCA_H+.01f); montar(automaticaDaFolha()); }

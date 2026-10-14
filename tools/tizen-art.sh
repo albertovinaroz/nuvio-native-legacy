@@ -24,7 +24,7 @@
 #                                            mdblist) e ajustes. Nunca.
 #
 # O que sobra e o que o app precisa para nao nascer sem cara:
-#   icones/ badges/ selos/ marcas/ prov/  ~1,0 MB -> cromo da interface (marcas/ inclui os logos do 2.0: logo-novo-*.png, logo-classico.png). Sem icones/ a
+#   icones/ badges/ bandeiras/ selos/ marcas/ prov/  ~1,1 MB -> cromo da interface (marcas/ inclui os logos do 2.0: logo-novo-*.png, logo-classico.png). Sem icones/ a
 #                                             interface fica sem icone nenhum.
 #   *.jpg da raiz                  8,1 MB  -> os backdrops da home. Sem eles o
 #                                             log diz "home: nenhum backdrop".
@@ -42,7 +42,7 @@ DESTINO="${NUVIO_ARTE_ESTAGIO:-build/art-pacote}"
 rm -rf "$DESTINO"
 mkdir -p "$DESTINO"
 
-for d in icones icones-app badges selos marcas prov editorial logo poster ep elenco; do
+for d in icones icones-app badges bandeiras selos marcas prov editorial logo poster ep elenco; do
   [ -d "$ORIGEM/$d" ] && cp -R "$ORIGEM/$d" "$DESTINO/"
 done
 # Public trust roots only; never copy arbitrary PEM or token files.

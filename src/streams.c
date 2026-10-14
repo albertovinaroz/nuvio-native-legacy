@@ -87,8 +87,9 @@ static float folhaOY, folhaBase;
 static void medirCabecalho(void);
 #define FOLHA_LINHA_H  112.0f  // linha sem marca e sem arquivo
 #define FOLHA_MARCA_H   30.0f  // "SUA ESCOLHA ANTERIOR" / "REPRODUZINDO AGORA"
-#define FOLHA_ARQ_H     34.0f  // nome do arquivo, so na linha em foco
 #define FOLHA_FIT_H     32.0f  // StreamFit: evidencia da conexao, so na linha em foco
+#define FOLHA_IDIOMA_H  30.0f  // bandeiras de audio e legenda, quando o addon diz
+#define FOLHA_BANDEIRA_H 18.0f
 #define FOLHA_LINHA_GAP  4.0f
 #define FOLHA_SEC_H     64.0f  // cabecalho "4K  ULTRA HD ... 3 fontes"
 #define FOLHA_SEC_GAP   26.0f
@@ -2620,6 +2621,84 @@ static int temAudioPt(const Stream *s) {
   return id && strcmp(id, "Legendado");
 }
 
+// AS BANDEIRAS DOS IDIOMAS (Stream.idiomas*, lidos no parser): linha propria
+// abaixo dos selos, "[alto-falante] 🇪🇸 🇬🇧   [legenda] 🇪🇸 🇬🇧", como o app do
+// iOS. Na fileira dos selos o idioma em texto sumia calado quando os logos
+// enchiam a linha. A TV nao tem emoji colorido: sao as imagens de
+// art/bandeiras (tools/bandeiras.sh).
+static char dirBandeiras[600];
+void stream_dir_arte(const char *dir) {
+  snprintf(dirBandeiras, sizeof dirBandeiras, "%s/bandeiras", dir && dir[0] ? dir : ".");
+}
+// Idioma -> pais da bandeira. O ingles e o Reino Unido, como o 🇬🇧 que os
+// formatadores usam; o latino e o Mexico. Hindi, tamil e telugo dividem a da
+// India. Pais novo aqui entra tambem em tools/bandeiras.sh.
+static const struct { const char *idioma, *pais; } BANDEIRA_DE[] = {
+  { "en", "gb" }, { "es", "es" }, { "lat", "mx" }, { "pt", "pt" }, { "ptbr", "br" },
+  { "fr", "fr" }, { "de", "de" }, { "it", "it" }, { "ja", "jp" }, { "ko", "kr" },
+  { "zh", "cn" }, { "ru", "ru" }, { "uk", "ua" }, { "pl", "pl" }, { "tr", "tr" },
+  { "nl", "nl" }, { "sv", "se" }, { "no", "no" }, { "da", "dk" }, { "fi", "fi" },
+  { "el", "gr" }, { "cs", "cz" }, { "hu", "hu" }, { "ro", "ro" }, { "he", "il" },
+  { "th", "th" }, { "vi", "vn" }, { "id", "id" }, { "hi", "in" }, { "ta", "in" },
+  { "te", "in" }, { "ar", "sa" }, { "bg", "bg" }, { "hr", "hr" }, { "sr", "rs" },
+  { "sk", "sk" }, { "sl", "si" },
+};
+static const char *bandeiraDe(const char *idioma) {
+  for (size_t i = 0; i < sizeof BANDEIRA_DE / sizeof *BANDEIRA_DE; i++)
+    if (!strcmp(BANDEIRA_DE[i].idioma, idioma)) return BANDEIRA_DE[i].pais;
+  return NULL;
+}
+static int temIdiomas(const Stream *s) { return s->nIdiomasAudio || s->nIdiomasLegenda; }
+// Um grupo: o icone e uma bandeira por idioma, sem repetir pais. "multi" e o
+// globo; idioma sem bandeira sai em sigla. Todas na mesma altura, a largura
+// pela proporcao do pais. Devolve onde o grupo terminou.
+static float grupoBandeiras(const char *icone, const char (*lista)[6], int n,
+                            float x, float y, float maxX, int tinta, float a) {
+  const char *feitos[STREAM_IDIOMAS];
+  int nf = 0;
+  float c = tinta / 255.0f, meio = y + FOLHA_SELO_H * .5f;
+  if (!n || x + 60 > maxX) return x;
+  gfx_icone((GfxRect){x, meio - 10, 20, 20}, icone, c, c, c, a);
+  x += 20 + 10;
+  for (int k = 0; k < n; k++) {
+    const char *pais = bandeiraDe(lista[k]);
+    float w;
+    if (!strcmp(lista[k], "multi")) {
+      if (x + 20 > maxX) break;
+      gfx_icone((GfxRect){x, meio - 10, 20, 20}, "aj_globe", c, c, c, a);
+      w = 20;
+    } else if (pais && dirBandeiras[0]) {
+      char cam[640];
+      int rep = 0;
+      for (int j = 0; j < nf; j++) rep |= !strcmp(feitos[j], pais);
+      if (rep) continue;
+      feitos[nf++] = pais;
+      snprintf(cam, sizeof cam, "%s/%s.png", dirBandeiras, pais);
+      GLuint t = tex_obter_larg(cam, 40);
+      float asp = tex_aspecto(cam);
+      w = FOLHA_BANDEIRA_H * (asp > .3f ? asp : 1.5f);
+      if (x + w > maxX) break;
+      // Ainda decodificando: o lugar fica reservado, sem a sigla piscar antes.
+      if (t) {
+        gfx_tex_aspect_atual = 0.0f;
+        gfx_rect((GfxRect){x, floorf(meio - FOLHA_BANDEIRA_H * .5f), w, FOLHA_BANDEIRA_H}, t,
+                 GFX_TEXTO, 0, 0, 0, 0.0f, 1, 1, 1, a);
+      }
+    } else {
+      char up[8];
+      size_t i;
+      for (i = 0; lista[k][i] && i + 1 < sizeof up; i++) up[i] = (char)toupper((unsigned char)lista[k][i]);
+      up[i] = 0;
+      TxtLinha l = txt_linha(TXT_PG_FIM, up, tinta, tinta, tinta - 2, 255);
+      if (x + l.w > maxX) break;
+      txt_desenhar_alpha(l, x, meio - l.h * .5f, a);
+      w = l.w;
+    }
+    x += w + 8;
+  }
+  return x;
+}
+
 // O TITULO DA LINHA, modo "Do Nuvio": o NOME DO CONTEUDO (dono, 02/10: "deixar
 // as badges embaixo e o nome mesmo em cima — Silo Season 2 Episode 5; se fosse
 // filme so o nome do filme"). Toda a qualidade fica nos logos embaixo. O nome
@@ -2775,29 +2854,6 @@ static uint64_t logosDa(const Stream *s, uint64_t tira) {
   }
   return m;
 }
-// A linha de arquivo existe quando ha arquivo, ou quando a descricao NAO foi
-// usada no lugar da fileira de logos (linha sem selo e sem MP4). A altura da
-// linha e o desenho perguntam aqui, senao a linha abre um vao vazio.
-//
-// Da descricao vale so a ULTIMA linha: formatadores como o AIOStreams poem
-// tamanho e taxa em cima e o nome do arquivo no fim, e a linha inteira
-// repetia os numeros que a coluna da direita ja mostra. Buffer estatico: so
-// o fio principal chama, e cada chamador usa o texto antes da seguinte.
-static const char *arquivoDa(const Stream *s) {
-  static char ult[192];
-  const char *p, *f;
-  if (s->arquivo[0]) return s->arquivo;
-  if (!logosDa(s, 0) && !selosPacoteVisiveis((Stream *)s) && strcmp(containerDa(s), "MP4") && !idiomaDa(s)) return "";
-  ult[0] = 0;
-  for (p = s->descricao; *p; p = f + 1) {
-    f = strchr(p, '\n');
-    char l[192];
-    linhaLimpa(l, sizeof l, p, f ? (size_t)(f - p) : strlen(p));
-    if (l[0]) snprintf(ult, sizeof ult, "%s", l);
-    if (!f) break;
-  }
-  return ult;
-}
 
 // A linha de marca e so para o que esta tocando e para a escolha anterior.
 // A fonte que o automatico tocaria ganha o selo "Melhor para esta TV" ao
@@ -2821,8 +2877,11 @@ static float alturaLinha(int i, int automatica) {
     h = 20 + 40 + vis * FOLHA_ADDON_LD + 18 + (temMarca(i, automatica) ? FOLHA_MARCA_H : 0);
     if (h < 96) h = 96;
   } else {
-    // The connection line opens with the focused row even without a file name.
-    float extra = (arquivoDa(&lista[i])[0] ? FOLHA_ARQ_H : 0) + FOLHA_FIT_H * fitLinhas(i);
+    // A linha em foco abre so a evidencia da conexao (StreamFit). O nome do
+    // arquivo saiu da linha (dono, 14/10: "muito longo e inutil"); continua no
+    // detalhe da fonte (Info/Amarela).
+    float extra = FOLHA_FIT_H * fitLinhas(i);
+    if (temIdiomas(&lista[i])) h += FOLHA_IDIOMA_H;
     if (grupo == 1 && nOrdem == foco) h += extra * abreFoco;
     else if (nOrdem == linhaAnt)      h += extra * abreAnt;
   }
@@ -4032,8 +4091,9 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         int c=sel?180:130;
         txt_desenhar_alpha(txt_linha_corta(TXT_PG_FIM,d,c,c,c,255,txtW0),tx0,cy+(FOLHA_SELO_H-26)*.5f,anim); }
       if(ehMp4){ txt_desenhar_alpha(mp,tx0+(lw>0?lw+18:0),cy+(FOLHA_SELO_H-mp.h)*.5f,anim); lw+=(lw>0?18:0)+mp.w; }
-      // O IDIOMA, em texto no fim da fileira (nao ha logo para ele).
-      { const char *id=idiomaDa(s);
+      // O IDIOMA, em texto no fim da fileira, so quando nao ha bandeira para
+      // ele ("Dublado" sem dizer de que lingua).
+      { const char *id=temIdiomas(s)?NULL:idiomaDa(s);
         if(id){ int c=sel?230:190;
           TxtLinha li=txt_linha(TXT_HERO_META,id,c,c,c,255);
           if(lw+18+li.w<=txtW0){ txt_desenhar_alpha(li,tx0+(lw>0?lw+18:0),cy+(FOLHA_SELO_H-li.h)*.5f,anim); lw+=(lw>0?18:0)+li.w; } } }
@@ -4042,17 +4102,19 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         if(lw+18+ln.w<=txtW0) { txt_desenhar_alpha(ln,tx0+(lw>0?lw+18:0),cy+(FOLHA_SELO_H-ln.h)*.5f,anim); lw+=(lw>0?18:0)+ln.w; } }
       }
     cy+=FOLHA_SELO_H+12;
-    // O ARQUIVO, so na linha em foco: e o que distingue duas fontes iguais
-    // (grupo de release, versao), e em toda linha era ruido.
+    // OS IDIOMAS: bandeiras do audio e da legenda, abaixo dos selos e na
+    // largura inteira (a coluna do tamanho termina acima desta linha).
+    if(temIdiomas(s)){ int c=sel?200:150;
+      float a=anim*(sel?1.0f:.82f);
+      float ix=grupoBandeiras("aj_volume-2",s->idiomasAudio,s->nIdiomasAudio,tx,cy,tr,c,a);
+      if(s->nIdiomasAudio) ix+=28;
+      grupoBandeiras("aj_captions",s->idiomasLegenda,s->nIdiomasLegenda,ix,cy,tr,c,a);
+      cy+=FOLHA_IDIOMA_H; }
+    // A EVIDENCIA DA CONEXAO (StreamFit), so na linha em foco.
     { float a=(sel?abreFoco:row==linhaAnt?abreAnt:0);
-      const char *arq=arquivoDa(s);
-      if(a>.02f && arq[0]){ char d[512];
-        snprintf(d,sizeof d,"%s",arq);
-        for(char *p=d;*p;p++)if((unsigned char)*p<32)*p=' ';
-        txt_desenhar_alpha(txt_linha_corta(TXT_PG_FIM,d,125,125,123,255,tr-tx),tx,cy,anim*a); }
       if(a>.02f){ char f1[160], f2[128]; StreamfitClasse fc=fitTexto2(i,f1,sizeof f1,f2,sizeof f2);
         if(f1[0]){
-        float fy=cy+(arq[0]?FOLHA_ARQ_H:0);
+        float fy=cy;
         int c=fc==SF_DESCONHECIDA?118:150;
         txt_desenhar_alpha(txt_linha_corta(TXT_PG_FIM,f1,c,c,c-2,255,tr-tx),tx,fy,anim*a);
         if(f2[0]){

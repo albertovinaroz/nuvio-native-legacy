@@ -18,6 +18,9 @@
 
 // A lista cresce conforme a resposta dos addons; a UI virtualiza as linhas.
 
+// Idiomas guardados por fonte, de audio e de legenda cada um (Stream.idiomas*).
+#define STREAM_IDIOMAS 6
+
 typedef struct {
   char rotulo[192];     // Nome curto da fonte
   char provedor[96];
@@ -59,6 +62,14 @@ typedef struct {
   // behaviorHints.videoHash (hash do OpenSubtitles) quando o addon de fonte
   // manda; vai para a busca de legendas como extra do Stremio (#201).
   char videoHash[24];
+  // IDIOMAS DE AUDIO E DE LEGENDA, que a folha desenha como bandeiras: codigos
+  // curtos ("en", "es", "lat", "pt", "ptbr", "multi"...), na ordem em que o
+  // addon os escreve, sem repetir. Lidos UMA vez no parser (stream_parse.c,
+  // idiomasLer): o texto do addon ("Languages 🇪🇸 • 🇬🇧", "Subtitles: ...",
+  // "SPA.ENG.SUBS") e o array `subtitles` do Stremio. Vazio = o addon nao disse.
+  char idiomasAudio[STREAM_IDIOMAS][6];
+  char idiomasLegenda[STREAM_IDIOMAS][6];
+  unsigned char nIdiomasAudio, nIdiomasLegenda;
   // Stream SEM url, so com o hash do torrent (Torrentio/Comet sem debrid na
   // URL). So entra na lista quando debrid_ativo(); a url e preenchida na
   // verificacao, por debrid_resolver.
@@ -110,6 +121,8 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida);
 void stream_definir_atual(int indice);
 int stream_atual(void);
 void stream_folha_contexto(const char *texto);
+// Pasta da arte do pacote: as bandeiras dos idiomas moram em <dir>/bandeiras.
+void stream_dir_arte(const char *dir);
 // O nome do conteudo da lista (titulo do filme ou da serie), para o titulo de
 // cada linha no modo "Do Nuvio" ("Silo  Temporada 2 Episodio 5"). Chamar antes
 // de stream_folha_abrir; vazio cai no nome do addon.
