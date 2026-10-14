@@ -1195,9 +1195,10 @@ static void disco(GfxRect a, const ContaPerfil *p, float f, float alfa,
     }
   }
   if (foto) {
-    // O GIF vem na proporcao dele: o aspecto registrado e da foto parada,
-    // que nao vale para o quadro animado. Zero deixa a moldura decidir.
-    gfx_tex_aspect_atual = emGif ? 0 : tex_aspecto(p->avatarUrl);
+    // O GIF vem na proporcao DELE (o quadro animado nao e a foto parada
+    // registrada no cache), e e ela que o "cover" do circulo precisa: com 0
+    // um GIF 16:9 era espremido no disco e o rosto saia achatado.
+    gfx_tex_aspect_atual = emGif ? gif_aspecto() : tex_aspecto(p->avatarUrl);
     gfx_rect(a, foto, GFX_AVATAR, 0, 0, 0, 0, 1, 1, 1, vivo * alfa);
     gfx_tex_aspect_atual = 0;
   } else {

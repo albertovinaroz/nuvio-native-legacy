@@ -153,6 +153,9 @@ void gif_fio_medida(const GifFio *f, int *quadros, double *ms);
 // quadro vencido sobe so as linhas que mudaram. Quem chamava a cada 67 ms
 // prendia o GIF a 15 fps, abaixo do ritmo do proprio arquivo.
 GLuint gif_textura(const char *caminho, int largAlvo);
+// Proporcao (w/h) do GIF que esta animando, para o "cover" de quem o desenha
+// numa moldura de outra forma (o avatar redondo). 0 = nenhum animando.
+float gif_aspecto(void);
 
 // Solta o que estiver preso ao caminho corrente. Chamar quando o foco sai.
 void gif_parar(void);

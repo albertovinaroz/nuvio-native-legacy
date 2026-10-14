@@ -1117,6 +1117,9 @@ void gif_ocioso(void) {
 int gif_recusou(const char *caminho) {
   return caminho && preso[0] && recusado && !strcmp(preso, caminho);
 }
+float gif_aspecto(void) {
+  return fio && telaW > 0 && telaH > 0 ? (float)telaW / (float)telaH : 0.0f;
+}
 
 #else   /* webOS e Mac: sem animacao. Ver o cabecalho de gif.h. */
 
@@ -1127,5 +1130,6 @@ GLuint gif_textura(const char *caminho, int largAlvo) {
 void gif_parar(void) {}
 void gif_ocioso(void) {}
 int gif_recusou(const char *caminho) { (void)caminho; return 0; }
+float gif_aspecto(void) { return 0.0f; }
 
 #endif

@@ -5090,9 +5090,8 @@ static void desenhaAtalhos(int r, float y) {
             GLuint motion=gif_textura(arq,480);
             if(motion){
               tex=motion;
-              // A PROPORCAO DA CAPA NAO VALE AQUI. Abaixo o desenho usa
-              // tex_aspecto(arte), que e a da capa; o GIF do CDN pode vir em
-              // qualquer proporcao. Zero deixa o desenho usar a moldura.
+              // A PROPORCAO DA CAPA NAO VALE AQUI: o GIF do CDN pode vir em
+              // qualquer proporcao, e o desenho abaixo usa a dele (gif_aspecto).
               gifDesenhando=1;
             } else if(gif_recusou(arq)) motivo=GC_ORCAMENTO;
           }
@@ -5144,7 +5143,9 @@ static void desenhaAtalhos(int r, float y) {
       }
     }
     if (tex) {
-      gfx_tex_aspect_atual = gifDesenhando ? 0.0f : tex_aspecto(arte);
+      // O GIF na proporcao dele (gif_aspecto), nao a da capa: com 0 ele era
+      // esticado ate a moldura do card.
+      gfx_tex_aspect_atual = gifDesenhando ? gif_aspecto() : tex_aspecto(arte);
       // PASSA O FOCO, como a fileira de cartazes faz. Antes ia 0 fixo: o card
       // de COLECAO era o unico formato que nao clareava, nao ganhava o
       // especular e nao respondia ao foco de jeito nenhum — a queixa do dono
