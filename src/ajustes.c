@@ -202,7 +202,7 @@ typedef enum {
   // Conteudo da Home
   AJ_RAIL, AJ_RAIL_MODERNA, AJ_RAIL_BLUR, AJ_HERO, AJ_HERO_CATALOGOS,
   AJ_PS_FUNDO,
-  AJ_DESCOBRIR, AJ_ROTULOS, AJ_NOME_ADDON, AJ_SUFIXO_TIPO,
+  AJ_DESCOBRIR, AJ_ROTULOS, AJ_NOME_ADDON, AJ_SUFIXO_TIPO, AJ_SUFIXO_ESTILO, AJ_ROTULO_POS,
   AJ_OCULTAR_NLANC, AJ_NOTAS_HOME, AJ_GRAD_CLASSICO,
   // Continuar assistindo
   AJ_CW_LIGADO, AJ_CW_OK, AJ_CW_FONTE, AJ_CW_ESTILO, AJ_CW_THUMB, AJ_CW_BLUR_PROX,
@@ -797,6 +797,9 @@ static const char *V_GPU_EF[]    = { "Automático", "Completos", "Leves" };
 // Local, como cwFonteLocal — o app oficial nao tem esta escolha.
 static const char *V_CW_OK[]     = { "Retomar", "Abrir página" };
 // `discoverLocation`, validado contra estes tres.
+// FORK: como o tipo (filme/serie) e os rotulos do cartaz aparecem na fileira.
+static const char *V_SUFIXO_ESTILO[] = { "Texto", "Ícone" };
+static const char *V_ROTULO_POS[]    = { "Automático", "Abaixo", "Dentro" };
 static const char *V_DESCOBRIR[] = { "Mostrar na Busca", "Na barra lateral", "Desligado" };
 // `homeImdbRatingsVisibility` — normalizeHomeImdbRatingsVisibility so aceita
 // SHOW_ALL e HIDE_ALL.
@@ -1102,6 +1105,8 @@ static const Opcao OPCOES[AJ_N] = {
   ESC("Rótulos nos pôsteres",       V_LIGA, 2),   // posterLabelsEnabled
   ESC("Nome do addon no catálogo",  V_LIGA, 2),   // catalogAddonNameEnabled
   ESC("Tipo de conteúdo",           V_LIGA, 2),   // catalogTypeSuffixEnabled
+  ESC("Filme ou série como",        V_SUFIXO_ESTILO, 2), // local: tipoFileiraEstiloLocal
+  ESC("Posição dos rótulos",        V_ROTULO_POS, 3),    // local: rotuloPosicaoLocal
   ESC("Ocultar não lançados",       V_LIGA, 2),   // hideUnreleasedContent
   ESC("Avaliações gerais",          V_NOTAS, 2),  // homeImdbRatingsVisibility
   ESC("Gradiente de foco clássico", V_LIGA, 2),   // classicFocusGradientEnabled
@@ -1454,7 +1459,10 @@ static const char *CHAVE[] = {
   // fundo de arte, entao nao ha campo equivalente no blob da conta.
   "perfilFundoLocal",
   "discoverLocation", "posterLabelsEnabled", "catalogAddonNameEnabled",
-  "catalogTypeSuffixEnabled", "hideUnreleasedContent",
+  "catalogTypeSuffixEnabled",
+  // LOCAIS (fork): o app oficial nao tem estas escolhas.
+  "tipoFileiraEstiloLocal", "rotuloPosicaoLocal",
+  "hideUnreleasedContent",
   "homeImdbRatingsVisibility", "classicFocusGradientEnabled",
   "continueWatchingEnabled",
   // LOCAL, e nao do web: o app oficial nao tem esta escolha, entao nao ha
@@ -2485,6 +2493,8 @@ int ajustes_gradiente_foco_classico(void) { return lig(AJ_GRAD_CLASSICO); }
 int ajustes_rotulos_poster(void)      { return lig(AJ_ROTULOS); }
 int ajustes_nome_addon(void)          { return lig(AJ_NOME_ADDON); }
 int ajustes_sufixo_tipo(void)         { return lig(AJ_SUFIXO_TIPO); }
+int ajustes_sufixo_icone(void)        { return valor[AJ_SUFIXO_ESTILO] == 1; }
+int ajustes_rotulo_posicao(void)      { return valor[AJ_ROTULO_POS]; }
 int ajustes_ocultar_nao_lancados(void){ return lig(AJ_OCULTAR_NLANC); }
 // O blob da ordem de catalogos (plataforma home_catalog_shared) traz esta mesma
 // opcao, separada do blob de ajustes do perfil. Setter proprio porque so vale
@@ -4355,6 +4365,7 @@ static int somenteDesteAparelho(int op) {
     case AJ_FONTE_CONFERIR_VARIAS:
     case AJ_FONTE_PREPARAR:
     case AJ_FONTE_TEXTO: case AJ_FONTE_ORDEM_ADDON:
+    case AJ_SUFIXO_ESTILO: case AJ_ROTULO_POS:   /* fork: so este aparelho */
     case AJ_SALVOS_DEST:
     case AJ_EPG_PAIS:       /* pais da grade: por aparelho, o web nao tem */
     // Arte do destaque: o web nao tem as chaves (heroFundoLocal,
@@ -4904,6 +4915,8 @@ static const char *rotuloNovo(int op) {
     case AJ_ESPACO: return "Imagens guardadas na memória";
     case AJ_NOTAS_HOME: return "Nota do IMDb nos cartazes";
     case AJ_SUFIXO_TIPO: return "Filme ou série no nome da fileira";
+    case AJ_SUFIXO_ESTILO: return "Filme ou série como";
+    case AJ_ROTULO_POS: return "Posição dos rótulos";
     case AJ_NOME_ADDON: return "Nome do addon na fileira";
     default: return NULL;
   }
@@ -5348,6 +5361,8 @@ static int inativa(int op) {
       return !ajustes_cw_ligado();
     case AJ_CW_BLUR_PROX: return !ajustes_cw_ligado() || !ajustes_cw_thumb_episodio();
     case AJ_EXPANDIR_ATRASO: return !ajustes_expandir_poster();
+    case AJ_SUFIXO_ESTILO: return !lig(AJ_SUFIXO_TIPO);
+    case AJ_ROTULO_POS:    return !lig(AJ_ROTULOS);
     case AJ_SEEKR_FITA: case AJ_SEEKR_AJUSTE: return !lig(AJ_SEEKR_LIGADO);
     // Remover so vale para o pacote escolhido que foi posto nesta TV.
     case AJ_SELOS_PACOTE_REM: return selospacote_ativo() < 0 || !selospacote_da_tv(selospacote_ativo());
@@ -5688,6 +5703,8 @@ static const char *ajudaOpcaoBase(int op) {
     case AJ_ROTULOS: return "Escreve o nome do título abaixo do cartaz. A maior parte da arte já traz o nome impresso.";
     case AJ_NOME_ADDON: return "Acrescenta o nome do addon ao título da fileira, para separar dois catálogos com o mesmo nome.";
     case AJ_SUFIXO_TIPO: return "Acrescenta \"Filme\" ou \"Série\" ao título da fileira, para separar as duas versões do mesmo catálogo.";
+    case AJ_SUFIXO_ESTILO: return "Texto escreve \"Filme\" ou \"Série\" no título da fileira; Ícone mostra uma claquete ou uma TV ao lado dele.";
+    case AJ_ROTULO_POS: return "Onde fica o nome do título. Automático: abaixo do cartaz em pé e dentro do deitado.";
     case AJ_OCULTAR_NLANC: return "Esconde das fileiras o que ainda não estreou. Título sem fonte nenhuma ocupa lugar e não abre.";
     case AJ_NOTAS_HOME: return "Mostra a nota do IMDb no canto dos cartazes da Home.";
     case AJ_GRAD_CLASSICO: return "Volta ao degradê antigo sob o cartaz em foco, no lugar do realce atual.";
@@ -7923,7 +7940,7 @@ static AjPreview familiaPreviaOpcao(int op) {
     case AJ_FIL_ORDEM: case AJ_RAIL: case AJ_RAIL_MODERNA:
     case AJ_RAIL_BLUR: case AJ_HERO: case AJ_HERO_CATALOGOS:
     case AJ_PS_FUNDO: case AJ_PS_CONTINUAR: case AJ_DESCOBRIR: case AJ_ROTULOS:
-    case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: case AJ_OCULTAR_NLANC:
+    case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: case AJ_SUFIXO_ESTILO: case AJ_ROTULO_POS: case AJ_OCULTAR_NLANC:
     case AJ_NOTAS_HOME: case AJ_GRAD_CLASSICO: case AJ_SELO_VISTO:
       return AJPV_HOME;
     case AJ_CW_LIGADO: case AJ_CW_OK: case AJ_CW_FONTE:

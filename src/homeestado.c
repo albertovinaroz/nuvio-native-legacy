@@ -70,6 +70,7 @@ static unsigned hashAjustes(void) {
   h = hashBytes(h, &(int){ajustes_cw_estilo()}, sizeof(int));
   h = hashBytes(h, &(int){ajustes_posteres_deitados()}, sizeof(int));
   h = hashBytes(h, &(int){ajustes_rotulos_poster()}, sizeof(int));
+  h = hashBytes(h, &(int){ajustes_rotulo_posicao()}, sizeof(int));
   h = hashBytes(h, &(int){ajustes_hero_fonte()}, sizeof(int));
   fonte = fil_hero_fonte(); h = hashTexto(h, fonte);
   return h;

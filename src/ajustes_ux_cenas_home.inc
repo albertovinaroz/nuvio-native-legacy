@@ -771,8 +771,9 @@ static int ajcNovaHome(int sec, int op) {
     case AJ_OCULTAR_NLANC: ajcHNaoLancados(op); return 1;
     case AJ_NOTAS_HOME: ajcHNotas(op); return 1;
     case AJ_SELO_VISTO: ajcHSelo(op); return 1;
-    case AJ_ROTULOS: ajcHRotulos(op); return 1;
+    case AJ_ROTULOS: case AJ_ROTULO_POS: ajcHRotulos(AJ_ROTULOS); return 1;
     case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: ajcHTituloFileira(op); return 1;
+    case AJ_SUFIXO_ESTILO: ajcHTituloFileira(AJ_SUFIXO_TIPO); return 1;
     case AJ_CW_LIGADO: ajcHCwLigado(op); return 1;
     case AJ_CW_OK: ajcHCwOk(op); return 1;
     case AJ_CW_ESTILO: ajcHCwEstilo(); return 1;

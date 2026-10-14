@@ -1356,12 +1356,43 @@ static float alturaDe(TipoFileira t) {
                                                           : NV_CARD_H);
   }
 }
+// O NOME DE EXIBICAO do addon que publicou a fileira, pela base da URL. A
+// lista de addons e curta (dezena): a varredura por fileira visivel e barata.
+static const char *nomeAddonDaBase(const char *base) {
+  size_t nb = strlen(base);
+  while (nb && base[nb - 1] == '/') nb--;
+  for (int i = 0; i < addons_n(); i++) {
+    const char *b = addons_base(i);
+    size_t n = b ? strlen(b) : 0;
+    while (n && b[n - 1] == '/') n--;
+    if (n == nb && !strncmp(b, base, n)) return addons_nome(i);
+  }
+  return NULL;
+}
+// Pilula ao lado do titulo da fileira: icone e, quando ha, texto. Devolve a
+// largura ocupada (com o vao seguinte).
+static float pilulaTitulo(float x, float y, float alturaTitulo, const char *icone, const char *texto) {
+  const float h = 36.0f, ic = 20.0f;
+  float cy = y + alturaTitulo * 0.5f, w = 16.0f + ic + 16.0f;
+  TxtLinha t = {0};
+  if (texto) { t = txt_linha_corta(TXT_HERO_META, texto, 214, 218, 228, 255, 360); w += 8.0f + t.w; }
+  gfx_cor((GfxRect){ x, cy - h * 0.5f, w, h }, 0.5f, 0.17f, 0.18f, 0.21f, 0.92f);
+  gfx_icone((GfxRect){ x + 16.0f, cy - ic * 0.5f, ic, ic }, icone, .86f, .87f, .9f, 1.0f);
+  if (texto) txt_desenhar(t, x + 16.0f + ic + 8.0f, cy - t.h * 0.5f);
+  return w + 10.0f;
+}
+// ONDE MORA O ROTULO (Ajustes > Posicao dos rotulos, fork). Automatico e o do
+// web: DENTRO do card deitado (.home-poster-landscape-copy, com o bloco de fora
+// escondido) e ABAIXO do poster em pe. Abaixo/Dentro forcam um dos dois em
+// qualquer forma. A faixa larga da Dinamica e cartao de ler: sempre dentro.
+static int rotuloDentro(TipoFileira t, int deitado) {
+  int pos = ajustes_rotulo_posicao();
+  if (t == FILEIRA_LARGA) return 1;
+  return pos == 2 || (pos == 0 && deitado);
+}
 static int temRotulo(TipoFileira t) {
-  // O rotulo abaixo do poster so existe no poster EM PE. No card deitado o web
-  // poe a legenda DENTRO da moldura (.home-poster-landscape-copy) e esconde o
-  // bloco de fora (.home-poster-card.is-landscape .home-poster-copy{display:none}).
   return t == FILEIRA_NORMAL && ajustes_rotulos_poster()
-      && !ajustes_posteres_deitados();
+      && !rotuloDentro(t, ajustes_posteres_deitados());
 }
 // O gap comum é 24px. Cards editoriais grandes precisam de 40px porque crescem
 // 6% quando focados e, com o gap menor, quase encostam no vizinho.
@@ -2468,7 +2499,9 @@ static int assinaturaPrefs(void) {
        | (ajustes_home_layout() << 8)
        // Ligar/desligar o destaque decide se a primeira fileira vira vitrine
        // (vitrineNaPrimeira).
-       | (ajustes_hero_ligado() ? 1 << 12 : 0);
+       | (ajustes_hero_ligado() ? 1 << 12 : 0)
+       // Rotulo abaixo do card muda a altura da fileira (NV_POSTER_COPY_H).
+       | (ajustes_rotulo_posicao() << 13);
 }
 
 // A PRIMEIRA FILEIRA DE CATALOGO VIRA VITRINE (cartoes 16:9 grandes) so quando
@@ -5819,7 +5852,7 @@ static void desenhaArteCard(GfxRect card, TipoFileira tipo, const char *caminho,
 static int veuRotulo(const CatItem *cItem, TipoFileira tipo, int deitado, float *fVeu) {
   if (tipo == FILEIRA_CONTINUE || tipo == FILEIRA_RETORNO || editorial(tipo) ||
       !(ajustes_rotulos_poster() || tipo == FILEIRA_LARGA) || !cItem ||
-      !deitado || !cItem->titulo[0]) return 0;
+      !rotuloDentro(tipo, deitado) || !cItem->titulo[0]) return 0;
   *fVeu = tipo == FILEIRA_LARGA ? NV_DIN_LARGA_VEU : NV_LAND_VEU;
   return 1;
 }
@@ -5853,7 +5886,7 @@ static void desenhaRotuloCard(const CatItem *cItem, TipoFileira tipo, int deitad
       (ajustes_rotulos_poster() || tipo == FILEIRA_LARGA) && cItem) {
     const char *nome = cItem->titulo[0] ? cItem->titulo : NULL;
     const char *sub  = cItem->genero[0] ? cItem->genero : NULL;
-    if (deitado && nome) {
+    if (rotuloDentro(tipo, deitado) && nome) {
       // VEU SO VERTICAL, que chega a ZERO no topo do retangulo. Era o
       // GFX_VEU (base + ESQUERDA): a rampa da esquerda ja vale 0,78 no
       // alto do retangulo, e o que se via era uma placa escura de canto
@@ -6518,8 +6551,16 @@ void home_desenhar(Uint32 agora) {
       // preferencia so valeria depois que a rede trouxesse os catalogos de
       // novo — ou seja, so no proximo arranque.
       const char *rotFil = fileiras[r].titulo;
-      char semSufixo[96];
-      if (!ajustes_sufixo_tipo() && rotFil) {
+      char semSufixo[96], comTipo[128];
+      // O SUFIXO " - Filme"/" - Série" sai sempre do texto (quando vem) e o
+      // tipo e posto aqui, pelo catTipo da fileira: antes so se TIRAVA, e o
+      // catalogo cujo nome nao trazia o sufixo ("Trending" de filmes e de
+      // series) ficava com dois titulos iguais mesmo com o ajuste ligado.
+      // Texto: " - Filme" no titulo; Icone (fork): pilula com claquete/TV.
+      const int temTipo = ajustes_sufixo_tipo() && fileiras[r].catTipo[0];
+      const int tipoIcone = temTipo && ajustes_sufixo_icone();
+      const int ehSerie = !strcmp(fileiras[r].catTipo, "series");
+      if (rotFil) {
         const char *corte = strstr(rotFil, " - ");
         const char *ultimo = NULL;
         while (corte) { ultimo = corte; corte = strstr(corte + 3, " - "); }
@@ -6531,10 +6572,23 @@ void home_desenhar(Uint32 agora) {
           semSufixo[n] = 0;
           rotFil = semSufixo;
         }
+        if (temTipo && !tipoIcone) {
+          snprintf(comTipo, sizeof comTipo, "%s - %s", rotFil, i18n(ehSerie ? "S\xc3\xa9rie" : "Filme"));
+          rotFil = comTipo;
+        }
       }
       TxtLinha tl = txt_linha_corta(TXT_ROW_TITULO, rotFil, 245, 246, 249, 255,
                                     homeRetratoTelefone() ? homeLarguraUtil() - 76.0f : NV_TELA_W - homeConteudoX() - 180.0f);
       txt_desenhar(tl, homeConteudoX(), y);
+      { float px = homeConteudoX() + tl.w + 14.0f;
+        if (tipoIcone)
+          px += pilulaTitulo(px, y, tl.h, ehSerie ? "aj_tv-minimal-play" : "aj_film", NULL);
+        // NOME DO ADDON (catalogAddonNameEnabled): o ajuste existia e ninguem o
+        // lia. Pilula com a peca de quebra-cabeca, como a previa de Ajustes.
+        if (ajustes_nome_addon() && fileiras[r].base[0]) {
+          const char *na = nomeAddonDaBase(fileiras[r].base);
+          if (na && na[0]) pilulaTitulo(px, y, tl.h, "aj_puzzle", na);
+        } }
       // A FONTE (Trakt, Simkl...) NAO APARECE NA FILEIRA DE AMIGOS: a pessoa
       // quer saber quem viu e o que achou, nao de onde veio o dado. Ela fica
       // so no perfil do amigo (amigoperfil.c). Era a marca do Trakt aqui.

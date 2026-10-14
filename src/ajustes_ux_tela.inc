@@ -112,7 +112,7 @@ static const Item TELA[] = {
     ROT("Escolha de perfil"), OPC(AJ_PS_FUNDO), OPC(AJ_PS_CONTINUAR),
     MAIS(),
     ROT("Estilo"), OPC(AJ_HERO_TRANSICAO),
-    ROT("Fileiras"), OPC(AJ_ROTULOS), OPC(AJ_NOME_ADDON), OPC(AJ_SUFIXO_TIPO),
+    ROT("Fileiras"), OPC(AJ_ROTULOS), OPC(AJ_ROTULO_POS), OPC(AJ_NOME_ADDON), OPC(AJ_SUFIXO_TIPO), OPC(AJ_SUFIXO_ESTILO),
     ROT("Continuar assistindo"), OPC(AJ_CW_FURTHEST),
     ROT("Barra lateral"), OPC(AJ_RAIL_BLUR),
 

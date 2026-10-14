@@ -49,6 +49,8 @@
   1,                /* rotulos nos posteres: desligado */
   0,                /* nome do addon: ligado */
   0,                /* tipo de conteudo: ligado */
+  0,                /* fork: tipo como texto (Filme/Serie) */
+  0,                /* fork: posicao dos rotulos: automatica */
   1,                /* ocultar nao lancados: desligado */
   0,                /* avaliacoes gerais: mostrar (SHOW_ALL) */
   1,                /* gradiente de foco classico: desligado */
