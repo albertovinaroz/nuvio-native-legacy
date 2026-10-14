@@ -191,6 +191,14 @@ static int baseCabe(ColSource *a, const char *base) {
 // Le a base de uma fonte do JSON para `a->base`, sem nunca deixa-la cortada.
 // 0 quando a chave nao existe. A base que nao cabe fica VAZIA e a linha do log
 // diz a pasta e o tamanho (nunca a URL: ela carrega a chave do addon).
+// TIPO DA FONTE no vocabulario do Stremio. O app da Nuvio grava o dele
+// ("film", "shows"), e o resto do app (aba "Filmes"/"Séries", URL do catalogo,
+// col_por_catalogo) fala "movie"/"series": com "shows" a aba de series saia
+// escrita "Filmes" e a pasta mostrava "Movies Movies".
+static void tipoStremio(char *t) {
+  if (!strcasecmp(t, "film") || !strcasecmp(t, "films") || !strcasecmp(t, "movies")) snprintf(t, 8, "movie");
+  else if (!strcasecmp(t, "shows") || !strcasecmp(t, "show") || !strcasecmp(t, "tv")) snprintf(t, 8, "series");
+}
 static int lerBase(const char *s, const char *se, const char *chave, ColSource *a, const char *pasta) {
   char lida[NV_ADDON_URL_MAX];
   a->base[0] = 0;
@@ -542,7 +550,7 @@ static int carregarPacote(const char *dir) {
       for(const char *s=js_array(p,pe,"sources");s&&v->nSources<COL_SOURCE_MAX;s=js_prox(js_fim(s))) {
         const char *se=js_fim(s);ColSource *a=&v->sources[v->nSources];
         js_texto(s,se,"title",a->title,sizeof a->title);lerBase(s,se,"base",a,v->title);
-        js_texto(s,se,"type",a->type,sizeof a->type);js_texto(s,se,"catId",a->catId,sizeof a->catId);js_texto(s,se,"genre",a->genre,sizeof a->genre);
+        js_texto(s,se,"type",a->type,sizeof a->type);tipoStremio(a->type);js_texto(s,se,"catId",a->catId,sizeof a->catId);js_texto(s,se,"genre",a->genre,sizeof a->genre);
         if(a->base[0]&&a->type[0]&&a->catId[0])v->nSources++;
       }
       v->local=1;
@@ -684,6 +692,7 @@ static int lerColecaoWeb(const char *c, const char *ce) {
       js_texto(s, se, "addonId", a->addonId, sizeof a->addonId);
       if (!a->base[0]) baseCabe(a, addons_base_por_id(a->addonId));
       js_texto(s, se, "type", a->type, sizeof a->type);
+      tipoStremio(a->type);
       if (!js_texto(s, se, "catalogId", a->catId, sizeof a->catId)) js_texto(s, se, "catalog_id", a->catId, sizeof a->catId);
       if (!js_texto(s, se, "title", a->title, sizeof a->title) && !js_texto(s, se, "catalogName", a->title, sizeof a->title))
         snprintf(a->title, sizeof a->title, "%s", a->catId);

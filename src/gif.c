@@ -16,8 +16,28 @@
 #endif
 // .tpk da Samsung: o mesmo decodificador C do Tizen web (1.4.7), sem o
 // navegador — relogio por clock_gettime e RAM pelo /proc/meminfo.
-#if defined(__EMSCRIPTEN__) || defined(NV_TPK) || defined(NV_ANDROID)
+// PREVIA NO MAC (tools/mac.sh liga NV_GIF_PREVIA): o mesmo decodificador do
+// .tpk, para a previa mostrar o que a Samsung mostra (avatar GIF na tela de
+// perfis, capa GIF de colecao). RAM pelo sysctl hw.memsize, no lugar do
+// /proc/meminfo. Os testes de gif.c compilam sem GL e ficam de fora.
+#if defined(__APPLE__) && defined(NV_GIF_PREVIA)
+#define NV_GIF_MAC 1
+#endif
+#if defined(__EMSCRIPTEN__) || defined(NV_TPK) || defined(NV_ANDROID) || defined(NV_GIF_MAC)
 #define NV_GIF_ANIMA 1
+#endif
+#ifdef NV_GIF_MAC
+#include <sys/sysctl.h>
+static double emscripten_get_now(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
+}
+static double gif_js_memoria_gb(void) {
+  unsigned long long b = 0;
+  size_t n = sizeof b;
+  return sysctlbyname("hw.memsize", &b, &n, NULL, 0) == 0 ? b / (1024.0 * 1024.0 * 1024.0) : 0;
+}
 #endif
 #if defined(NV_TPK) || defined(NV_ANDROID)
 static double emscripten_get_now(void) {

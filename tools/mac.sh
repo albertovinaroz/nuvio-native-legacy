@@ -25,7 +25,8 @@ export NUVIO_DADOS="${NUVIO_DADOS:-$HOME/.nuvio}"
 # NUVIO_MAC_BIN: outro binario (a auditoria nao pisa no /tmp/nuvio-native-legacy-mac
 # de quem estiver rodando o app). NUVIO_MAC_SO_COMPILAR=1: compila e sai.
 BIN="${NUVIO_MAC_BIN:-/tmp/nuvio-native-legacy-mac}"
-eval cc src/*.c src/dts/*.c -o "$BIN" -O1 -g "$ENV_D" \
+# NV_GIF_PREVIA: o GIF anima como no .tpk da Samsung (avatar, capa de colecao).
+eval cc src/*.c src/dts/*.c -o "$BIN" -O1 -g -DNV_GIF_PREVIA "$ENV_D" \
   -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
   -L/opt/homebrew/lib -lSDL2 -lSDL2_image -lSDL2_ttf -lz \
   -framework OpenGL -Wno-deprecated-declarations

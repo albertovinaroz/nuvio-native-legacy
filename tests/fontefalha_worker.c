@@ -102,6 +102,7 @@ const char *ajustes_qualidade(void) { return "Automatica"; }
 // TV sem conta. A escolha automatica nao muda por idioma neste teste.
 int ajustes_idioma(void) { return 0; }
 const char *ling_audio(void) { return ""; }
+const char *ling_legenda(void) { return ""; }
 const char *stream_idioma_codigo(const char *etiqueta) { (void)etiqueta; return NULL; }
 unsigned fonteregra_versao(void) { return 1; }
 int fonteregra_grupo(const FonteRegraCfg *c, const char *nome, int plugin, const char *texto) {

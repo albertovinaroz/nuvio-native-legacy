@@ -891,7 +891,9 @@ static long penalAudioTv(const Stream *s) {
 #endif
 
 static int idiomaMeu(int explicito, char *dst);
+static const char *familiaFonte(const char *cod);
 static int audioNoIdioma(const Stream *s, const char *fam);
+static int legendaNoIdiomaMeu(const Stream *s);
 
 // AS MULTAS de pontos() (teto, cache, origem, P2P, StreamFit, sem resolucao),
 // em separado: o "MP4 primeiro" da LG (mp4PrimeiroNaFaixa) so reordena fontes
@@ -914,8 +916,12 @@ static long multasDe(const Stream *s) {
   // 1080p em espanhol passa na frente do 4K so em ingles. Longe das multas de
   // cache/origem (>= 140000). Fonte que nao declara idioma nao perde nada:
   // sem dado, nao se chuta.
+  // LEGENDA NO IDIOMA DA PESSOA (preferencia de legenda, linguas.h): sem o
+  // audio dela, a fonte que traz a legenda dela perde menos (15000, ainda mais
+  // que um degrau): audio dela > legenda dela > nenhum dos dois.
   { char fam[8];
-    if (idiomaMeu(1, fam) && audioNoIdioma(s, fam) == 0) m += 25000; }
+    if (idiomaMeu(1, fam) && audioNoIdioma(s, fam) == 0)
+      m += legendaNoIdiomaMeu(s) ? 15000 : 25000; }
   if (!cabeNoTeto(s)) m += 1000000;
   // Fora de cache conhecido tambem sai do automatico (foraDoAuto, #402).
   // O peso continua util para quem inspeciona a pontuacao de uma fonte.
@@ -2323,6 +2329,8 @@ int stream_automatico_canal(void) { return automaticoCom(0); }
 
 
 static int grupo, filtro, soMp4, soCache, soDub;
+// soDub: 0 desligado, 1 o idioma da pessoa, 2 um idioma da lista (filtroCod).
+static char filtroCod[6];
 
 // BOTOES DO CABECALHO. "Sem HDR" so existe onde ha o que renegociar (webOS);
 // ver o bloco "TELA PRETA COM AUDIO TOCANDO" em video.h. Oferecer um botao que
@@ -2346,12 +2354,56 @@ static int botaoDe(int i) {
   return BT_FECHAR;
 }
 static int nBotoes(void) { return video_pode_forcar_sdr() ? 6 : 5; }
+static const char *nomeIdiomaFonte(const char *cod);
 static const char *rotuloBotao(int b) {
   if (b == BT_SEM_HDR) return "Sem HDR";
   if (b == BT_SO_MP4)  return "Só MP4";
   if (b == BT_CACHE)   return "Em cache";
-  if (b == BT_DUB)     return "Dublado";
+  if (b == BT_DUB)     return soDub == 2 ? nomeIdiomaFonte(filtroCod) : "Dublado";
   return NULL;
+}
+// OS IDIOMAS DE AUDIO DESTA LISTA, o mais declarado primeiro ("multi" fica de
+// fora: nao diz qual). Montado so quando o OK pede o proximo, nao por quadro.
+static int idiomasDaLista(char (*cods)[6], int max) {
+  int conta[24] = {0}, q = 0;
+  for (int i = 0; i < n; i++)
+    for (int k = 0; k < lista[i].nIdiomasAudio; k++) {
+      const char *c = lista[i].idiomasAudio[k];
+      int j;
+      if (!strcmp(c, "multi")) continue;
+      for (j = 0; j < q && strcmp(cods[j], c); j++) {}
+      if (j == q) { if (q == max || q == 24) continue; snprintf(cods[q++], 6, "%s", c); }
+      conta[j]++;
+    }
+  for (int a = 1; a < q; a++)
+    for (int b = a; b > 0 && conta[b] > conta[b - 1]; b--) {
+      char t[6]; int ct = conta[b];
+      memcpy(t, cods[b], 6); memcpy(cods[b], cods[b - 1], 6); memcpy(cods[b - 1], t, 6);
+      conta[b] = conta[b - 1]; conta[b - 1] = ct;
+    }
+  return q;
+}
+// O BOTAO "DUBLADO" PERCORRE: desligado -> o idioma da pessoa -> cada idioma
+// de audio que as fontes desta lista declaram -> desligado. Assim da para ver
+// so as em latino, ou so as em ingles, sem um botao por idioma no cabecalho.
+static void filtroIdiomaProximo(void) {
+  char cods[24][6];
+  int nc = idiomasDaLista(cods, 24), pos = -1;
+  if (soDub == 0) { soDub = 1; return; }
+  if (soDub == 2) for (int j = 0; j < nc; j++) if (!strcmp(cods[j], filtroCod)) pos = j;
+  // O idioma que e SOZINHO a familia da pessoa repetiria o passo "meu idioma"
+  // (interface em ingles: "Dublado" e "English" davam a mesma lista). "es"
+  // com "lat" na lista fica: castelhano so, sem o latino, e outra lista.
+  { char fam[8];
+    int temFam = idiomaMeu(0, fam);
+    for (pos++; pos < nc; pos++) {
+      int mesma = 0;
+      if (temFam && !strcmp(familiaFonte(cods[pos]), fam))
+        for (int j = 0; j < nc; j++) mesma += !strcmp(familiaFonte(cods[j]), fam);
+      if (mesma != 1) break;
+    } }
+  if (pos < nc) { soDub = 2; snprintf(filtroCod, sizeof filtroCod, "%s", cods[pos]); }
+  else soDub = 0;
 }
 static int botaoLigado(int b) {
   return (b == BT_SO_MP4 && soMp4) || (b == BT_CACHE && soCache) || (b == BT_DUB && soDub);
@@ -2370,7 +2422,12 @@ static int filtroEmPortugues(void);
 static int passaChips(int i) {
   if (soMp4 && !lista[i].mp4) return 0;
   if (soCache && lista[i].foraCache) return 0;
-  if (soDub && !temAudioMeu(&lista[i])) return 0;
+  if (soDub == 1 && !temAudioMeu(&lista[i])) return 0;
+  if (soDub == 2) {
+    int tem = 0;
+    for (int k = 0; k < lista[i].nIdiomasAudio; k++) tem |= !strcmp(lista[i].idiomasAudio[k], filtroCod);
+    if (!tem) return 0;
+  }
   return 1;
 }
 static int passaFiltro(int i) {
@@ -2797,6 +2854,20 @@ static int temAudioMeu(const Stream *s) {
   if ((r = audioNoIdioma(s, fam)) >= 0) return r;
   return !strcmp(fam, "pt") && temAudioPt(s);
 }
+static int legendaNoIdiomaMeu(const Stream *s) {
+  char fam[8];
+  const char *l = ling_legenda();
+  if (!l || !strcasecmp(l, "none") || !strcasecmp(l, "off") || !familiaDe(l, fam)) return 0;
+  for (int k = 0; k < s->nIdiomasLegenda; k++)
+    if (!strcmp(familiaFonte(s->idiomasLegenda[k]), fam)) return 1;
+  return 0;
+}
+// O NOME de um codigo da fonte, em portugues (a camada de texto traduz).
+static const char *nomeIdiomaFonte(const char *cod) {
+  if (!strcmp(cod, "lat")) return "Espanhol latino";
+  if (!strcmp(cod, "ptbr")) return "Português (BR)";
+  return ling_nome(cod);
+}
 static int filtroEmPortugues(void) {
   char fam[8];
   return !idiomaMeu(0, fam) || !strcmp(fam, "pt");
@@ -2971,6 +3042,17 @@ static uint64_t logosDa(const Stream *s, uint64_t tira) {
 // certeza: a base e IPT-PQ), 1 = perfil nao declarado (pode ser 5), 0 = nada a
 // avisar. A escolha automatica ja as poe abaixo do HDR10 (nivelHdr); o aviso
 // e para quem escolhe a mao.
+// SO DTS/TRUEHD NUMA SAMSUNG (#313): a TV nao decodifica, abre muda. A
+// escolha automatica ja as poe para tras (penalAudioTv); o aviso e para quem
+// escolhe a mao.
+static int semSomNaTv(const Stream *s) {
+#ifdef NV_TPK
+  return penalAudioTv(s) > 0;
+#else
+  (void)s;
+  return 0;
+#endif
+}
 static int dvSemBase(const Stream *s) {
 #ifdef NV_TPK
   if (!ehDv(s) || perfil8(s)) return 0;
@@ -2985,7 +3067,7 @@ static int temMarca(int i, int automatica) {
   (void)automatica;
   // StreamFit (F03): a measured-heavy source carries its reason on the mark line.
   return i >= 0 && (i == atual || i == preferida || (i == melhorFolha && nFiltrados() > 1) ||
-                    fitPesada(i) || lista[i].foraCache || dvSemBase(&lista[i]) ||
+                    fitPesada(i) || lista[i].foraCache || dvSemBase(&lista[i]) || semSomNaTv(&lista[i]) ||
                     (!canalFolha && stream_vod_falhou_ha(i) >= 0));
 }
 // Altura de uma linha: base, marca, e o nome do arquivo que abre por mola na
@@ -3285,11 +3367,20 @@ int stream_folha_n(void) { return nFiltrados(); }
 // NUNCA toca em Stream.url: la mora a chave do debrid.
 static int   detAberto;
 static float detAnim, detRol, detRolAlvo, detAlt;   // detAlt: altura do corpo, medida no desenho
-static char  detProv[96], detTit[512], detArq[512], detDesc[4096];
+static char  detProv[96], detTit[512], detArq[512], detDesc[4096], detAudio[256], detLeg[256];
 #define DET_PASSO 84.0f
 static void detalheAbrir(const Stream *s) {
   char tmp[sizeof s->descricao];
-  detProv[0]=detTit[0]=detArq[0]=detDesc[0]=0;
+  detProv[0]=detTit[0]=detArq[0]=detDesc[0]=detAudio[0]=detLeg[0]=0;
+  // OS IDIOMAS POR EXTENSO: na linha so cabem as bandeiras, e o pais nao diz
+  // tudo (a do Mexico e o latino). Cada nome traduzido aqui: a frase montada
+  // nao casa com chave nenhuma na camada de texto.
+  for(int k=0;k<s->nIdiomasAudio;k++){ size_t u=strlen(detAudio);
+    snprintf(detAudio+u,sizeof detAudio-u,"%s%s",k?" · ":"",
+             !strcmp(s->idiomasAudio[k],"multi")?"Multi":i18n(nomeIdiomaFonte(s->idiomasAudio[k]))); }
+  for(int k=0;k<s->nIdiomasLegenda;k++){ size_t u=strlen(detLeg);
+    snprintf(detLeg+u,sizeof detLeg-u,"%s%s",k?" · ":"",
+             !strcmp(s->idiomasLegenda[k],"multi")?"Multi":i18n(nomeIdiomaFonte(s->idiomasLegenda[k]))); }
   // Sem NV_LIMPA_UMA_LINHA: o \n da descricao fica, txt_bloco quebra nele.
   nv_limpar_texto(s->provedor,detProv,sizeof detProv,NV_LIMPA_UMA_LINHA);
   nv_limpar_texto(s->rotulo,detTit,sizeof detTit,0);
@@ -3382,7 +3473,7 @@ void stream_folha_evento(const SDL_Event *e) {
         case BT_SEM_HDR:    video_forcar_sdr(); aberta=0; break;
         case BT_SO_MP4:     soMp4 = !soMp4; rolagem=0;velRol=0; break;
         case BT_CACHE:      soCache = !soCache; rolagem=0;velRol=0; break;
-        case BT_DUB:        soDub = !soDub; rolagem=0;velRol=0; break;
+        case BT_DUB:        filtroIdiomaProximo(); rolagem=0;velRol=0; break;
         default:            aberta=0; break;
       }
     }
@@ -3759,6 +3850,14 @@ static void desenhaDetalhe(float x, float w, int ptr) {
   if(detTit[0]) {
     by+=txt_bloco(TXT_PAINEL_ITEM,detTit,250,250,248,ix,by,iw,34.0f,a,0)+22.0f;
   }
+  if(detAudio[0]) {
+    plrui_kicker("Áudio",ix,by,243,242,239,a*.45f); by+=30.0f;
+    by+=txt_bloco(TXT_PG_FIM,detAudio,200,200,198,ix,by,iw,DET_LD,a,0)+22.0f;
+  }
+  if(detLeg[0]) {
+    plrui_kicker("Legendas",ix,by,243,242,239,a*.45f); by+=30.0f;
+    by+=txt_bloco(TXT_PG_FIM,detLeg,200,200,198,ix,by,iw,DET_LD,a,0)+22.0f;
+  }
   if(detArq[0]) {
     plrui_kicker("Arquivo",ix,by,243,242,239,a*.45f); by+=30.0f;
     by+=txt_bloco(TXT_PG_FIM,detArq,150,150,148,ix,by,iw,DET_LD,a,0)+22.0f;
@@ -3867,12 +3966,25 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
       ajuda=soCache
         ? "Mostrando só fontes que o debrid já tem: tocam na hora. OK tira o filtro."
         : "Filtra para fontes que o debrid já tem (tocam na hora, sem baixar antes). OK liga o filtro.";
-    else if(botaoDe(foco)==BT_DUB)
-      ajuda=filtroEmPortugues()
+    else if(botaoDe(foco)==BT_DUB) {
+      static char ajudaIdioma[200];
+      char cods[24][6];
+      int nc=idiomasDaLista(cods,24), ultimo=soDub==2 && nc && !strcmp(cods[nc-1],filtroCod);
+      if(soDub==2) {
+        // Frase montada: o formato e o nome passam por i18n separados (idioma.h).
+        snprintf(ajudaIdioma,sizeof ajudaIdioma,
+                 i18n(ultimo ? "Só fontes com áudio em %s. OK tira o filtro."
+                             : "Só fontes com áudio em %s. OK passa para o próximo idioma."),
+                 i18n(nomeIdiomaFonte(filtroCod)));
+        ajuda=ajudaIdioma;
+      } else if(soDub==1 && nc)
+        ajuda="Mostrando só fontes com áudio no seu idioma. OK passa para o próximo idioma.";
+      else ajuda=filtroEmPortugues()
         ? (soDub ? "Mostrando só fontes com áudio em português. OK tira o filtro."
                  : "Filtra para fontes dubladas ou com áudio em português. OK liga o filtro.")
         : (soDub ? "Mostrando só fontes com áudio no seu idioma. OK tira o filtro."
                  : "Filtra para fontes com áudio no seu idioma. OK liga o filtro.");
+    }
     else if(botaoDe(foco)==BT_SO_MP4)
       ajuda=soMp4
         ? "Mostrando só containers MP4 (útil para achar Dolby Vision em MP4). OK tira o filtro."
@@ -4098,6 +4210,7 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         mx += caixaAlta(dica,135,130,125,mx,cy,anim)+18;
       }
       if(s->foraCache) mx += caixaAlta("Fora do cache",185,179,171,mx,cy,anim)+18;
+      if(semSomNaTv(s)) mx += caixaAlta("Sem som",204,178,132,mx,cy,anim)+18;
       if(dvSemBase(s)) mx += caixaAlta(dvSemBase(s)==2 ? "Cores erradas nesta TV" : "Pode ter cores erradas",
                                        204,178,132,mx,cy,anim)+18;
       if(fitPesada(i)){

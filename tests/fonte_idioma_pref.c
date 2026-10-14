@@ -68,8 +68,35 @@ int main(void) {
   fonte(&l[0], "4K ingles", 2160, "en");
   espera("1080p latino", vence(l, 2), "preferencia em ISO 639-2 (spa)");
 
+  // Legenda no idioma da pessoa: segundo criterio, abaixo do audio.
+  ling_local_audio("es");
+  ling_local_legenda("es");
+  fonte(&l[0], "4K ingles", 2160, "en");
+  fonte(&l[1], "4K ingles leg es", 2160, "en");
+  snprintf(l[1].idiomasLegenda[0], 6, "es"); l[1].nIdiomasLegenda = 1;
+  espera("4K ingles leg es", vence(l, 2), "sem audio dela: a legenda dela desempata");
+  fonte(&l[2], "1080p espanhol", 1080, "es");
+  espera("1080p espanhol", vence(l, 3), "audio dela > legenda dela, mesmo um degrau abaixo");
+  ling_local_legenda("");
+
+  // Filtro "Dublado" percorre: desligado -> meu idioma -> idiomas da lista.
+  { Stream f[3];
+    fonte(&f[0], "a", 1080, "en"); fonte(&f[1], "b", 1080, "lat"); fonte(&f[2], "c", 1080, "en,es");
+    stream_definir_lista(f, 3);
+    soDub = 0;
+    filtroIdiomaProximo(); verdade(soDub == 1, "filtro: 1o OK = meu idioma");
+    filtroIdiomaProximo(); verdade(soDub == 2 && !strcmp(filtroCod, "en"), "filtro: 2o OK = o mais declarado (en)");
+    verdade(passaChips(0) && !passaChips(1) && passaChips(2), "filtro en: so as com ingles");
+    filtroIdiomaProximo(); verdade(soDub == 2 && !strcmp(filtroCod, "lat"), "filtro: 3o OK = latino");
+    verdade(!passaChips(0) && passaChips(1) && !passaChips(2), "filtro lat: so a latina");
+    filtroIdiomaProximo(); verdade(soDub == 2 && !strcmp(filtroCod, "es"), "filtro: 4o OK = castellano");
+    filtroIdiomaProximo(); verdade(soDub == 0, "filtro: depois do ultimo idioma, desliga");
+    verdade(!strcmp(nomeIdiomaFonte("lat"), "Espanhol latino"), "nome do latino"); }
+
   // Filtro "Dublado": audio no idioma da pessoa.
   ling_local_audio("es");
+  fonte(&l[0], "4K ingles", 2160, "en");
+  fonte(&l[1], "1080p latino", 1080, "lat");
   verdade(temAudioMeu(&l[1]) && !temAudioMeu(&l[0]), "filtro: latino entra, so ingles fica de fora");
   verdade(!filtroEmPortugues(), "filtro em espanhol usa o texto 'no seu idioma'");
   ling_local_audio("pt");
@@ -91,6 +118,10 @@ int main(void) {
     rotuloQualidade(&d, res, sizeof res, fx, sizeof fx, &hd);
     verdade(strcmp(fx, "DV") && dvSemBase(&d) == 2 && !(logosDa(&d, 0) & badges_bit("v-dv")),
             "Samsung: DV perfil 5 sem 'DV', sem logo DV e com aviso de cor");
+    d.badges = badges_detectar("2160p DTS-HD MA 7.1");
+    verdade(semSomNaTv(&d), "Samsung: so DTS-HD avisa 'Sem som'");
+    d.badges = badges_detectar("2160p DTS-HD MA DDP5.1");
+    verdade(!semSomNaTv(&d), "Samsung: DTS com DD+ junto toca, sem aviso");
 #else
     verdade(!strcmp(fx, "DV") && !dvSemBase(&d), "fora da Samsung: DV continua DV");
 #endif

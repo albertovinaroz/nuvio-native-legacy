@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include "gl_compat.h"
 
-// ESTE APARELHO ANIMA GIF? 0 no webOS e no Mac; no Tizen, 1 quando o
+// ESTE APARELHO ANIMA GIF? 0 no webOS; no Tizen (e na previa do Mac), 1 quando o
 // orcamento abaixo nao e zero (TV de 1 GB: 0, fica a foto parada). Existe para
 // quem CHAMA nao pagar nada onde a resposta e nao: sem ela, o cartaz em foco
 // pediria o download do GIF a cada foco, para gif_textura devolver 0 no fim —

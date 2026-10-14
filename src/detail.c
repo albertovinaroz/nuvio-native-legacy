@@ -3838,7 +3838,14 @@ static void desenhaBotao(GfxRect r, const char *rot, int icone, int focado, floa
     float sx = circular ? NV_DETW2_FOCO_SY : NV_DETW2_FOCO_SX;
     float sy = NV_DETW2_FOCO_SY;
     float cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f;
-    r.w *= sx; r.h *= sy;
+    // A PILULA LARGA NAO INVADE O VIZINHO. 11,4% foi medido numa pilula
+    // estreita ("Reproduzir"); com trilho de progresso e "1h 6min" ela passa
+    // de 380 px e crescia 22 px de cada lado, mais que os 18 do vao, e
+    // encostava no "Assistir do começo". Cada lado cresce no maximo 5 px: o
+    // vao focado fica em 13, perto dos 18 entre os circulares.
+    float dw = r.w * (sx - 1.0f), maxDw = NV_DETW2_BTN_GAP - 8.0f;
+    if (!circular && dw > maxDw) dw = maxDw;
+    r.w += dw; r.h *= sy;
     r.x = cx - r.w * 0.5f; r.y = cy - r.h * 0.5f;
     foco_anel(r, NV_RAIO_PILL, 1.0f, a);   // so com "Foco no cartaz" ligado
   }
