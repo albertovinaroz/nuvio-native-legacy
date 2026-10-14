@@ -1,0 +1,149 @@
+# Cada 30 min mira si iqui27/nuvio-native-legacy publicó una release nueva.
+# Si la hay y este fork aún no la tiene:
+#   1. integra (merge) la tag del upstream en master, conservando nuestros
+#      commits (banderas de idioma, auto-update apuntando a este fork);
+#   2. compila el .tpk de Tizen 8–9 (NuvioTpk) con tools/tpk.sh;
+#   3. publica la release aquí con la MISMA tag y las notas del upstream, más
+#      la libnuvio-<v>-tpk-arm.so que usa el auto-update del app.
+# Si el merge tiene conflictos, abre un issue y no publica nada.
+#
+# Secret necesario: NUVIO_LOCAL_PROPERTIES (contenido del local.properties con
+# las claves de servidor, ver tools/env.sh).
+name: Release desde upstream
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag del upstream a publicar (vacío = la última release)"
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+
+# Una sola ejecución a la vez: la siguiente ve la release ya creada y no hace nada.
+concurrency:
+  group: release-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: iqui27/nuvio-native-legacy
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      nueva: ${{ steps.v.outputs.nueva }}
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_MANUAL: ${{ inputs.tag }}
+        run: |
+          TAG="${TAG_MANUAL:-$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)}"
+          [ -n "$TAG" ] || { echo "sin release en $UPSTREAM"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "nueva=0" >> "$GITHUB_OUTPUT"; echo "$TAG ya publicada en este fork"
+          else
+            echo "nueva=1" >> "$GITHUB_OUTPUT"; echo "$TAG es nueva: se integra y se publica"
+          fi
+
+  publicar:
+    needs: comprobar
+    if: needs.comprobar.outputs.nueva == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 340
+    env:
+      TAG: ${{ needs.comprobar.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Integrar la tag del upstream en master
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM.git"
+          git fetch --no-tags upstream "refs/tags/$TAG:refs/tags/upstream/$TAG"
+          if ! git merge --no-edit -m "Merge upstream $TAG" "upstream/$TAG"; then
+            git diff --name-only --diff-filter=U | tee conflictos.txt
+            git merge --abort
+            TITULO="Conflicto al integrar upstream $TAG"
+            if [ -z "$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "$TITULO in:title" -q '.[].number' --json number)" ]; then
+              { echo "El merge automático de \`$TAG\` en \`master\` tiene conflictos en:"; echo; while read -r f; do echo "- \`$f\`"; done < conflictos.txt; echo
+                echo "Resuélvelo a mano (\`git fetch https://github.com/$UPSTREAM.git tag $TAG && git merge $TAG\`), sube master y relanza el workflow."; } > cuerpo.md
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$TITULO" --body-file cuerpo.md
+            fi
+            exit 1
+          fi
+          git push origin HEAD:master
+
+      - name: Herramientas del host
+        run: |
+          sudo apt-get -qq update && sudo apt-get -qq install -y ffmpeg unzip >/dev/null
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 8.0 --install-dir "$HOME/.dotnet"
+          curl -fsSL https://raw.githubusercontent.com/Samsung/Tizen.NET/main/workload/scripts/workload-install.sh -o "$RUNNER_TEMP/workload-install.sh"
+          DOTNET_CLI_TELEMETRY_OPTOUT=1 bash "$RUNNER_TEMP/workload-install.sh" -d "$HOME/.dotnet"
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm
+
+      # La imagen ARM y las dependencias estáticas tardan ~1 h la primera vez
+      # bajo emulación; con caché, las siguientes releases solo recompilan el app.
+      - name: Caché de la imagen del compilador
+        id: cache-img
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/nuvio-sdk-img
+          key: nuvio-sdk-img-${{ hashFiles('.github/fork/sdk/Dockerfile') }}
+
+      - name: Imagen nuvio-tpk-sdk
+        run: |
+          if [ -f ~/.cache/nuvio-sdk-img/sdk.tar ]; then
+            docker load -i ~/.cache/nuvio-sdk-img/sdk.tar
+          else
+            docker build --platform linux/arm/v5 -t nuvio-tpk-sdk .github/fork/sdk
+            mkdir -p ~/.cache/nuvio-sdk-img && docker save nuvio-tpk-sdk -o ~/.cache/nuvio-sdk-img/sdk.tar
+          fi
+
+      - name: Caché de dependencias y objetos
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/nuvio-tpk
+          key: nuvio-tpk-${{ hashFiles('tools/tpk/deps.sh', 'tools/tpk.sh', '.github/fork/sdk/Dockerfile') }}-${{ github.run_id }}
+          restore-keys: nuvio-tpk-${{ hashFiles('tools/tpk/deps.sh', 'tools/tpk.sh', '.github/fork/sdk/Dockerfile') }}-
+
+      - name: Compilar NuvioTpk (Tizen 8–9)
+        env:
+          NUVIO_LOCAL_PROPERTIES: ${{ secrets.NUVIO_LOCAL_PROPERTIES }}
+        run: |
+          [ -n "$NUVIO_LOCAL_PROPERTIES" ] || { echo "falta el secret NUVIO_LOCAL_PROPERTIES"; exit 1; }
+          printf '%s\n' "$NUVIO_LOCAL_PROPERTIES" > "$RUNNER_TEMP/local.properties"
+          export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet" DOTNET_CLI_TELEMETRY_OPTOUT=1
+          NUVIO_PROPERTIES="$RUNNER_TEMP/local.properties" NV_TPK_PACOTES=NuvioTpk bash tools/tpk.sh
+          rm -f "$RUNNER_TEMP/local.properties"
+          # Docker escribe la caché como root; actions/cache la guarda como runner.
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/nuvio-tpk
+
+      - name: Publicar la release
+        run: |
+          NOMBRE=$(gh release view "$TAG" -R "$UPSTREAM" --json name -q .name)
+          { echo "> Fork de [$UPSTREAM](https://github.com/$UPSTREAM/releases/tag/$TAG) con las banderas de idioma de audio y subtítulos en la lista de fuentes. Solo incluye el paquete Samsung Tizen 8–9 (\`NuvioTpk\`); el resto de plataformas, en el upstream."
+            echo
+            gh release view "$TAG" -R "$UPSTREAM" --json body -q .body; } > notas.md
+          # La tag apunta a NUESTRO merge, no al commit del upstream con el mismo nombre.
+          git tag -f "$TAG" HEAD
+          git push -f origin "refs/tags/$TAG"
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --latest \
+            --title "$NOMBRE" --notes-file notas.md \
+            build/tpk/Nuvio-*-NuvioTpk.tpk build/tpk/libnuvio-*-tpk-arm.so
