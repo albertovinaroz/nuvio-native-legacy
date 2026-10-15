@@ -1660,6 +1660,7 @@ static char *viaAndroid(const char *verbo, const char *url, int segundos,
   long bytes = 0;
   unsigned long t0 = redeAgoraMs();
   static int logados;
+  redeBytesLocal = 0;
   if (status) *status = 0;
   for (k = 0; cab && cab[k]; k++) {
     n += strlen(cab[k]) + 1;
@@ -1689,6 +1690,8 @@ static char *viaAndroid(const char *verbo, const char *url, int segundos,
   }
   if (!r) { snprintf(redeErroTxt, sizeof redeErroTxt, "android: %.180s", erro); return NULL; }
   redeErroTxt[0] = 0;
+  // Os wrappers medidos leem este contador mesmo sem pedir `tam`.
+  redeBytesLocal = bytes;
   if (st == 401 && aviso401) aviso401(url);
   if (status) *status = st;
   else if (st < 200 || st > 299) { free(r); return NULL; }  // como rede_baixar sem status

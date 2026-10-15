@@ -4,6 +4,7 @@
 #include "linguas.h"
 #include "streams.h"
 #include "debrid.h"
+#include "perfisessao.h"
 #include "rede.h"
 #include "js.h"
 #include "marco.h"
@@ -251,16 +252,19 @@ static void progLimpar(void) {
 
 void addons_capturar_escopo(FontecacheEscopo *e) {
   memset(e, 0, sizeof *e);
+  e->sessao = nv_perfil_sessao_ler();
+  if (!nv_perfil_sessao_travar(e->sessao)) return;
   snprintf(e->conta, sizeof e->conta, "%s", sessao_usuario());
   e->perfil = perfis_ativo();
   e->addons = versaoLista;
   e->geracao = fontecache_vod_geracao();
+  nv_perfil_sessao_destravar();
 }
 
 static int escopoAindaAtual(const FontecacheEscopo *e) {
   FontecacheEscopo atual;
   addons_capturar_escopo(&atual);
-  return atual.perfil == e->perfil && atual.addons == e->addons &&
+  return atual.sessao == e->sessao && atual.perfil == e->perfil && atual.addons == e->addons &&
          atual.geracao == e->geracao && !strcmp(atual.conta, e->conta);
 }
 
@@ -2273,6 +2277,7 @@ static void segundaChance(Consulta *c, int fios) {
 #define ORIGENS_EXTRA_MAX 2
 static OrigemExtra origensExtra[ORIGENS_EXTRA_MAX];
 static int (*origensExtraAtiva[ORIGENS_EXTRA_MAX])(void);
+static OrigemPreparoOps origensExtraPreparo[ORIGENS_EXTRA_MAX];
 static int nOrigensExtra;
 void addons_definir_origem_extra(OrigemExtra f, int (*ativa)(void)) {
   int i;
@@ -2287,6 +2292,12 @@ void addons_definir_origem_extra(OrigemExtra f, int (*ativa)(void)) {
 }
 static int origemExtraViva(int i) {
   return origensExtra[i] && origensExtraAtiva[i] && origensExtraAtiva[i]();
+}
+void addons_definir_origem_extra_preparo(OrigemExtra f, const OrigemPreparoOps *ops) {
+  for (int i = 0; i < nOrigensExtra; i++) if (origensExtra[i] == f) {
+    origensExtraPreparo[i] = ops ? *ops : (OrigemPreparoOps){0};
+    return;
+  }
 }
 int addons_origem_extra_ativa(void) {
   int i;
@@ -2593,6 +2604,283 @@ int addons_consultar(const char *id, const char *tipo, const char *base, int fio
   return n;
 }
 
+// Consulta especulativa independente. A configuracao e copiada na UI e
+// cada filho recebe tambem as credenciais capturadas; a busca em andamento,
+// suas fontes, suas marcas de latencia e seus plugins ficam intactos.
+typedef struct {
+  char nome[64], base[NV_ADDON_URL_MAX];
+  int ativo, fonte, ordem;
+} AddonCapturado;
+typedef struct {
+  OrigemExtra origem;
+  OrigemPreparoOps ops;
+  void *dados;
+  int ativa, ordem;
+} OrigemCapturada;
+struct AddonsConsulta {
+  AddonCapturado *addons;
+  int n;
+  OrigemCapturada extras[ORIGENS_EXTRA_MAX];
+  int nExtras;
+  unsigned versao;
+  DebridContexto debrid;
+  uint64_t sessao;
+};
+AddonsConsulta *addons_consulta_capturar(void) {
+  AddonsConsulta *c = calloc(1, sizeof *c);
+  if (!c) return NULL;
+  c->sessao = nv_perfil_sessao_ler();
+  if (!nv_perfil_sessao_travar(c->sessao)) { free(c); return NULL; }
+  c->n = nAddon; c->versao = addons_versao();
+  debrid_contexto_capturar(&c->debrid);
+  if (c->n) c->addons = calloc((size_t)c->n, sizeof *c->addons);
+  if (c->n && !c->addons) {
+    nv_perfil_sessao_destravar(); free(c); return NULL;
+  }
+  for (int i = 0; i < c->n; i++) {
+    AddonCapturado *a = &c->addons[i];
+    snprintf(a->nome, sizeof a->nome, "%s", addon[i].nome);
+    snprintf(a->base, sizeof a->base, "%s", addon[i].base);
+    a->ativo = addon[i].ativo; a->fonte = __atomic_load_n(&addon[i].fonte, __ATOMIC_ACQUIRE);
+    a->ordem = i;
+  }
+  nv_perfil_sessao_destravar();
+  // O registro e estavel na UI. Cada origem conserva somente suas copias;
+  // nenhuma conta ou manifesto ativo e consultado no fio especulativo.
+  c->nExtras = nOrigensExtra;
+  for (int i = 0; i < c->nExtras; i++) {
+    OrigemCapturada *o = &c->extras[i];
+    o->origem = origensExtra[i]; o->ops = origensExtraPreparo[i];
+    o->ativa = origemExtraViva(i); o->ordem = i;
+    if (!o->ativa) continue;
+    if (!o->ops.capturar || !o->ops.atual || !o->ops.consultar || !o->ops.liberar ||
+        !(o->dados = o->ops.capturar())) { addons_consulta_liberar(c); return NULL; }
+  }
+  if (!addons_consulta_atual(c)) { addons_consulta_liberar(c); return NULL; }
+  return c;
+}
+int addons_consulta_atual(const AddonsConsulta *c) {
+  if (!c || !nv_perfil_sessao_travar(c->sessao)) return 0;
+  int atual = c->versao == addons_versao() && c->n == nAddon;
+  for (int i = 0; atual && i < c->n; i++) {
+    const AddonCapturado *a = &c->addons[i];
+    if (a->ativo != addon[i].ativo || a->fonte != __atomic_load_n(&addon[i].fonte, __ATOMIC_ACQUIRE) ||
+        strcmp(a->nome, addon[i].nome) || strcmp(a->base, addon[i].base)) atual = 0;
+  }
+  nv_perfil_sessao_destravar();
+  if (!atual) return 0;
+  DebridContexto debridAtual = {0}; debrid_contexto_capturar(&debridAtual);
+  if (c->debrid.sessao != debridAtual.sessao || c->debrid.busca != debridAtual.busca ||
+      memcmp(c->debrid.chave, debridAtual.chave, sizeof debridAtual.chave)) return 0;
+  if (c->nExtras != nOrigensExtra) return 0;
+  for (int i = 0; i < c->nExtras; i++) {
+    const OrigemCapturada *o = &c->extras[i];
+    const OrigemPreparoOps *ops = &origensExtraPreparo[i];
+    if (o->origem != origensExtra[i] || o->ativa != origemExtraViva(i) ||
+        o->ops.capturar != ops->capturar || o->ops.atual != ops->atual ||
+        o->ops.consultar != ops->consultar || o->ops.liberar != ops->liberar ||
+        (o->ativa && !o->ops.atual(o->dados))) return 0;
+  }
+  return nv_perfil_sessao_atual(c->sessao);
+}
+void addons_consulta_liberar(AddonsConsulta *c) {
+  if (!c) return;
+  for (int i = 0; i < c->nExtras; i++)
+    if (c->extras[i].dados) c->extras[i].ops.liberar(c->extras[i].dados);
+  if (c->addons) memset(c->addons, 0, (size_t)c->n * sizeof *c->addons);
+  free(c->addons); memset(c, 0, sizeof *c); free(c);
+}
+typedef struct {
+  const AddonsConsulta *snapshot;
+  const char *id, *tipo;
+  int (*cancelado)(void *); void *ctx;
+  int proximo;
+  BaldeFonte *baldes;
+  pthread_mutex_t trava;
+} ConsultaCapturada;
+// Uma pagina de erro/truncamento nao equivale a {"streams":[]}.
+static int arrayDeFontesCompleto(const char *corpo) {
+  if (!corpo) return 0;
+  const char *ini = pulaEspaco(corpo), *fim = js_fim(ini);
+  if (*ini != '{' || !fim || fim <= ini || fim[-1] != '}' || *pulaEspaco(fim)) return 0;
+  int profundidade = 0;
+  for (const char *p = ini; p < fim; p++) {
+    if (*p == '"') {
+      const char *chave = p + 1, *fecha = chave;
+      while (fecha < fim && *fecha != '"') {
+        if (*fecha == '\\' && fecha + 1 < fim) fecha++;
+        fecha++;
+      }
+      if (fecha >= fim) return 0;
+      const char *v = pulaEspaco(fecha + 1);
+      if (profundidade == 1 && fecha - chave == 7 && !memcmp(chave, "streams", 7) && *v == ':') {
+        v = pulaEspaco(v + 1); const char *af = js_fim(v);
+        if (*v != '[' || !af || af <= v || af > fim || af[-1] != ']') return 0;
+        const char *q = pulaEspaco(v + 1);
+        while (q < af - 1) {
+          const char *of = js_fim(q);
+          if (*q != '{' || !of || of <= q || of > af - 1 || of[-1] != '}') return 0;
+          q = pulaEspaco(of);
+          if (q == af - 1) break;
+          if (*q != ',') return 0;
+          q = pulaEspaco(q + 1); if (q == af - 1) return 0;
+        }
+        return q == af - 1;
+      }
+      p = fecha;
+    } else if (*p == '{' || *p == '[') profundidade++;
+    else if (*p == '}' || *p == ']') profundidade--;
+  }
+  return 0;
+}
+static void *fioConsultaCapturada(void *u) {
+  ConsultaCapturada *c = u;
+  debrid_contexto_entrar(&c->snapshot->debrid);
+  for (;;) {
+    pthread_mutex_lock(&c->trava);
+    int i = c->proximo++;
+    pthread_mutex_unlock(&c->trava);
+    if (i >= c->snapshot->n) break;
+    if (!nv_perfil_sessao_atual(c->snapshot->sessao) || (c->cancelado && c->cancelado(c->ctx))) break;
+    const AddonCapturado *a = &c->snapshot->addons[i];
+    if (!a->ativo || !a->fonte) { c->baldes[i].respondeu = 1; continue; }
+    char url[NV_ADDON_PEDIDO_MAX], idUrl[768];
+    if (!nv_addon_id(idUrl, sizeof idUrl, c->id) ||
+        !nv_addon_url(url, sizeof url, a->base, "/stream/%s/%s.json", c->tipo, idUrl)) continue;
+    char *corpo = rede_baixar(url, 12);
+    if (!corpo) {
+      if (!nv_perfil_sessao_atual(c->snapshot->sessao) || (c->cancelado && c->cancelado(c->ctx))) break;
+      // A mesma segunda chance limitada do prefetch de addons. Sem corpo
+      // depois dela, a lista parcial nao vale para a transicao preparada.
+      corpo = rede_baixar(url, 12);
+    }
+    if (!corpo) continue;
+    if (!arrayDeFontesCompleto(corpo)) { free(corpo); continue; }
+    Stream *fontes = NULL;
+    int nFontes = stream_extrair(corpo, a->nome, &fontes);
+    free(corpo);
+    if (nFontes < 0) { free(fontes); continue; }
+    char chave[FONTEFALHA_CHAVE]; fontefalha_addon_chave(a->base, chave, sizeof chave);
+    for (int q = 0; q < nFontes; q++) {
+      snprintf(fontes[q].addonChave, sizeof fontes[q].addonChave, "%s", chave);
+      fontes[q].addonOrdem = a->ordem;
+    }
+    c->baldes[i].achados = fontes; c->baldes[i].n = nFontes; c->baldes[i].respondeu = 1;
+  }
+  debrid_contexto_sair();
+  return NULL;
+}
+typedef struct {
+  ConsultaCapturada *pai;
+  const OrigemCapturada *origem;
+  Stream *fontes;
+  int n;
+  _Atomic int pendentes, incompleta;
+  char chaves[ADD_EXTRA_MAX][FONTEFALHA_CHAVE];
+} ResultadoExtraCapturado;
+static int cancelaConsultaCapturada(void *u) {
+  ConsultaCapturada *c = u;
+  if (!nv_perfil_sessao_atual(c->snapshot->sessao)) return 1;
+  return c->cancelado && c->cancelado(c->ctx);
+}
+static void avisoExtraCapturado(void *u, int k, const char *nome, int estado,
+                                const void *fontes, int n) {
+  ResultadoExtraCapturado *o = u;
+  (void)nome;
+  if (fontes && n > 0 && k >= 0 && k < ADD_EXTRA_MAX) {
+    const Stream *s = fontes;
+    if (s->addonChave[0]) snprintf(o->chaves[k], sizeof o->chaves[k], "%s", s->addonChave);
+    else fonteExtraChave(s, o->chaves[k], sizeof o->chaves[k]);
+  }
+  if (estado == 1) atomic_fetch_add(&o->pendentes, 1);
+  if (estado == 2 || estado == 3) atomic_fetch_sub(&o->pendentes, 1);
+  if (estado == 3) atomic_store(&o->incompleta, 1);
+}
+static void *fioExtraCapturado(void *u) {
+  ResultadoExtraCapturado *o = u;
+  if (cancelaConsultaCapturada(o->pai)) { o->n = -1; return NULL; }
+  debrid_contexto_entrar(&o->pai->snapshot->debrid);
+  o->n = o->origem->ops.consultar(o->origem->dados, o->pai->id, o->pai->tipo,
+                                cancelaConsultaCapturada, o->pai,
+                                avisoExtraCapturado, o, &o->fontes);
+  debrid_contexto_sair();
+  if (o->n < 0 || (o->n > 0 && !o->fontes) || atomic_load(&o->pendentes) ||
+      cancelaConsultaCapturada(o->pai)) atomic_store(&o->incompleta, 1);
+  for (int i = 0; o->fontes && i < o->n; i++) {
+    int ordem = o->origem->ordem;
+    fonteExtraCarimbar(&o->fontes[i], 1, ordem);
+    if (o->fontes[i].addonChave[0])
+      for (int k = 0; k < ADD_EXTRA_MAX; k++)
+        if (!strcmp(o->fontes[i].addonChave, o->chaves[k])) { ordem = k; break; }
+    o->fontes[i].addonOrdem = ADD_MAX + ordem;
+  }
+  return NULL;
+}
+int addons_consulta_consultar(const AddonsConsulta *snapshot, const char *id, const char *tipo,
+                              int fios, int (*cancelado)(void *), void *ctx, void *saida) {
+  Stream **out = saida;
+  if (!out) return -1;
+  *out = NULL;
+  if (!snapshot || !id || !*id || !tipo || !*tipo) return -1;
+  ConsultaCapturada c = {0};
+  c.snapshot = snapshot; c.id = id; c.tipo = tipo; c.cancelado = cancelado; c.ctx = ctx;
+  if (cancelaConsultaCapturada(&c)) return -1;
+  if (snapshot->n) {
+    c.baldes = calloc((size_t)snapshot->n, sizeof *c.baldes);
+    if (!c.baldes) return -1;
+  }
+  pthread_mutex_init(&c.trava, NULL);
+  // As origens extras comecam junto do fanout de addons, nunca depois dele.
+  ResultadoExtraCapturado extras[ORIGENS_EXTRA_MAX] = {0};
+  pthread_t fe[ORIGENS_EXTRA_MAX]; int extraVivo[ORIGENS_EXTRA_MAX] = {0};
+  for (int i = 0; i < snapshot->nExtras; i++) {
+    if (!snapshot->extras[i].ativa) continue;
+    extras[i].pai = &c; extras[i].origem = &snapshot->extras[i];
+    pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 512u * 1024);
+    extraVivo[i] = pthread_create(&fe[i], &a, fioExtraCapturado, &extras[i]) == 0;
+    pthread_attr_destroy(&a);
+    if (!extraVivo[i]) fioExtraCapturado(&extras[i]);
+  }
+  pthread_t f[ADD_FIOS]; int vivos = 0;
+  if (fios < 1) fios = 1; if (fios > ADD_FIOS) fios = ADD_FIOS;
+  for (int i = 0; snapshot->n && i < fios; i++)
+    if (pthread_create(&f[vivos], NULL, fioConsultaCapturada, &c) == 0) vivos++;
+  if (snapshot->n && !vivos) fioConsultaCapturada(&c);
+  for (int i = 0; i < vivos; i++) pthread_join(f[i], NULL);
+  for (int i = 0; i < snapshot->nExtras; i++) if (extraVivo[i]) pthread_join(fe[i], NULL);
+  int total = 0, incompleta = cancelaConsultaCapturada(&c);
+  for (int i = 0; i < snapshot->n; i++) {
+    if (!c.baldes[i].respondeu) incompleta = 1;
+    if (c.baldes[i].n > 0) total += c.baldes[i].n;
+  }
+  for (int i = 0; i < snapshot->nExtras; i++) {
+    if (atomic_load(&extras[i].incompleta)) incompleta = 1;
+    if (extras[i].n > 0) total += extras[i].n;
+  }
+  Stream *resultado = !incompleta && total ? malloc((size_t)total * sizeof *resultado) : NULL;
+  if (total && !resultado) incompleta = 1;
+  int n = 0;
+  for (int i = 0; i < snapshot->n; i++) {
+    if (!incompleta && c.baldes[i].n > 0) {
+      memcpy(resultado + n, c.baldes[i].achados, (size_t)c.baldes[i].n * sizeof *resultado);
+      n += c.baldes[i].n;
+    }
+    free(c.baldes[i].achados);
+  }
+  // Mesma ordem foreground: addons instalados, depois origem/scraper.
+  for (int i = 0; i < snapshot->nExtras; i++) {
+    if (!incompleta && extras[i].n > 0) {
+      memcpy(resultado + n, extras[i].fontes, (size_t)extras[i].n * sizeof *resultado);
+      n += extras[i].n;
+    }
+    free(extras[i].fontes);
+  }
+  free(c.baldes); pthread_mutex_destroy(&c.trava);
+  if (incompleta) { free(resultado); return -1; }
+  *out = resultado; return n;
+}
+
+// Contagens da LISTA (nao da consulta), para "nao ha a quem perguntar".
 // Contagens da LISTA (nao da consulta), para "nao ha a quem perguntar".
 static void resumoDaLista(Resumo *rs) {
   int i;

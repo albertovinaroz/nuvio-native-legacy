@@ -7,6 +7,9 @@
 // preferencias do player, mas quem o define e o modulo de video.
 #include "video.h"
 #include "catalogo.h"
+#ifdef NV_ANDROID
+#include "streams.h"
+#endif
 #include "aovivo.h"
 #include <SDL2/SDL.h>
 
@@ -22,6 +25,17 @@ void player_do_inicio(void);
 // da duracao real; metadados/reservas nao servem para converter percentual.
 double player_regra_retomada_inicial(double posSalva, double durSalva,
                                      int percentual, int concluido);
+#ifdef NV_ANDROID
+// Prepara a mesma retomada do Play sem abrir sessao nem gravar progresso.
+int player_precarregar_fonte(int indiceCatalogo, int temporada, int episodio,
+                            int indiceFonte, unsigned token);
+unsigned player_precarregar_novo_token(void);
+int player_precarregar_proxima_fonte(int indiceCatalogo, int temporada, int episodio,
+                                    const Stream *fonte, unsigned token);
+int player_precarregar_estado(unsigned token);
+void player_precarregar_cancelar(unsigned token);
+void player_precarregar_adotar(unsigned token);
+#endif
 void player_episodio_atual(int *temporada, int *episodio);
 void player_aprender_creditos(void);
 int player_indice(void);

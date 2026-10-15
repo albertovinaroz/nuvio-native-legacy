@@ -120,6 +120,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_FONTE_AUTO: return "aj_list-video";
     case AJ_FONTE_REPOR: return "aj_list-video";
     case AJ_FONTE_PREPARAR: return "aj_download";
+    case AJ_FONTE_PRECARREGAR: return "aj_download";
     case AJ_FONTE_CONFERIR_VARIAS: return "aj_layers";
     case AJ_FONTE_AQUECER: return "aj_wifi";
     case AJ_FONTE_TOCAR_CONFERINDO: return "aj_zap";

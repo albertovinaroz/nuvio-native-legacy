@@ -121,6 +121,10 @@ static void avisarCascaAberto(int v) { (void)v; }
 #include <string.h>
 #include <strings.h>   // strcasecmp, para comparar o hdrType do pipeline
 #include <math.h>
+#ifdef NV_ANDROID
+#include <pthread.h>
+#include <stdatomic.h>
+#endif
 #include "ponteiro.h"
 #include "atividade.h"
 #include "reacao.h"
@@ -198,7 +202,8 @@ enum { PLR_PLAY, PLR_CC, PLR_AUDIO, PLR_ASPECTO,
        PLR_FONTES, PLR_EPISODIOS, PLR_NBTNS };
 
 // Avanco em curso: enquanto vale, posSeg e do DONO e nao do pipeline.
-static int    scrubbing, scrubPassos, scrubTocava, scrubDir;
+static int    scrubbing, scrubPassos, scrubTocava, scrubDir, scrubToque;
+static double scrubInicio;
 static Uint32 scrubUltimo;
 static SaltoEst scrubSalto;   // rajada do teclado (salto.h)
 // BUSCA SUAVE: o que a BARRA mostra durante o avanco. posSeg anda em degraus
@@ -325,6 +330,17 @@ static int   esperandoFonte = 0;   // aberto sem URL, esperando o addon responde
 // que vai ao pipeline quando ela acabar. "" = nenhuma.
 static char   prebuscaUrl[4096];
 static Uint32 prebuscaDesde;
+#ifdef NV_ANDROID
+static struct {
+  unsigned token;
+  int legenda, nativo, adotado, buffer, cacheMb, proximo;
+  MkvassPreparo *mkv;
+  Uint32 desde;
+  double segundos, pct;
+  char url[4096], cab[2048], idioma[16], audio[16];
+} preTitulo;
+static _Atomic unsigned preTituloTokens;
+#endif
 static float posSeg = 0.0f;
 // Relogio da LEGENDA (#92): posSeg e o ultimo currentTime do pipeline, que na
 // C9 chega a cada ~200 ms. A legenda desenhada com ele andava aos degraus e em
@@ -1407,7 +1423,7 @@ void player_abrir(int indiceCatalogo, const char *url) {
   aberto = 1; saindo = 0; pediuSair = 0; barraFoco = 0;
   // Titulo novo: um avanco em curso do anterior mandaria a posicao velha ao
   // pipeline novo assim que o silencio vencesse.
-  scrubbing = 0; scrubPassos = 0; scrubTocava = 0; scrubDir = 0;
+  scrubbing = 0; scrubPassos = 0; scrubTocava = 0; scrubDir = 0; scrubToque = 0; scrubInicio = 0.0;
   posVis = 0.0f; posVisV = 0.0f; posVisSolto = 0;
   encolhe = 1.0f; encolheAlvo = 0.0f; encolheT = 0.0f; encolheEm = 0;
   posplay_fechar();   // titulo novo, painel do anterior nao vale mais
@@ -1457,7 +1473,11 @@ void player_abrir(int indiceCatalogo, const char *url) {
   ultimoInput = SDL_GetTicks();
   esperandoFonte = (url == NULL);
   // Legenda externa e da sessao que acabou, nao desta.
-  faixas_reiniciar();
+#ifdef NV_ANDROID
+  if (preTitulo.adotado && preTitulo.legenda && !preTitulo.mkv) faixas_reiniciar_preparada();
+  else
+#endif
+    faixas_reiniciar();
   // F07: volume back to 100% and the cache report of the last title forgotten.
   cacheboost_sessao();
   // O modo de proporcao e do APARELHO, nao da sessao: reler aqui e o que faz
@@ -1554,6 +1574,126 @@ static int prebuscaCabe(const char *url) {
   if (s && strcmp(s->url, url)) s = NULL;     // torrent resolvido: a url e outra
   if (s && s->mp4) return 0;
   return temMkv(url) || (s && (temMkv(s->arquivo) || temMkv(s->descricao) || temMkv(s->rotulo)));
+}
+#endif
+
+#ifdef NV_ANDROID
+static int escolherLegendaPreTitulo(const char *const *idiomas, int n, const void *contexto) {
+  const char *pref = contexto;
+  return ling_legenda_auto(pref ? pref : "", idiomas, n, 1, NULL, 0, 1);
+}
+void player_precarregar_cancelar(unsigned token) {
+  if (token && preTitulo.token != token) return;
+  if (preTitulo.mkv) mkvass_preparo_cancelar(&preTitulo.mkv);
+  else if (preTitulo.legenda && (!preTitulo.adotado || !comVideo)) mkvass_parar();
+  video_precarregar_cancelar(token);
+  memset(&preTitulo, 0, sizeof preTitulo);
+}
+static int preTituloComecarVideo(void) {
+  preTitulo.nativo = (preTitulo.proximo ? video_precarregar_proximo : video_precarregar)(
+      preTitulo.url, preTitulo.cab, preTitulo.segundos, preTitulo.pct,
+      preTitulo.buffer, preTitulo.cacheMb, preTitulo.token, preTitulo.audio);
+  return preTitulo.nativo;
+}
+unsigned player_precarregar_novo_token(void) {
+  unsigned token;
+  do { token = (atomic_fetch_add_explicit(&preTituloTokens, 1, memory_order_relaxed) + 1) & 0x7fffffffu; }
+  while (!token);
+  return token;
+}
+static int preTituloCriar(int indiceCatalogo, int t, int e, const Stream *s, unsigned token, int proximo) {
+  const CatItem *c = cat_item(indiceCatalogo);
+  const char *pref;
+  int serie;
+  if (!ajustes_fonte_precarregar() || !token || !c || !s || !s->url[0] || mini || retido) return 0;
+  if (proximo ? (!aberto || !comVideo) : (aberto || video_ativo())) return 0;
+  // Na ficha sem video, Original pertence ao titulo que sera aberto. O Next
+  // apenas copia a politica atual, sem alterar o idioma da sessao em curso.
+  if (!proximo) ling_definir_original(extras_idioma_original());
+  pref = ling_legenda();
+  player_precarregar_cancelar(0);
+  preTitulo.token = token; preTitulo.proximo = proximo;
+  snprintf(preTitulo.url, sizeof preTitulo.url, "%s", s->url);
+  snprintf(preTitulo.cab, sizeof preTitulo.cab, "%s", s->cabecalhos);
+  snprintf(preTitulo.idioma, sizeof preTitulo.idioma, "%s", pref ? pref : "");
+  snprintf(preTitulo.audio, sizeof preTitulo.audio, "%s", ling_audio());
+  preTitulo.buffer = ajustes_buffer_preset(); preTitulo.cacheMb = ajustes_cache_seek_mb();
+  serie = !strcmp(c->tipo, "series");
+  if (c->progresso > 0 && c->progresso < ajustes_cw_concluido() &&
+      (!serie || (t == c->temporada && e == c->episodio))) {
+    char chave[48]; ProgRegistro r;
+    preTitulo.pct = c->progresso;
+    prog_chave(chave, sizeof chave, c->imdb, serie ? t : 0, serie ? e : 0);
+    if (prog_por_chave(chave, &r))
+      preTitulo.segundos = player_regra_retomada_inicial(r.posSeg, r.durSeg,
+          c->progresso, ajustes_cw_concluido());
+  }
+  // O contexto independente colhe a legenda enquanto o video aquece. O
+  // proximo episodio nao troca o worker nem a legenda da reproducao atual.
+  if (pref && *pref && strcasecmp(pref, "none") && !s->mp4 &&
+      (temMkv(s->url) || temMkv(s->arquivo) || temMkv(s->descricao) || temMkv(s->rotulo))) {
+    preTitulo.mkv = mkvass_preparo_criar(s->url, escolherLegendaPreTitulo,
+        preTitulo.idioma, sizeof preTitulo.idioma, preTitulo.pct / 100.0);
+    preTitulo.legenda = preTitulo.mkv != NULL;
+    preTitulo.desde = SDL_GetTicks();
+  }
+  if (preTituloComecarVideo()) return 1;
+  player_precarregar_cancelar(token);
+  return 0;
+}
+int player_precarregar_fonte(int indiceCatalogo, int t, int e, int indiceFonte, unsigned token) {
+  return preTituloCriar(indiceCatalogo, t, e, stream_item(indiceFonte), token, 0);
+}
+int player_precarregar_proxima_fonte(int indiceCatalogo, int t, int e, const Stream *s, unsigned token) {
+  // A legenda atual e o preparo futuro possuem contextos independentes.
+  return preTituloCriar(indiceCatalogo, t, e, s, token, 1);
+}
+int player_precarregar_estado(unsigned token) {
+  int estado;
+  if (!token || preTitulo.token != token) return 0;
+  if (!preTitulo.nativo) {
+    if (!preTituloComecarVideo()) return 0;
+  }
+  estado = video_precarregar_estado(token);
+  if (estado == 2 && preTitulo.mkv && mkvass_preparo_fase(preTitulo.mkv) == 1 &&
+      SDL_GetTicks() - preTitulo.desde < MKVASS_PREBUSCA_MS) return 1;
+  return estado;
+}
+void player_precarregar_adotar(unsigned token) {
+  if (!token || preTitulo.token != token) return;
+  preTitulo.adotado = 1;
+  video_precarregar_adotar(token);
+}
+// A folha reinicia seus controles sem cancelar a legenda que este Play adota.
+// Troca de posicao/idioma usa a pre-busca normal; nunca aplica a janela antiga.
+static int preTituloLegendaUsar(const char *url) {
+  const char *pref = ling_legenda();
+  double segundos = retomarFonteSeg >= 0.0 ? retomarFonteSeg : retomarSeg;
+  double pct = !semRetomada && segundos <= 0.0 ? retomarPct : 0.0;
+  int ok = preTitulo.adotado && preTitulo.legenda &&
+      !strcmp(preTitulo.url, url) && !strcmp(preTitulo.idioma, pref ? pref : "") &&
+      fabs(preTitulo.segundos - segundos) < 0.001 &&
+      (segundos > 0.0 || fabs(preTitulo.pct - pct) < 0.001);
+  if (!ok) {
+    if (preTitulo.adotado && preTitulo.legenda) player_precarregar_cancelar(preTitulo.token);
+    return 0;
+  }
+  // O player anterior ja fechou. Transfere o mesmo worker, cabecalho e
+  // blocos; nao repete Ranges nem substitui a legenda enquanto ele toca.
+  if (preTitulo.mkv && !mkvass_preparo_adotar(&preTitulo.mkv, url, preTitulo.pct / 100.0)) {
+    player_precarregar_cancelar(preTitulo.token);
+    return 0;
+  }
+  if (mkvass_prebusca_fase() == 1 &&
+      SDL_GetTicks() - preTitulo.desde < MKVASS_PREBUSCA_MS) {
+    snprintf(prebuscaUrl, sizeof prebuscaUrl, "%s", url);
+    prebuscaDesde = preTitulo.desde;
+    esperandoFonte = 1;
+    memset(&preTitulo, 0, sizeof preTitulo);
+    return 1;
+  }
+  memset(&preTitulo, 0, sizeof preTitulo);
+  return 2;
 }
 #endif
 
@@ -1691,6 +1831,11 @@ void player_definir_fonte(const char *url) {
   dvTelaFonte(url);
 #ifndef __EMSCRIPTEN__
   prebuscaUrl[0] = 0;
+#ifdef NV_ANDROID
+  int preparada = preTituloLegendaUsar(url);
+  if (preparada == 1) return;
+  if (preparada == 2) { tocarFonte(url); return; }
+#endif
   if (prebuscaCabe(url) && mkvass_prebuscar(url, escolherLegendaPrebusca, retomarPct / 100.0)) {
     // O video espera (player_atualizar solta): a tela segue em "abrindo fonte".
     if (comVideo) { video_parar(); comVideo = 0; mkvass_video_aberto(0); }
@@ -2002,6 +2147,14 @@ static void fecharSessao(int manter) {
   // principal" (impossivel): e a tela DIZER que esta saindo em vez de parecer
   // travada. Medir antes de escolher.
   { Uint32 t0 = SDL_GetTicks(), tv;
+#ifdef NV_ANDROID
+    // Depois da adocao, o buffer pertence a este player, mesmo se a fonte
+    // ainda aguarda legendas. Voltar/Stop nao deixa o token armado para
+    // outra abertura. O Next ja armado sobrevive ao fechamento do video
+    // anterior, que ainda tem comVideo e usa pararMantendoPreparo.
+    if (!manter && !comVideo && (preTitulo.adotado || prebuscaUrl[0]))
+      player_precarregar_cancelar(0);
+#endif
     if (comVideo && !manter) video_parar();
     tv = SDL_GetTicks();
     pausao_fechar();
@@ -2023,6 +2176,7 @@ static void fecharSessao(int manter) {
   retido = manter; if (!manter) retidoVoo = 0;
   prepararRetencao = 0; saidaIlhaDesde = 0;
   esperandoFonte = 0; aberto = 0; saindo = 0; pediuSair = 0;
+  scrubbing = scrubToque = 0; scrubInicio = 0.0;
   mini = 0; querMini = 0; miniGuia = 0; janAtiva = 0;
   avisarCascaAberto(0);
   // Os DOIS relogios, e nao so o do primeiro quadro. `pgDesde` sobrevivendo ao
@@ -2126,7 +2280,7 @@ int player_retomar_retido(const char *imdb, int t, int e) {
   retido = 0; retidoVoo = 0; aberto = 1; saindo = pediuSair = 0;
   desc_episodios_garantir(idxAtual());
   entrada = 1.0f; visivel = 0; anim = 0.0f; soBarra = 0;
-  scrubbing = barraFoco = 0; encolhe = 1.0f; encolheT = encolheAlvo = 0.0f;
+  scrubbing = barraFoco = scrubToque = 0; scrubInicio = 0.0; encolhe = 1.0f; encolheT = encolheAlvo = 0.0f;
   ultimoInput = agora; retomadaAplicada = 1; tocando = 1;
   medirAbertura = 0;   // a medida desta volta e a "retomada pronta" abaixo
   relogio_zerar(&relLeg);
@@ -2937,19 +3091,27 @@ static void buscarUsuario(double alvo) {
   video_buscar(alvo);
 }
 
+static void iniciarSalto(int toque) {
+  scrubInicio = comVideo ? video_pos() : posSeg;
+  scrubToque = toque;
+  scrubbing = 1;
+  scrubPassos = 0;
+  scrubTocava = tocando || retomandoSalto;
+  pausao_fechar();
+  if (tocando && comVideo) { video_pausar(1); tocando = 0; }
+  posplay_busca_usuario();
+}
+
 static void saltar(int dir, int repeticao) {
   int novo = 0;
   if (!scrubbing) {
-    scrubbing = 1;
-    scrubPassos = 0;
-    scrubTocava = tocando || retomandoSalto;
-    pausao_fechar();
-    if (tocando && comVideo) { video_pausar(1); tocando = 0; }
+    iniciarSalto(0);
     novo = 1;
   }
   // Trocar de direcao no meio da rajada recomeca a rampa: quem passou do ponto
   // e volta quer o passo pequeno de novo, nao o de 2 minutos.
   if (dir != scrubDir) novo = 1;
+  scrubToque = 0;
   scrubDir = dir;
   Uint32 agora = SDL_GetTicks();
   // Repeticao de tecla segurada entre dois passos: so mantem o avanco vivo (scrubUltimo), nao anda.
@@ -2968,13 +3130,18 @@ static void saltar(int dir, int repeticao) {
 static void terminarSalto(void) {
   if (!scrubbing) return;
   scrubbing = 0;
+  // No toque, o gesto inteiro decide a direcao. Ajustar um destino adiantado
+  // alguns segundos para tras nao e pedir para rever o episodio.
+  if (scrubToque) recuarAutomatico(scrubInicio, posSeg);
   retomandoSalto = scrubTocava;
   pausao_fechar();
   seekr_ocioso();   // solta a folha decodificada (~22 MB), fica o JPEG
   if (comVideo) {
+    if (posSeg >= scrubInicio) creditosauto_buscar(&creditosAuto, posSeg);
     buscarUsuario(posSeg);
     if (scrubTocava) { video_pausar(0); tocando = 1; }
   }
+  scrubToque = 0; scrubInicio = 0.0;
 }
 
 void player_evento(const SDL_Event *e) {
@@ -3425,7 +3592,10 @@ void player_atualizar(float dt, Uint32 agora) {
   // Fim do avanco por inatividade: o controle nao manda KEYUP confiavel, entao
   // quem decide que a pessoa soltou e o silencio.
 #ifdef NV_SHOT_HOOKS
-  if (shotBusca) { scrubbing = 1; posVisSolto = 1; scrubUltimo = agora; }
+  if (shotBusca) {
+    if (!scrubbing) scrubInicio = posSeg;
+    scrubbing = 1; posVisSolto = 1; scrubUltimo = agora;
+  }
 #endif
   if (scrubbing && agora - scrubUltimo > salto_fim_ms(ajustes_seekr_ligado())) terminarSalto();
 
@@ -3572,7 +3742,7 @@ void player_atualizar(float dt, Uint32 agora) {
     double de = posSeg;
     posSeg = anim_clamp(posSeg + salto_quadro(&scrubSalto, scrubDir, agora, dt, duracaoSeg),
                         0.0f, duracaoSeg);
-    recuarAutomatico(de, posSeg);
+    if (!scrubToque) recuarAutomatico(de, posSeg);
   }
   if (posVisSolto) {
     posVis = anim_mola2(&posVisV, posVis, posSeg, dt, PLR_BUSCA_MOLA);
@@ -3680,7 +3850,7 @@ void player_atualizar(float dt, Uint32 agora) {
     int aguardaBusca = creditosauto_aguardar(&creditosAuto, video_pos(),
       comVideo && video_pronto() && tocando && !scrubbing && !video_bufferando_ms(),
       comVideo && video_terminou(), SDL_GetTicks());
-    posplay_aguardar_busca(aguardaBusca);
+    posplay_aguardar_busca(scrubbing || aguardaBusca);
     // Canal ao vivo nao tem "fim": sem a guarda, o relogio reserva cruzaria os
     // 90% em ~1h42 de exibicao e abriria o painel de relacionados no meio da
     // programacao.
@@ -4338,22 +4508,20 @@ static void ponteiroBuscar(int a, int b) {
     // ARRASTAR NA BARRA (#216): o mesmo avanco das setas (saltar) — video
     // pausado, posSeg na mao do dedo, UMA busca no fim (terminarSalto, depois
     // de PLR_SCRUB_FIM_MS sem movimento).
-    if (!scrubbing) {
-      scrubbing = 1; scrubPassos = 0; scrubTocava = tocando || retomandoSalto;
-    pausao_fechar();
-      if (tocando && comVideo) { video_pausar(1); tocando = 0; }
-    }
+    if (!scrubbing) iniciarSalto(1);
     barraFoco = 1; skipFoco = 0;
-    double de = posSeg;
     posSeg = f * duracaoSeg;
-    recuarAutomatico(de, posSeg);
     scrubUltimo = SDL_GetTicks();
     return;
   }
   double de = comVideo ? video_pos() : posSeg;
+  posplay_busca_usuario();
   posSeg = f * duracaoSeg;
   recuarAutomatico(de, posSeg);
-  if (comVideo) buscarUsuario(posSeg);
+  if (comVideo) {
+    if (posSeg >= de) creditosauto_buscar(&creditosAuto, posSeg);
+    buscarUsuario(posSeg);
+  }
 }
 static void ponteiroSkip(int a, int b) { (void)a; (void)b; skipFoco = 1; barraFoco = 1; acordar(); }
 
@@ -5638,7 +5806,12 @@ void player_shot_esconder(void) { visivel = 0; anim = 0.0f; }
 // O aviso da ilha que esta no ar ("" sem aviso): a nota do HDR10 (dvtela.h).
 const char *player_shot_toast_texto(Uint32 agora) { return toastAte > agora ? toastTexto : ""; }
 void player_shot_carregando(int sim) { esperandoFonte = sim; erroFonte = 0; }
-void player_shot_buscando(int sim) { shotBusca = sim; scrubbing = sim; posVisSolto = sim; }
+void player_shot_buscando(int sim) {
+  if (sim && !scrubbing) scrubInicio = posSeg;
+  if (!sim) scrubInicio = 0.0;
+  scrubToque = 0;
+  shotBusca = sim; scrubbing = sim; posVisSolto = sim;
+}
 #endif
 
 // BRILHO DA INTERFACE DO PLAYER (esmaecer.h): o fator de cor que app.c aplica

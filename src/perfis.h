@@ -11,6 +11,7 @@
 // addons filtra por ESSE id, nao pelo `sub` do token.
 #ifndef NV_PERFIS_H
 #define NV_PERFIS_H
+#include <stdint.h>
 
 #define CONTA_PERFIL_MAX 8
 
@@ -54,6 +55,14 @@ int  perfis_ativo(void);                // profile_index; 1 quando nada escolhid
 // perfil herda os do primario (uses_primary_plugins), e ai e 1.
 int  perfis_ativo_addons(void);
 void perfis_definir_ativo(int indice);
+// Visita ao perfil/conta: reconfirmar o mesmo indice tambem abre outra visita.
+// O hook encerra o preparo antigo antes da troca, fora da trava de publicacao.
+void perfis_ao_abrir_sessao(void (*antes)(void));
+void perfis_invalidar_sessao(void);
+uint64_t perfis_sessao_geracao(void);
+int perfis_sessao_atual(uint64_t geracao);
+int perfis_sessao_travar(uint64_t geracao);
+void perfis_sessao_destravar(void);
 // Le do disco o perfil ativo E A LISTA DE PERFIS DA ULTIMA SESSAO. Chamar uma
 // vez no arranque, antes de app_iniciar.
 //

@@ -17,7 +17,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ART=deploy/app/art/bandeiras
 PAISES="gb es mx pt br fr de it jp kr cn ru ua pl tr nl se no dk fi gr cz hu ro
-        il th vn id in sa bg hr rs sk si"
+        il th vn id in sa bg hr rs sk si
+        my bd ir ee lv lt is ph mm ba pk mk al ge ke am kz np lk kh mn"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$ART"

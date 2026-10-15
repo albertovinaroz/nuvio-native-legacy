@@ -531,8 +531,10 @@ int px_ler_episodios(const PxConta *c, const char *corpo, size_t n, CatEp *out, 
         txtRaiz(p, f, "summary", ep->sinopse, sizeof ep->sinopse);
         dur = numRaiz(p, f, "duration", 0);
         if (dur > 0) snprintf(ep->duracao, sizeof ep->duracao, "%d min", (int)(dur / 60000.0 + 0.5));
-        if (txtRaiz(p, f, "originallyAvailableAt", data, sizeof data) && strlen(data) >= 10)
+        if (txtRaiz(p, f, "originallyAvailableAt", data, sizeof data) && strlen(data) >= 10) {
+          snprintf(ep->dataIso, sizeof ep->dataIso, "%s", data);
           snprintf(ep->data, sizeof ep->data, "%.2s/%.2s/%.4s", data + 8, data + 5, data);
+        }
         if (txtRaiz(p, f, "thumb", thumb, sizeof thumb)) imagem(c, thumb, 640, 360, ep->thumb, sizeof ep->thumb);
         k++;
       }
@@ -733,6 +735,19 @@ int px_ler_fontes(const PxConta *c, const char *rk, const char *corpo, size_t n,
 }
 
 // ------------------------------------------------------------ requests
+// Preparation binds only its own RedeJob. Foreground/PIN/report requests
+// retain their existing transport behavior; compiler TLS is avoided for Tizen.
+typedef struct {
+  const PlexPreparo *preparo;
+  int (*cancelado)(void *);
+  void *ctx;
+} PxPreparoCancelamento;
+static pthread_key_t preparoChave;
+static pthread_once_t preparoUma = PTHREAD_ONCE_INIT;
+static int preparoChaveCriada;
+static void preparoIniciar(void) { preparoChaveCriada = pthread_key_create(&preparoChave, NULL) == 0; }
+static int preparoInterrompido(void *u);
+
 // One request. Logs operation/status/latency only: never the URL (the host can
 // be a private address, the query can carry a token).
 static int pedir(const PxConta *c, const char *url, const char *token, const char *metodo,
@@ -768,6 +783,12 @@ static int pedir(const PxConta *c, const char *url, const char *token, const cha
   p.max_bytes = PX_CORPO_MAX;
   p.seguir = 1;
   p.job = job;
+  pthread_once(&preparoUma, preparoIniciar);
+  PxPreparoCancelamento *preparoCancel = preparoChaveCriada ? pthread_getspecific(preparoChave) : NULL;
+  if (preparoCancel && preparoCancel->preparo) {
+    p.parar = preparoInterrompido;
+    p.parar_usuario = preparoCancel;
+  }
   // #290: only the configured personal server (c->base) may skip certificate
   // verification, and only on its own origin (rede.h). plex.tv keeps it.
   if (c && c->base[0] && !strncmp(url, c->base, strlen(c->base))) {
@@ -1045,6 +1066,7 @@ static int nSnapFils, nSnapItens;
 static unsigned snapVersao;
 static PxIdx *indice;
 static int nIndice;
+static unsigned indiceVersao = 1;
 
 static char fontesAlvo[JFID_MAX];
 static int fontesEstado = PX_FONTES_NADA;
@@ -1171,6 +1193,7 @@ static void soltarSnapshotLocked(void) {
   nSnapFils = nSnapItens = 0;
   snapVersao++;
   free(indice); indice = NULL; nIndice = 0;
+  indiceVersao++;
   free(fontesLista); fontesLista = NULL; nFontes = 0;
   fontesAlvo[0] = 0; fontesEstado = PX_FONTES_NADA;
   for (i = 0; i < PX_SESSOES; i++) {
@@ -1671,6 +1694,7 @@ static void tarefaBibliotecas(const Tarefa *t) {
       free(indice);
       indice = idx; idx = NULL;
       nIndice = nIdx;
+      indiceVersao++;
       printf("[plex] external-id index: %d title(s)\n", nIdx);
     }
     pthread_mutex_unlock(&trava);
@@ -1919,6 +1943,188 @@ int plex_fontes_colher(const char *alvo, Stream **lista, int *n) {
   } else if (e == PX_FONTES_FALHOU) fontesEstado = PX_FONTES_NADA;
   pthread_mutex_unlock(&trava);
   return e;
+}
+
+// Optional profile-epoch linkage keeps isolated Plex fixtures usable while
+// complete apps reject every old opening, including A -> B -> A.
+#if defined(__APPLE__) && (defined(__GNUC__) || defined(__clang__))
+#define PX_PERFIL_OPCIONAL __attribute__((weak_import))
+#elif defined(__GNUC__) || defined(__clang__)
+#define PX_PERFIL_OPCIONAL __attribute__((weak))
+#else
+#define PX_PERFIL_OPCIONAL
+#endif
+extern uint64_t perfis_sessao_geracao(void) PX_PERFIL_OPCIONAL;
+extern int perfis_sessao_atual(uint64_t) PX_PERFIL_OPCIONAL;
+extern int perfis_sessao_travar(uint64_t) PX_PERFIL_OPCIONAL;
+extern void perfis_sessao_destravar(void) PX_PERFIL_OPCIONAL;
+static uint64_t preparoPerfilLer(void) {
+#if defined(__GNUC__) || defined(__clang__)
+  return perfis_sessao_geracao ? perfis_sessao_geracao() : 0;
+#else
+  return perfis_sessao_geracao();
+#endif
+}
+static int preparoPerfilAtual(uint64_t g) {
+#if defined(__GNUC__) || defined(__clang__)
+  return perfis_sessao_atual ? perfis_sessao_atual(g) : g == 0;
+#else
+  return perfis_sessao_atual(g);
+#endif
+}
+static int preparoPerfilTravar(uint64_t g) {
+#if defined(__GNUC__) || defined(__clang__)
+  return perfis_sessao_travar ? perfis_sessao_travar(g) : g == 0;
+#else
+  return perfis_sessao_travar(g);
+#endif
+}
+static void preparoPerfilDestravar(void) {
+#if defined(__GNUC__) || defined(__clang__)
+  if (perfis_sessao_destravar) perfis_sessao_destravar();
+#else
+  perfis_sessao_destravar();
+#endif
+}
+
+struct PlexPreparo {
+  PxConta conta;
+  PxIdx *indice;
+  int nIndice, perfil, conectado;
+  unsigned geracao, indiceVersao;
+  uint64_t sessaoPerfil;
+  RedeJob *job;
+};
+// Read only: unlike foreground helpers, never changes the current profile,
+// account, queues, index or list while checking a captured query.
+static int preparoValeLocked(const PlexPreparo *p) {
+  return p && !parar && p->perfil == perfilLido && p->perfil == perfis_ativo() &&
+         preparoPerfilAtual(p->sessaoPerfil) && p->geracao == geracao &&
+         p->indiceVersao == indiceVersao && p->nIndice == nIndice &&
+         p->conectado == (estado == PX_EST_CONECTADO) &&
+         !memcmp(&p->conta, &conta, sizeof conta) &&
+         (!p->job || rede_job_estado(p->job) == REDE_OK);
+}
+int plex_preparo_atual(const PlexPreparo *p) {
+  int ok;
+  pthread_mutex_lock(&trava); ok = preparoValeLocked(p); pthread_mutex_unlock(&trava);
+  return ok;
+}
+PlexPreparo *plex_preparo_capturar(void) {
+  PlexPreparo *p = calloc(1, sizeof *p);
+  if (!p) return NULL;
+  garantir();
+  p->sessaoPerfil = preparoPerfilLer();
+  if (!preparoPerfilTravar(p->sessaoPerfil)) { free(p); return NULL; }
+  pthread_mutex_lock(&trava);
+  conferirPerfilLocked();
+  p->conta = conta; p->perfil = perfilLido; p->geracao = geracao;
+  p->indiceVersao = indiceVersao; p->conectado = estado == PX_EST_CONECTADO;
+  p->nIndice = nIndice;
+  if (p->nIndice > 0) {
+    p->indice = malloc(sizeof *p->indice * (size_t)p->nIndice);
+    if (p->indice) memcpy(p->indice, indice, sizeof *p->indice * (size_t)p->nIndice);
+  }
+  if (grupo) p->job = rede_job_criar(grupo);
+  int ok = preparoValeLocked(p) && (!p->nIndice || p->indice) && (!p->conectado || p->job);
+  pthread_mutex_unlock(&trava);
+  preparoPerfilDestravar();
+  if (!ok) { plex_preparo_liberar(p); return NULL; }
+  return p;
+}
+void plex_preparo_liberar(PlexPreparo *p) {
+  if (!p) return;
+  if (p->job) { rede_job_cancelar(p->job); rede_job_soltar(p->job); }
+  free(p->indice);
+  apagarSegredo(p, sizeof *p); free(p);
+}
+static int preparoInterrompido(void *u) {
+  PxPreparoCancelamento *c = u;
+  return !c || (c->cancelado && c->cancelado(c->ctx)) || !plex_preparo_atual(c->preparo);
+}
+// Prepared sources may reserve only unused provisional slots. Existing
+// playing or waiting entries are never refreshed, evicted or reported here.
+static int registrarPreparoLocked(const PxPlayback *pb) {
+  int livres = 0, precisos = 0;
+  for (int k = 0; k < PX_SESSOES; k++) if (!sessoes[k].ativo) livres++;
+  for (int i = 0; i < pb->n; i++) {
+    int existe = 0;
+    for (int k = 0; k < PX_SESSOES; k++)
+      if (sessoes[k].ativo && sessoes[k].geracao == geracao &&
+          !strcmp(sessoes[k].s.url, pb->sessao[i].url)) { existe = 1; break; }
+    for (int k = 0; k < i && !existe; k++)
+      if (!strcmp(pb->sessao[k].url, pb->sessao[i].url)) existe = 1;
+    if (!existe) precisos++;
+  }
+  // Speculation never steals a foreground/other waiting session. Refuse the
+  // whole preparation before inserting anything if any URL would be untracked.
+  if (precisos > livres) return 0;
+  for (int i = 0; i < pb->n; i++) {
+    int livre = -1, existe = 0;
+    for (int k = 0; k < PX_SESSOES; k++) {
+      if (!sessoes[k].ativo && livre < 0) livre = k;
+      if (sessoes[k].ativo && sessoes[k].geracao == geracao &&
+          !strcmp(sessoes[k].s.url, pb->sessao[i].url)) { existe = 1; break; }
+    }
+    if (existe || livre < 0) continue;
+    Sessao *s = &sessoes[livre]; memset(s, 0, sizeof *s);
+    s->ativo = 1; s->geracao = geracao; s->criadoMs = agoraMs(); s->s = pb->sessao[i];
+  }
+  return 1;
+}
+int plex_preparo_consultar(const PlexPreparo *p, const char *id, const char *tipo,
+                           int (*cancelado)(void *), void *ctx, Stream **saida) {
+  char imdb[16], rk[24], epRk[24]; long tmdb;
+  int temp, ep, serie, i, e, n = -1;
+  PxPlayback *pb = NULL; Stream *lista = NULL;
+  PxPreparoCancelamento c = { p, cancelado, ctx };
+  if (!saida) return -1;
+  *saida = NULL;
+  if (preparoInterrompido(&c)) return -1;
+  // Personal-server ids remain on the foreground private route; never pass
+  // them to an addon or reinterpret them as a public catalogue title.
+  if (!px_id_titulo(id, imdb, &tmdb, &temp, &ep) || !p->conectado || !p->nIndice) return 0;
+  serie = tipo && (!strcmp(tipo, "series") || !strcmp(tipo, "tv"));
+  i = pxidx_achar(p->indice, p->nIndice, imdb, tmdb, serie ? 's' : 'm');
+  if (i < 0) return 0;
+  copiar(rk, sizeof rk, p->indice[i].rk);
+  if (!p->job) return -1;
+  pthread_once(&preparoUma, preparoIniciar);
+  if (!preparoChaveCriada) return -1;
+  PxPreparoCancelamento *anterior = pthread_getspecific(preparoChave);
+  if (pthread_setspecific(preparoChave, &c) != 0) return -1;
+  pb = malloc(sizeof *pb);
+  e = pb ? PX_OK : PX_ERR_REDE;
+  if (e == PX_OK && serie) {
+    if (temp <= 0 || ep <= 0) { temp = temp > 0 ? temp : 1; ep = ep > 0 ? ep : 1; }
+    e = px_achar_episodio(&p->conta, p->job, rk, temp, ep, epRk, sizeof epRk);
+    if (e == 1) { copiar(rk, sizeof rk, epRk); e = PX_OK; }
+    else if (e == 0) { n = 0; goto fim; }
+  }
+  if (e == PX_OK && preparoInterrompido(&c)) e = PX_ERR_CANCELADO;
+  if (e == PX_OK) e = px_fontes(&p->conta, p->job, rk, pb);
+  if (e != PX_OK || preparoInterrompido(&c)) goto fim;
+  if (pb->n < 0 || pb->n > PX_FONTES_MAX) goto fim;
+  if (!pb->n) { n = 0; goto fim; }
+  lista = malloc(sizeof *lista * (size_t)pb->n);
+  if (!lista) goto fim;
+  memcpy(lista, pb->fonte, sizeof *lista * (size_t)pb->n);
+  // Holding the original profile opening across publication closes the
+  // final generation check/register race with a UI profile switch.
+  int cancelou = cancelado && cancelado(ctx);
+  if (cancelou || !preparoPerfilTravar(p->sessaoPerfil)) goto fim;
+  pthread_mutex_lock(&trava);
+  if (preparoValeLocked(p) && registrarPreparoLocked(pb)) {
+    n = pb->n; *saida = lista; lista = NULL;
+  }
+  pthread_mutex_unlock(&trava);
+  preparoPerfilDestravar();
+fim:
+  if (preparoInterrompido(&c)) { free(*saida); *saida = NULL; n = -1; }
+  pthread_setspecific(preparoChave, anterior);
+  free(lista);
+  if (pb) { apagarSegredo(pb, sizeof *pb); free(pb); }
+  return n;
 }
 
 // A regular catalogue title ("tt...", "tmdb:...") the server has. Runs on the

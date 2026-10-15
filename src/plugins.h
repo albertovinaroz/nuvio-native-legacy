@@ -82,6 +82,18 @@ int  plugins_consultar(const char *id, const char *tipo,
                        void (*aviso)(void *u, int k, const char *nome, int estado,
                                      const void *fontes, int n),
                        void *avisoU, Stream **saida);
+// Capturar na UI: scrapers, ordem, chave TMDB e credenciais pertencem ao
+// retrato. A consulta independente nunca relê a configuracao do perfil novo
+// nem publica fontes/progresso. 0 = vazio valido; -1 = incompleta/cancelada.
+typedef struct PluginsConsulta PluginsConsulta;
+PluginsConsulta *plugins_consulta_capturar(void);
+int plugins_consulta_atual(const PluginsConsulta *consulta);
+int plugins_consulta_consultar(const PluginsConsulta *consulta, const char *id, const char *tipo,
+                              int (*cancelado)(void *), void *ctx,
+                              void (*aviso)(void *u, int k, const char *nome, int estado,
+                                            const void *fontes, int n),
+                              void *avisoU, Stream **saida);
+void plugins_consulta_liberar(PluginsConsulta *consulta);
 // Pluga plugins_consultar na busca de fontes dos addons. Uma vez, no arranque.
 void plugins_ligar_aos_addons(void);
 

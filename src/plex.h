@@ -246,6 +246,18 @@ int  plex_fontes_colher(const char *alvo, Stream **lista, int *n);
 // when cancelled. `cancelado` is polled; list is malloc'd for the caller.
 int  plex_consultar(const char *id, const char *tipo, int (*cancelado)(void *), void *ctx,
                     Stream **saida);
+// Immutable catalogue-source preparation. Capture/free on the owner thread;
+// query on one worker. Own credentials/index/RedeJob never switch to a new
+// account. 0 is a valid no-match/empty answer; -1 is failure/cancellation.
+// Provisional sessions are accepted only by the captured opening; no timeline
+// check-in or currently playing session is changed by the hidden query.
+typedef struct PlexPreparo PlexPreparo;
+PlexPreparo *plex_preparo_capturar(void);
+int plex_preparo_atual(const PlexPreparo *p);
+int plex_preparo_consultar(const PlexPreparo *p, const char *id, const char *tipo,
+                           int (*cancelado)(void *), void *ctx, Stream **saida);
+void plex_preparo_liberar(PlexPreparo *p);
+
 int  plex_casamento_ativo(void);       // connected and the index has entries
 int  plex_indice_n(void);              // entries in the index (tests)
 void plex_ligar_aos_addons(void);      // plexaddons.c: registers plex_consultar with addons.c

@@ -187,6 +187,11 @@ typedef struct {
   // remapeamento IMDb->TMDB que a API faz (intro.h). Nao vai para o disco.
   long tmdbSerie;
   int  tmdbT, tmdbE;
+  // Data ORIGINAL do metadata, antes de desc_data_extenso traduzir `data`.
+  // As regras de estreia usam este ISO, nunca o texto apresentado na tela.
+  // Episodios do pacote antigo deixam vazio e conservam a leitura de `data`.
+  // CatEp nao tem dump binario; o cache de metadata guarda o JSON original.
+  char dataIso[32];
 } CatEp;
 
 // Le <dir>/catalogo.txt. Devolve quantos itens carregou (0 = nenhum, e quem

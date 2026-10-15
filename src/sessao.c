@@ -4,11 +4,29 @@
 #include "dados.h"
 #include "js.h"
 #include "jsw.h"
+#include "perfisessao.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <pthread.h>
+
+// Isolated session fixtures may omit the profile producer; complete apps
+// always link it. Token boundaries invalidate ownership without UI callbacks.
+#if defined(__APPLE__) && (defined(__GNUC__) || defined(__clang__))
+extern void perfis_invalidar_sessao(void) __attribute__((weak_import));
+#elif defined(__GNUC__) || defined(__clang__)
+extern void perfis_invalidar_sessao(void) __attribute__((weak));
+#else
+#include "perfis.h"
+#endif
+static void invalidarPerfil(void) {
+  if (perfis_invalidar_sessao) perfis_invalidar_sessao();
+}
+static void identidadePerfilTravar(void) {
+  uint64_t geracao;
+  do { geracao = nv_perfil_sessao_ler(); } while (!nv_perfil_sessao_travar(geracao));
+}
 
 #define ARQ_SESSAO "sessao.txt"
 // MEDIDO: a propria resposta do start traz `poll_interval_seconds` (3 no
@@ -30,7 +48,8 @@
 //  - tokTrava NUNCA fica presa durante rede (nuvem_post/nuvem_tabela). Quem vai
 //    falar com o servidor copia o token para um buffer local e solta.
 //  - Ordem de travas: tokTrava -> dadosTrava (gravarSessao/dados_apagar sob
-//    tokTrava). Nenhum outro modulo e chamado com ela presa; e dados.c nunca
+//    tokTrava). A mudanca de identidade tambem toma a trava de publicacao
+//    do perfil; seus consumidores nao chamam sessao_* com ela presa. dados.c nunca
 //    chama de volta aqui. Quem segura trava de outro modulo pode chamar
 //    sessao_* (tokTrava e folha), mas nao o contrario.
 //  - Renovacao e de UM fio so por vez (renovando + tokCond): ver renovarToken.
@@ -111,7 +130,12 @@ static void lerJwt(const char *token) {
     js_texto(payload, fim, "sub", s, sizeof s);
     exp = (long)js_num(payload, fim, "exp", 0);
   }
-  if (strcmp(sub, s)) snprintf(sub, sizeof sub, "%s", s);
+  if (strcmp(sub, s)) {
+    identidadePerfilTravar();
+    invalidarPerfil();
+    snprintf(sub, sizeof sub, "%s", s);
+    nv_perfil_sessao_destravar();
+  }
   expiraEm = exp;
 }
 
@@ -174,9 +198,12 @@ static void gravarSessao(void) {
 
 // tokTrava presa.
 static void limpar(void) {
+  int mudou = acesso[0] || renovar[0] || sub[0];
+  if (mudou) { identidadePerfilTravar(); invalidarPerfil(); }
   acesso[0] = renovar[0] = sub[0] = 0;
   anonima = 0;
   expiraEm = 0;
+  if (mudou) nv_perfil_sessao_destravar();
 }
 
 // ---------------------------------------------------------------- respostas
@@ -760,6 +787,9 @@ int sessao_token_copiar(char *dst, size_t n) {
 void sessao_token_recusado(const char *tok) {
   int st = 0;
   if (!tok || !*tok) return;
+  pthread_mutex_lock(&tokTrava);
+  if (!strcmp(tok, acesso)) invalidarPerfil();
+  pthread_mutex_unlock(&tokTrava);
   renovarToken(tok, 30, &st);
 }
 

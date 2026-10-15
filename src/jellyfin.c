@@ -580,8 +580,10 @@ int jf_ler_episodios(const JfConta *c, const char *corpo, size_t nCorpo, CatEp *
           txtRaiz(p, f, "Overview", ep->sinopse, sizeof ep->sinopse);
           tk = numRaiz(p, f, "RunTimeTicks", 0);
           if (tk > 0) snprintf(ep->duracao, sizeof ep->duracao, "%d min", (int)(jf_seg((long long)tk) / 60.0 + 0.5));
-          if (txtRaiz(p, f, "PremiereDate", data, sizeof data) && strlen(data) >= 10)
+          if (txtRaiz(p, f, "PremiereDate", data, sizeof data) && strlen(data) >= 10) {
+            snprintf(ep->dataIso, sizeof ep->dataIso, "%s", data);
             snprintf(ep->data, sizeof ep->data, "%.2s/%.2s/%.4s", data + 8, data + 5, data);
+          }
           if (blocoRaiz(p, f, "ImageTags", &ti, &tf) && txtRaiz(ti, tf, "Primary", tag, sizeof tag))
             imagem(c, el, "Primary", tag, "maxWidth=640", ep->thumb, sizeof ep->thumb);
           n++;

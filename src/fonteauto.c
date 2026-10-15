@@ -30,6 +30,9 @@ int fonteauto_fila_o(int modo, int total, int preferida, const long *pontos,
   // A PREFERIDA ENTRA PRIMEIRO nos dois modos: e a fonte que a pessoa escolheu
   // a mao neste titulo (issues #56 e #57). Continua sendo UMA candidata — no
   // modo PRIMEIRA ela e a unica conferida, e nenhuma outra e tocada.
+  // Ela vale MAIS que a regex (o dono: "reuse last link" e a prioridade): a
+  // regex so ordena as outras. Fora do escopo ela ja chega como -1 de
+  // streams.c (posPref), nunca daqui.
   if (preferida >= 0 && preferida < total && !(excluida && excluida[preferida]))
     fila[n++] = preferida;
 

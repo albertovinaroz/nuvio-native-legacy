@@ -6616,6 +6616,7 @@ static int parsearEpisodios(const char *corpo, CatEp *eps, int max) {
         if (runtime > 0 && runtime < 1440)
           snprintf(e->duracao, sizeof e->duracao, "%d min", runtime);
       }
+      js_texto(p, f, "released", e->dataIso, sizeof e->dataIso);
       js_texto(p, f, "released", d, sizeof d);
       desc_data_extenso(d, e->data, sizeof e->data);
       n++;
@@ -6673,6 +6674,7 @@ void desc_mesclar_episodios(CatEp *base, int nb, const CatEp *outro, int no, int
     if (!base[i].thumb[0])   snprintf(base[i].thumb, sizeof base[i].thumb, "%s", outro[j].thumb);
     if (!base[i].duracao[0]) snprintf(base[i].duracao, sizeof base[i].duracao, "%s", outro[j].duracao);
     if (!base[i].data[0])    snprintf(base[i].data, sizeof base[i].data, "%s", outro[j].data);
+    if (!base[i].dataIso[0]) snprintf(base[i].dataIso, sizeof base[i].dataIso, "%s", outro[j].dataIso);
     i++; j++;
   }
 }

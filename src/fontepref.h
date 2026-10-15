@@ -225,5 +225,9 @@ int fontepref_tem(const char *id);
 // deste titulo. -1 quando nao ha preferencia ou quando nenhuma fonte de hoje
 // casa — e -1 quer dizer "siga o automatico", nunca "nao toque".
 int fontepref_escolher(const char *id);
+// A mesma memoria para uma lista propria do proximo episodio. O callback
+// compara a qualidade nessa lista, sem ler/instalar a lista em reproducao.
+int fontepref_escolher_lista(const char *id, const Stream *fontes, int n,
+                             int (*semPerda)(int indice, void *ctx), void *ctx);
 
 #endif

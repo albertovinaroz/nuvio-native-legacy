@@ -23,6 +23,43 @@ int ajustes_addons_do_principal(void);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdatomic.h>
+
+static _Atomic uint64_t sessaoGeracao = 1;
+static pthread_mutex_t sessaoTrava;
+static pthread_once_t sessaoUmaVez = PTHREAD_ONCE_INIT;
+static void (*sessaoAntes)(void);
+static void sessaoTravaIniciar(void) {
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&sessaoTrava, &attr);
+  pthread_mutexattr_destroy(&attr);
+}
+uint64_t perfis_sessao_geracao(void) {
+  return atomic_load_explicit(&sessaoGeracao, memory_order_acquire);
+}
+int perfis_sessao_atual(uint64_t geracao) { return geracao == perfis_sessao_geracao(); }
+int perfis_sessao_travar(uint64_t geracao) {
+  pthread_once(&sessaoUmaVez, sessaoTravaIniciar);
+  pthread_mutex_lock(&sessaoTrava);
+  if (perfis_sessao_atual(geracao)) return 1;
+  pthread_mutex_unlock(&sessaoTrava);
+  return 0;
+}
+void perfis_sessao_destravar(void) { pthread_mutex_unlock(&sessaoTrava); }
+void perfis_ao_abrir_sessao(void (*antes)(void)) { sessaoAntes = antes; }
+static void sessaoAvancar(void) {
+  uint64_t g = atomic_fetch_add_explicit(&sessaoGeracao, 1, memory_order_acq_rel) + 1;
+  if (!g) atomic_fetch_add_explicit(&sessaoGeracao, 1, memory_order_acq_rel);
+}
+void perfis_invalidar_sessao(void) {
+  pthread_once(&sessaoUmaVez, sessaoTravaIniciar);
+  pthread_mutex_lock(&sessaoTrava);
+  sessaoAvancar();
+  pthread_mutex_unlock(&sessaoTrava);
+}
 
 #define ARQ_ATIVO "perfil.txt"
 #define ARQ_LISTA "perfis.txt"
@@ -30,7 +67,7 @@ int ajustes_addons_do_principal(void);
 static ContaPerfil lista[CONTA_PERFIL_MAX];
 static int n;
 static char dono[64];
-static int ativo = 1;
+static atomic_int ativo = ATOMIC_VAR_INIT(1);
 // ESCOLHIDO E DE SESSAO, GRAVADO E DE DISCO — e a diferenca entre as duas e a
 // mudanca de comportamento inteira desta tela.
 //
@@ -321,7 +358,7 @@ const ContaPerfil *perfis_item_ativo(void) {
   return NULL;
 }
 const char   *perfis_dono(void)      { return dono; }
-int           perfis_ativo(void)     { return ativo > 0 ? ativo : 1; }
+int           perfis_ativo(void)     { int p = atomic_load_explicit(&ativo, memory_order_acquire); return p > 0 ? p : 1; }
 
 // Addons NAO sao por perfil quando o perfil diz herdar os do primario.
 //
@@ -370,9 +407,14 @@ void plugins_perfil_mudou(void);
 
 void perfis_definir_ativo(int indice) {
   char linha[32];
-  int ativoAntes = ativo;
+  int ativoAntes = perfis_ativo();
   if (indice <= 0) return;
-  ativo = indice;
+  if (sessaoAntes) sessaoAntes();
+  pthread_once(&sessaoUmaVez, sessaoTravaIniciar);
+  pthread_mutex_lock(&sessaoTrava);
+  sessaoAvancar();
+  atomic_store_explicit(&ativo, indice, memory_order_release);
+  pthread_mutex_unlock(&sessaoTrava);
   fil_definir_perfil(indice);
   fontepref_definir_perfil(indice);
   legmem_definir_perfil(indice);
@@ -447,10 +489,14 @@ int perfis_verificar_pin(int indice, const char *pin) {
 }
 
 void perfis_esquecer(void) {
+  pthread_once(&sessaoUmaVez, sessaoTravaIniciar);
+  pthread_mutex_lock(&sessaoTrava);
+  sessaoAvancar();
   memset(lista, 0, sizeof lista);
   n = 0;
   dono[0] = 0;
   ativo = 1;
+  pthread_mutex_unlock(&sessaoTrava);
   escolhido = 0;
   gravado = 0;
   dados_apagar(ARQ_ATIVO);

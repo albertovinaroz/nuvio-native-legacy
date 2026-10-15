@@ -549,6 +549,7 @@ typedef enum {
   AJ_FALHA_PROVEDORES, AJ_FALHA_PROVEDOR_ORDEM,
   AJ_FALHA_RD_LIMITE, AJ_FALHA_TB_LIMITE, AJ_FALHA_PM_LIMITE, AJ_FALHA_AD_LIMITE,
   AJ_FALHA_ADDONS, AJ_FALHA_ADDON_ORDEM, AJ_FALHA_ADDON_LIMITE,
+  AJ_FONTE_PRECARREGAR, // local, append-only; video e proximo episodio, desligado
   AJ_N
 } OpcaoId;
 _Static_assert(DEBRID_RD == 0 && DEBRID_TB == 1 && DEBRID_PM == 2 && DEBRID_AD == 3,
@@ -1426,6 +1427,7 @@ static const Opcao OPCOES[AJ_N] = {
   ESC("Trocar add-on se falhar", V_LIGA, 2),
   ACAO("Ordem e limites dos add-ons"),
   NUM("Links neste add-on", 1, FONTEFALHA_MAX_LINKS, 1, ""),
+  ESC("Pré-carregar vídeo", V_LIGA, 2),
 };
 
 // Nome de cada opcao no arquivo. O formato era POSICIONAL — uma linha por
@@ -1672,6 +1674,7 @@ static const char *CHAVE[] = {
   "-falhaProvedores", "-falhaProvedorOrdem",
   "-falhaRDLinks", "-falhaTBLinks", "-falhaPMLinks", "-falhaADLinks",
   "-falhaAddons", "-falhaAddonOrdem", "-falhaAddonLinks",
+  "fontePrecarregarLocal",
 };
 // QUATRO VETORES PARALELOS indexados pelo mesmo enum AJ_*: OPCOES, CHAVE,
 // valor e as secoes. OPCOES ja e declarado [AJ_N], e `valor` aceita inicializacao
@@ -2167,6 +2170,13 @@ int ajustes_fonte_tocar_conferindo(void) { return lig(AJ_FONTE_TOCAR_CONFERINDO)
 int ajustes_fonte_aquecer(void) { return lig(AJ_FONTE_AQUECER); }
 int ajustes_fonte_conferir_varias(void) { return lig(AJ_FONTE_CONFERIR_VARIAS); }
 int ajustes_fonte_preparar(void) { return lig(AJ_FONTE_PREPARAR); }
+int ajustes_fonte_precarregar(void) {
+#ifdef NV_ANDROID
+  return lig(AJ_FONTE_PRECARREGAR);
+#else
+  return 0;
+#endif
+}
 int ajustes_cw_proximo(void) { return lig(AJ_CW_PROXIMO); }
 int ajustes_busca_nuvio(void) { int v = valor[AJ_BUSCA_NUVIO]; return v < 0 || v > 2 ? 0 : v; }
 int ajustes_busca_origem(void) { return lig(AJ_BUSCA_ORIGEM); }
@@ -2297,6 +2307,9 @@ float ajustes_tamanho_ajustes(void) {
 static int ajLayoutSelecionavel(void) { return !telefoneui_ativo(); }
 static int ajOpcaoDisponivel(int op) {
   if (op == AJ_FALHA_ADDON_LIMITE) return faAddonEditar[0] != 0;
+#ifndef NV_ANDROID
+  if (op == AJ_FONTE_PRECARREGAR) return 0;
+#endif
 #ifndef NV_TOUCH_UI
   if (op == AJ_INTERFACE_MODO) return 0;
 #endif
@@ -4364,6 +4377,7 @@ static int somenteDesteAparelho(int op) {
     case AJ_FONTE_AQUECER:
     case AJ_FONTE_CONFERIR_VARIAS:
     case AJ_FONTE_PREPARAR:
+    case AJ_FONTE_PRECARREGAR:
     case AJ_FONTE_TEXTO: case AJ_FONTE_ORDEM_ADDON:
     case AJ_SUFIXO_ESTILO: case AJ_ROTULO_POS:   /* fork: so este aparelho */
     case AJ_SALVOS_DEST:
@@ -5649,7 +5663,8 @@ static const char *ajudaOpcaoBase(int op) {
     case AJ_FONTE_TOCAR_CONFERINDO: return "Abre o player com a primeira fonte do automático na hora em que a conferência dela começa, em vez de esperar o resultado. Se a conferência reprovar a fonte, volta a esperar e segue para a próxima, sem baixar a qualidade. Torrent e fonte que precisa ser resolvida antes seguem o caminho de sempre.";
     case AJ_FONTE_AQUECER: return "Ao abrir a página de um título e quando as fontes chegam, abre antes a conexão com o debrid e com os hosts das primeiras fontes, para o Play não gastar esse tempo. Não resolve nenhum link e não cria arquivo no debrid.";
     case AJ_FONTE_CONFERIR_VARIAS: return "Confere até 3 fontes já prontas no debrid ao mesmo tempo, em vez de uma por vez, e toca a melhor que servir. Fontes que ainda não estão prontas seguem uma por vez, sem baixar nada a mais. Só vale com a Fonte automática em Melhor fonte.";
-    case AJ_FONTE_PREPARAR: return "Ao abrir a página do título, já escolhe e prepara a primeira fonte do automático, para o Play abrir na hora. Isso adiciona o arquivo ao painel do seu debrid mesmo que você não assista.";
+    case AJ_FONTE_PREPARAR: return "Escolhe e verifica a fonte automática ao abrir o título. Não carrega vídeo. Pode adicionar o arquivo ao painel do debrid mesmo sem assistir.";
+    case AJ_FONTE_PRECARREGAR: return "Carrega alguns segundos de vídeo ao abrir um título e prepara o próximo episódio perto dos créditos. O Play reaproveita o buffer. Usa mais dados e pode adicionar arquivos ao debrid mesmo sem assistir. Não marca episódios como vistos.";
     case AJ_FONTE_REPOR: return "Quantas outras fontes o automático tenta quando a escolhida não abre. Cada tentativa pode adicionar um arquivo na sua conta de debrid.";
     case AJ_FALHA_PROVEDORES: return "Se o vídeo não iniciar a tempo ou der erro, tenta os provedores Debrid configurados na ordem escolhida. O limite de cada provedor conta links distintos de todos os add-ons, incluindo o primeiro. Parar ou Voltar cancela as tentativas.";
     case AJ_FALHA_PROVEDOR_ORDEM: return "Suba ou desça os provedores Debrid e ajuste o total de links de cada um. O primeiro provedor tenta seus links antes do próximo. Provedores sem chave são ignorados.";
@@ -6935,13 +6950,58 @@ static const char *frRegexTexto(void) {
   fonteregra_regex(p, sizeof p);
   if (e < 0) return i18n("Regex inválida: ignorada");
   if (!p[0]) return i18n("Nenhum");
-  snprintf(b, sizeof b, "%.60s%s", p, strlen(p) > 60 ? "…" : "");
+  // 60 bytes, recuando para nao cortar um caractere UTF-8 (ñ, emoji) no meio.
+  { size_t k = strlen(p);
+    if (k > 60) { k = 60; while (k > 0 && ((unsigned char)p[k] & 0xC0) == 0x80) k--; }
+    snprintf(b, sizeof b, "%.*s%s", (int)k, p, strlen(p) > k ? "…" : ""); }
   return b;
 }
 // Sinais de regex que o teclado da TV oferece (o celular digita o que quiser,
-// dentro do mesmo alfabeto).
+// dentro do mesmo alfabeto). "=" e "<" ">" sao dos lookaheads/lookbehinds
+// (?= ?! ?<= ?<!): sem o "=" o "(?=" chegava como "(?" e a regex era recusada.
 static const char *FR_ALFA_REGEX =
-  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789|()[]{}.*+?^$\\-_ :!/,";
+  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789|()[]{}.*+?^$\\-_ :!/,=<>'\"&;%#@~";
+
+// O campo "Padrão do filtro". O padrao volta para o campo: corrigir um sinal nao
+// pode obrigar a redigitar tudo. Vazio apaga. Ate FR_REGEX_MAX (o teto do
+// oficial e do que fica guardado), e o texto do celular entra com ñ, acento e
+// emoji inteiros (ver teclado_aceitar_utf8).
+static void frRegexAbrir(void) {
+  char atual[FR_REGEX_MAX + 1];
+  fonteregra_regex(atual, sizeof atual);
+  stCampo = AJ_FONTE_REGEX_PADRAO;
+  teclado_abrir_com("Padrão da regex", "Ex.: ESP|Latino|Castellano. Vazio apaga.",
+                    FR_REGEX_MAX, FR_ALFA_REGEX, atual[0] ? atual : NULL);
+  teclado_aceitar_utf8(1);
+}
+#ifdef AJUSTES_TESTE
+// O caminho de verdade do campo: abre com o padrao guardado, recebe `colado`
+// como texto do celular (NULL = so abrir e dar OK; `apagar` toques em "apagar"
+// antes), confirma em "pronto", grava, e devolve o que ficou em fonteregra.txt
+// (relido do disco) e o estado da regex.
+int ajustes_teste_regex_campo(const char *colado, int apagar, char *lido, size_t n) {
+  SDL_Event e;
+  int i;
+  frRegexAbrir();
+  if (!teclado_aberto()) return -9;
+  if (colado) teclado_teste_sistema(colado);
+  memset(&e, 0, sizeof e);
+  e.type = SDL_KEYDOWN;
+  teclado_teste_foco(0, 0);
+  e.key.keysym.sym = SDLK_DOWN;
+  for (i = 0; i < 20; i++) teclado_evento(&e);          // a fileira apagar/limpar/pronto
+  e.key.keysym.sym = SDLK_RETURN;
+  for (i = 0; i < apagar; i++) teclado_evento(&e);      // coluna 0 = apagar
+  e.key.keysym.sym = SDLK_RIGHT; teclado_evento(&e); teclado_evento(&e);
+  e.key.keysym.sym = SDLK_RETURN; teclado_evento(&e);
+  if (teclado_aberto()) return -8;
+  ajustes_atualizar(0.016f, SDL_GetTicks());
+  teclado_esquecer();
+  fonteregra_carregar();
+  fonteregra_regex(lido, n);
+  return fonteregra_regex_estado();
+}
+#endif
 
 // UM PASSO NO VALOR DA OPCAO `op` (dir = +1 ou -1), com tudo o que a mudanca
 // tem de disparar, e a gravacao. Um lugar so para as setas do modo edicao e
@@ -7164,16 +7224,7 @@ static void eventoTela(const SDL_Event *e) {
     if (focoOp == AJ_FONTE_ADDONS_PERM || focoOp == AJ_FONTE_PLUGINS_PERM) {
       frAbrir(focoOp == AJ_FONTE_PLUGINS_PERM); return;
     }
-    if (focoOp == AJ_FONTE_REGEX_PADRAO) {
-      char atual[FR_REGEX_MAX + 1];
-      fonteregra_regex(atual, sizeof atual);
-      stCampo = focoOp;
-      // O padrao volta para o campo: corrigir um sinal nao pode obrigar a
-      // redigitar tudo. Vazio apaga.
-      teclado_abrir_com("Padrão da regex", "Ex.: ESP|Latino|Castellano. Vazio apaga.",
-                        TECLADO_LONGO, FR_ALFA_REGEX, atual[0] ? atual : NULL);
-      return;
-    }
+    if (focoOp == AJ_FONTE_REGEX_PADRAO) { frRegexAbrir(); return; }
     if (focoOp == AJ_DIAGNOSTICO) { pediuDiagnostico = 1; return; }
     if (focoOp == AJ_HERO_CATALOGOS) { if (!inativa(focoOp)) heroFonteCiclar(+1); return; }
     if (focoOp == AJ_VELOCIDADE) { pediuVelocidade = 1; return; }
@@ -7922,7 +7973,7 @@ static AjPreview familiaPreviaOpcao(int op) {
     case AJ_DV_MKV:
     case AJ_LEG_FORCADA:
     case AJ_AUD_LINGUA: case AJ_PAUSA_OVERLAY: case AJ_PLR_CLASSIF: case AJ_TELA_ABERTURA: case AJ_FONTE_MANUAL:
-    case AJ_FONTE_AUTO: case AJ_FONTE_REPOR: case AJ_FONTE_TEXTO: case AJ_FONTE_ORDEM_ADDON: case AJ_SELOS_CORES: case AJ_FONTE_TOCAR_CONFERINDO: case AJ_FONTE_AQUECER: case AJ_FONTE_CONFERIR_VARIAS: case AJ_FONTE_PREPARAR:
+    case AJ_FONTE_AUTO: case AJ_FONTE_REPOR: case AJ_FONTE_TEXTO: case AJ_FONTE_ORDEM_ADDON: case AJ_SELOS_CORES: case AJ_FONTE_TOCAR_CONFERINDO: case AJ_FONTE_AQUECER: case AJ_FONTE_CONFERIR_VARIAS: case AJ_FONTE_PREPARAR: case AJ_FONTE_PRECARREGAR:
     case AJ_FONTE_PRIORIDADE: case AJ_FONTE_HDR:
     case AJ_SELOS_PACOTE:
     case AJ_REACAO_CREDITOS: case AJ_PULAR_ABERTURA: case AJ_PULAR_RESUMO: case AJ_PROXIMO_AUTO: case AJ_PULAR_CREDITOS: case AJ_PROXIMO_CONTAGEM:

@@ -31,6 +31,7 @@
 #ifndef NV_FONTECACHE_H
 #define NV_FONTECACHE_H
 #include "streams.h"
+#include <stdint.h>
 
 // --- a chamada do guia --------------------------------------------------------
 //
@@ -112,6 +113,7 @@ typedef struct {
   char conta[80];
   int perfil;
   unsigned addons, geracao;
+  uint64_t sessao;
 } FontecacheEscopo;
 // UI: mesmo escopo que addons_buscar; proximo usa origem vazia (todos).
 void addons_capturar_escopo(FontecacheEscopo *escopo);

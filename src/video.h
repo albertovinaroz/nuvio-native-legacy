@@ -44,6 +44,16 @@ int  video_tocar_posicao(const char *url, double segundos);
 // sobre a duracao do container ANTES do primeiro quadro; mesmo ack/estado.
 int  video_tocar_retomada(const char *url, double segundos, double pct);
 int  video_retomada_inicial_estado(void);
+// Fonte preparada na pagina do titulo: player pausado, sem imagem, audio ou
+// eventos da sessao de reproducao. Token identifica o dono; zero cancela todos.
+int  video_precarregar(const char *url, const char *cabecalhos, double segundos,
+                      double pct, int buffer, int cacheMb, unsigned token, const char *idiomaAudio);
+int  video_precarregar_proximo(const char *url, const char *cabecalhos, double segundos,
+                              double pct, int buffer, int cacheMb, unsigned token, const char *idiomaAudio);
+// 0 ausente, 1 preparando, 2 pronto, -1 falhou. Nao muda video_pronto().
+int  video_precarregar_estado(unsigned token);
+void video_precarregar_cancelar(unsigned token);
+void video_precarregar_adotar(unsigned token);
 #endif
 
 // Chamar UMA VEZ POR QUADRO. Hoje serve ao prazo do recuo de Dolby Vision

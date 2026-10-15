@@ -1,6 +1,7 @@
 #include "fontecache.h"
 #include "addons.h"
 #include "player.h"
+#include "perfisessao.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,7 +164,7 @@ static int ehVod(const char *tipo) {
 }
 
 static int mesmoEscopo(const FontecacheEscopo *a, const FontecacheEscopo *b) {
-  return a->perfil == b->perfil && a->addons == b->addons &&
+  return a->sessao == b->sessao && a->perfil == b->perfil && a->addons == b->addons &&
          a->geracao == b->geracao && !strcmp(a->conta, b->conta);
 }
 
@@ -208,7 +209,7 @@ static int guardarVodSemTrava(const char *id, const char *tipo, const char *orig
       (size_t)n > FONTECACHE_VOD_BYTES / sizeof(Stream) ||
       (Uint32)(agora - quando) >= FONTECACHE_VOD_VALIDADE_MS) return 0;
   bytes = sizeof(Stream) * (size_t)n;
-  if (escopo->geracao != vodGeracao) return 0;
+  if (!nv_perfil_sessao_atual(escopo->sessao) || escopo->geracao != vodGeracao) return 0;
   podarVod(escopo, agora);
   for (int i = 0; i < FONTECACHE_VOD_MAX; i++)
     if (vod[i].resposta.lista && !strcmp(vod[i].resposta.id, id) &&
@@ -258,7 +259,7 @@ int fontecache_vod_pegar(const char *id, const char *tipo, const char *origem,
   if (!id || !*id || !ehVod(tipo) || !escopo || !lista || !n) return FC_NADA;
   origem = origem ? origem : "";
   pthread_mutex_lock(&trava);
-  if (escopo->geracao != vodGeracao) { pthread_mutex_unlock(&trava); return FC_NADA; }
+  if (!nv_perfil_sessao_atual(escopo->sessao) || escopo->geracao != vodGeracao) { pthread_mutex_unlock(&trava); return FC_NADA; }
   podarVod(escopo, agora);
   for (int i = 0; i < FONTECACHE_VOD_MAX; i++) {
     Entrada *e = &vod[i].resposta;

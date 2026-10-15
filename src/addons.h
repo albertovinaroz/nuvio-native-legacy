@@ -67,6 +67,17 @@ int  addons_n(void);
 // adicao). app.c refaz a busca de fontes do titulo aberto quando ele muda —
 // era o titulo aberto antes de a lista da conta chegar ficando sem fonte.
 unsigned addons_versao(void);
+// Capturar na UI para a consulta independente do proximo episodio. Bases
+// privadas e proveniencia pertencem ao snapshot; nenhum worker le a lista
+// de addons do perfil que entrou depois. NULL = captura indisponivel/incompleta.
+typedef struct AddonsConsulta AddonsConsulta;
+AddonsConsulta *addons_consulta_capturar(void);
+int addons_consulta_atual(const AddonsConsulta *consulta);
+// BLOQUEIA no worker; devolve lista propria completa, sem publicar/cachear.
+// Uma consulta cancelada/incompleta devolve -1 e deixa *saida NULL.
+int addons_consulta_consultar(const AddonsConsulta *consulta, const char *id, const char *tipo,
+                              int fios, int (*cancelado)(void *), void *ctx, void *saida /* Stream ** */);
+void addons_consulta_liberar(AddonsConsulta *consulta);
 const char *addons_base(int i);   // URL base, sem /manifest.json
 const char *addons_id_manifesto(int i);   // "id" do manifesto; "" ate a sonda ler
 const char *addons_nome_por_id(const char *id);   // nome de exibicao; "" se nao ha
@@ -95,6 +106,18 @@ typedef int (*OrigemExtra)(const char *id, const char *tipo, int (*cancelado)(vo
                            void *ctx, OrigemAviso aviso, void *avisoU,
                            void *saida /* Stream ** */);
 void addons_definir_origem_extra(OrigemExtra f, int (*ativa)(void));
+// Capturar na UI; consultar somente o estado proprio no worker. 0 e uma
+// resposta vazia valida; -1 e falha, cancelamento ou resposta incompleta.
+typedef struct Stream Stream;
+typedef struct {
+  void *(*capturar)(void);
+  int (*atual)(const void *);
+  int (*consultar)(const void *, const char *id, const char *tipo,
+                   int (*cancelado)(void *), void *ctx,
+                   OrigemAviso aviso, void *avisoU, Stream **saida);
+  void (*liberar)(void *);
+} OrigemPreparoOps;
+void addons_definir_origem_extra_preparo(OrigemExtra f, const OrigemPreparoOps *ops);
 int  addons_origem_extra_ativa(void);
 void addons_buscar(const char *imdb, const char *tipo);
 // Recarregar explicito: descarta a resposta anterior e vai a rede, inclusive

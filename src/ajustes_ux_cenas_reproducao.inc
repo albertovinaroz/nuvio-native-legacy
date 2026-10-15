@@ -801,6 +801,7 @@ static int ajcNovaReproducao(int sec, int op) {
     case AJ_FONTE_CONFERIR_VARIAS: rConferirVarias(op); return 1;
     case AJ_FONTE_AQUECER: rAquecer(op); return 1;
     case AJ_FONTE_PREPARAR: rPreparar(op); return 1;
+    case AJ_FONTE_PRECARREGAR: rPreparar(op); return 1;
     case AJ_FONTE_ORDEM_ADDON: rOrdemFontes(); return 1;
     case AJ_FONTE_TEXTO: rTexto(); return 1;
     case AJ_SELOS_CORES: rSelosCores(op); return 1;

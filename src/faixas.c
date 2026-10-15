@@ -396,17 +396,22 @@ static int autoTroca(const char *idioma, const uint64_t *tent, int n, int voltar
   return 0;
 }
 
-void faixas_reiniciar(void) {
+static void reiniciarFaixas(int preservarPrebusca) {
   legsync_definir_trocador(autoTroca);
   legExterna = -1; legExternaId[0] = 0; legOverlay = legOverlayNoGo = legOverlayEsperando = -1; aberta = 0;
   legOverlayFalhas = legOverlayRecusas = legOverlayNoGoEstado = 0; legOverlayRetomar = 0;
   legOverlayTV = legOverlayColhidos = 0;
-  mkvass_parar(); legenda_desligar();
+  if (!preservarPrebusca) mkvass_parar();
+  legenda_desligar();
   legAuto = 1; legAutoDesde = 0; pilZerar(); pil.espera = 0;
   legendasui_reiniciar();   // F04: the second subtitle belongs to the session too
   // #202: speed is per playback: a new title starts at 1x.
   velFoco = 0; velPedidaUi = VEL_NORMAL; video_velocidade(VEL_NORMAL);
 }
+void faixas_reiniciar(void) { reiniciarFaixas(0); }
+#ifdef NV_ANDROID
+void faixas_reiniciar_preparada(void) { reiniciarFaixas(1); }
+#endif
 
 // Indice da legenda que a folha deve marcar como ATIVA.
 static int legendaAtiva(void) {

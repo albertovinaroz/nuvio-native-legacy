@@ -57,9 +57,25 @@ int main(void) {
     "{\"url\":\"https://example.invalid/13\",\"name\":\"x\",\"description\":\"Pelicula 2018 1080p VOSE\"},"
     "{\"url\":\"https://example.invalid/14\",\"name\":\"x\",\"description\":\"" MX " Latino\"},"
     "{\"url\":\"https://example.invalid/15\",\"name\":\"The Italian Job\",\"description\":\"1080p WEB-DL\"},"
-    "{\"url\":\"https://example.invalid/16\",\"name\":\"x\",\"description\":\"Animals.2025.1080p.WEB-DL.DUAL.CAST.LAT.ENG.SUBS.x264\"}"
+    "{\"url\":\"https://example.invalid/16\",\"name\":\"x\",\"description\":\"Animals.2025.1080p.WEB-DL.DUAL.CAST.LAT.ENG.SUBS.x264\"},"
+    // Peerflix (addon espanhol): abreviaturas capitalizadas, "Subt Forz-Esp-Ing".
+    "{\"url\":\"https://example.invalid/17\",\"name\":\"[TB+] Peerflix " ES " 1080p\","
+      "\"title\":\"Animales Lat-Cast-Ing Subt Forz-Esp-Ing H264 E-AC3 5.1 BDRip Hd 1080p\\n"
+      "Animales Lat-Cast-Ing Subt Forz-Esp-Ing H264 E-AC3 5.1 BDRip Hd 1080p.mkv\"},"
+    // Campos estruturados lidos pelo #487 (upstream): vem primeiro.
+    "{\"url\":\"https://example.invalid/18\",\"name\":\"AIO 1080p\",\"description\":\"WEB-DL\","
+      "\"streamData\":{\"parsedFile\":{\"languages\":[\"English\",\"Spanish\"],\"subtitles\":[\"Spanish\",\"French\"]}}},"
+    "{\"url\":\"https://example.invalid/19\",\"name\":\"x 1080p\",\"audioLanguages\":[\"en\",\"es-419\"],\"subtitleLanguages\":[\"pt-BR\"]},"
+    "{\"url\":\"https://example.invalid/20\",\"name\":\"x 1080p\","
+      "\"tracks\":{\"audio\":[{\"language\":\"jpn\"},{\"language\":\"eng\"}],\"subtitles\":[{\"lang\":\"spa\"}]}},"
+    "{\"url\":\"https://example.invalid/21\",\"name\":\"x 1080p\",\"description\":\"Audio: Malayalam | Subtitles: Malay\"},"
+    // "Cast:" e o elenco, nao castelhano; "The Cast Away" sem marco e titulo.
+    "{\"url\":\"https://example.invalid/22\",\"name\":\"The Cast Away\",\"description\":\"Cast: Tom Hanks\"},"
+    // Peerflix: nomes por extenso antes da resolucao, mas em LISTA.
+    "{\"url\":\"https://example.invalid/23\",\"name\":\"x\","
+      "\"title\":\"Animales Castellano-Ingles-Subt-Castellano-Forz-Comp H264 E-AC3 5.1 BDRip HD 1080p\"}"
     "]}", "fixture", &v);
-  if (n != 17) { printf("FAIL contagem %d\n", n); return 1; }
+  if (n != 24) { printf("FAIL contagem %d\n", n); return 1; }
   caso(&v[0], "es,en", "es,en", "iOS: Languages / Subtitles com bandeiras");
   caso(&v[1], "en,ru", "es,en", "iOS: audio e legenda diferentes");
   caso(&v[2], "multi,es,en", "", "Torrentio: Multi Audio / bandeiras no title");
@@ -77,6 +93,13 @@ int main(void) {
   caso(&v[14], "lat", "", "bandeira do Mexico + Latino");
   caso(&v[15], "", "", "titulo no name sem marco nao vira idioma");
   caso(&v[16], "es,lat", "en", "CAST.LAT sao duas faixas");
+  caso(&v[17], "es,lat,en", "es,en", "Peerflix: Lat-Cast-Ing Subt Forz-Esp-Ing");
+  caso(&v[18], "en,es", "es,fr", "#487: streamData.parsedFile do AIOStreams");
+  caso(&v[19], "en,lat", "ptbr", "#487: audioLanguages/subtitleLanguages");
+  caso(&v[20], "ja,en", "es", "#487: tracks");
+  caso(&v[21], "ml", "ms", "#487: Malayalam e Malay distintos");
+  caso(&v[22], "", "", "Cast: (elenco) e titulo nao viram idioma");
+  caso(&v[23], "es,en", "es", "Peerflix: Castellano-Ingles-Subt-Castellano-Forz-Comp");
   free(v);
   printf(falhas ? "%d falha(s)\n" : "tudo ok\n", falhas);
   return falhas != 0;

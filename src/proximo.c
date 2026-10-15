@@ -78,6 +78,31 @@ long long prox_data_ms(const char *data) {
   return diasCivis(a, m, d) * 86400000LL;
 }
 
+long long prox_episodio_data_ms(const CatEp *ep) {
+  static const int DIAS[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+  const char *iso;
+  int a, m, d, limite, i;
+  if (!ep) return PROX_SEM_DATA;
+  if (!ep->dataIso[0]) return prox_data_ms(ep->data);  // pacote legado
+  iso = ep->dataIso;
+  // So o calendario do metadata decide a estreia. Nao inventa mes/dia para
+  // um ano isolado nem normaliza uma data impossivel como 31 de fevereiro.
+  if (strlen(iso) < 10 || iso[4] != '-' || iso[7] != '-' ||
+      (iso[10] && iso[10] != 'T')) return PROX_SEM_DATA;
+  for (i = 0; i < 10; i++)
+    if (i != 4 && i != 7 && (iso[i] < '0' || iso[i] > '9')) return PROX_SEM_DATA;
+  a = (iso[0] - '0') * 1000 + (iso[1] - '0') * 100 +
+      (iso[2] - '0') * 10 + iso[3] - '0';
+  m = (iso[5] - '0') * 10 + iso[6] - '0';
+  d = (iso[8] - '0') * 10 + iso[9] - '0';
+  if (a < 1 || m < 1 || m > 12) return PROX_SEM_DATA;
+  limite = DIAS[m - 1] + (m == 2 && a % 4 == 0 && (a % 100 != 0 || a % 400 == 0));
+  if (d < 1 || d > limite) return PROX_SEM_DATA;
+  // Como a regra legada, a data de estreia e o dia civil UTC; o horario
+  // opcional do ISO nao muda a politica existente de episodios por dia.
+  return diasCivis(a, m, d) * 86400000LL;
+}
+
 int prox_mostrar_nao_acompanhada(long long semeadoEmMs, long long lancamentoMs,
                                  long long agoraMs) {
   long long dist;
@@ -113,7 +138,7 @@ int prox_para_item(const CatItem *ci, const CatEp *eps, int n,
     if (!valido(&eps[i])) continue;
     // Serie nao acompanhada e o unico caso que o nativo conhece (ver o
     // cabecalho): sem data legivel, ou fora da janela de noticia, nao mostra.
-    if (!prox_mostrar_nao_acompanhada(0, prox_data_ms(eps[i].data), agoraMs))
+    if (!prox_mostrar_nao_acompanhada(0, prox_episodio_data_ms(&eps[i]), agoraMs))
       return 0;
     saida->temporada = eps[i].temporada;
     saida->episodio  = eps[i].episodio;
@@ -138,7 +163,7 @@ int prox_seguinte(const CatItem *ci, const CatEp *eps, int n, int limiarPct,
   for (i = ancora + 1; i < n; i++) {
     long long quando;
     if (!valido(&eps[i])) continue;
-    quando = prox_data_ms(eps[i].data);
+    quando = prox_episodio_data_ms(&eps[i]);
     if (quando != PROX_SEM_DATA && quando > agoraMs) return 0;   // nao foi ao ar
     saida->temporada = eps[i].temporada;
     saida->episodio  = eps[i].episodio;

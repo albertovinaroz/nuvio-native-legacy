@@ -723,6 +723,43 @@ int fontepref_escolher(const char *id) {
   return p ? escolherManual(p) : escolherAuto(id);
 }
 
+int fontepref_escolher_lista(const char *id, const Stream *fontes, int total,
+                             int (*semPerda)(int, void *), void *ctx) {
+  if (!fontes || total < 1) return -1;
+  const FontePref *p = fontepref_do_titulo(id);
+  int melhor = -1, melhorNota = -1;
+  if (p) {
+    if (p->bingeGroup[0]) for (int i = 0; i < total; i++) {
+      const Stream *s = &fontes[i];
+      if (strcmp(s->bingeGroup, p->bingeGroup)) continue;
+      int n = nota(s, p);
+      if (n > melhorNota) { melhorNota = n; melhor = i; }
+    }
+    for (int passo = 0; passo < 2 && melhor < 0; passo++) for (int i = 0; i < total; i++) {
+      const Stream *s = &fontes[i]; char trilha[FONTEPREF_TRILHA];
+      if (!s->provedor[0] || strcasecmp(s->provedor, p->provedor)) continue;
+      fontepref_trilha(s, trilha, sizeof trilha);
+      if (passo == 0 ? strcmp(trilha, p->trilha) : !contemMarcas(trilha, p->trilha)) continue;
+      int n = nota(s, p);
+      if (n > melhorNota) { melhorNota = n; melhor = i; }
+    }
+    return melhor;
+  }
+  char base[24]; fontepref_id_base(id, base, sizeof base);
+  int k = autoAchar(base);
+  if (k < 0) return -1;
+  long long agora = (long long)time(NULL), quando = tabAuto[k].quandoS;
+  if (quando > 0 && agora > quando && agora - quando > FONTEPREF_VALIDADE_S) return -1;
+  for (int i = 0; i < total; i++) {
+    const Stream *s = &fontes[i];
+    if (strcmp(s->bingeGroup, tabAuto[k].bingeGroup) ||
+        (melhor >= 0 && s->altura <= fontes[melhor].altura) ||
+        (semPerda && !semPerda(i, ctx))) continue;
+    melhor = i;
+  }
+  return melhor;
+}
+
 static int escolherManual(const FontePref *p) {
   int melhor;
 

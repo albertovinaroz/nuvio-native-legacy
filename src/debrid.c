@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <stdatomic.h>
 #include <time.h>
+#include <pthread.h>
 
 // As tres bases. A versao esta EMBUTIDA no caminho de proposito: o TorBox pede
 // /v1/ antes de /api/ (api.torbox.app/v1/api/...), e deixar isso implicito na
@@ -47,6 +48,8 @@ static char chave[SN][200];
 static char chaveConta[SN][200];
 static char chaveLocal[SN][200];
 static int  alvoT, alvoE;
+static pthread_mutex_t chaveTrava = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t sessaoAtual;
 
 // RECUSA DE CONTA POR BUSCA. recusado[q] guarda o status HTTP da recusa (0 =
 // nenhuma); `geracao` sobe a cada debrid_nova_busca. Atomicos porque
@@ -78,9 +81,6 @@ static _Atomic int avisado[SN];
 
 const char *debrid_servico_nome(int q) { return q >= 0 && q < SN ? nomeServ[q] : ""; }
 const char *debrid_servico_id(int q) { return q >= 0 && q < SN ? idServ[q] : ""; }
-int debrid_servico_disponivel(int q) {
-  return q >= 0 && q < SN && chave[q][0] && !atomic_load(&recusado[q]) && !atomic_load(&semPlano[q]);
-}
 
 // Torrents que a busca atual achou fora de cache (debrid_fora_de_cache).
 static _Atomic int foraCache;
@@ -89,6 +89,61 @@ static _Atomic int foraCache;
 // (nao tocou), mas que a escolha manual precisa separar de "falhou" para saber
 // se vale pedir ao servico que baixe. Nunca sai deste arquivo.
 #define FORA 3
+
+// pthread_key, e nao TLS do compilador: o carregador das Samsung Tizen 4/5
+// nao aceita _Thread_local (mesma restricao documentada em rede.c).
+static pthread_key_t contextoChave;
+static pthread_once_t contextoUmaVez = PTHREAD_ONCE_INIT;
+static int contextoCriado;
+static void contextoIniciar(void) { contextoCriado = pthread_key_create(&contextoChave, NULL) == 0; }
+static const DebridContexto *contextoDoFio(void) {
+  pthread_once(&contextoUmaVez, contextoIniciar);
+  return contextoCriado ? pthread_getspecific(contextoChave) : NULL;
+}
+void debrid_contexto_capturar(DebridContexto *c) {
+  if (!c) return;
+  pthread_mutex_lock(&chaveTrava);
+  memcpy(c->chave, chave, sizeof c->chave);
+  c->temporada = alvoT; c->episodio = alvoE;
+  c->sessao = sessaoAtual; c->busca = atomic_load(&geracao);
+  pthread_mutex_unlock(&chaveTrava);
+}
+void debrid_contexto_entrar(const DebridContexto *c) {
+  pthread_once(&contextoUmaVez, contextoIniciar);
+  if (contextoCriado) pthread_setspecific(contextoChave, c);
+}
+void debrid_contexto_sair(void) {
+  pthread_once(&contextoUmaVez, contextoIniciar);
+  if (contextoCriado) pthread_setspecific(contextoChave, NULL);
+}
+static int contextoAbrir(DebridContexto *c) {
+  if (contextoDoFio()) return 0;
+  debrid_contexto_capturar(c);
+  debrid_contexto_entrar(c);
+  return 1;
+}
+static int contextoValeSemTrava(const DebridContexto *c) {
+  return c && c->sessao == sessaoAtual && c->busca == atomic_load(&geracao);
+}
+static int contextoVale(void) {
+  int vale;
+  pthread_mutex_lock(&chaveTrava);
+  vale = contextoValeSemTrava(contextoDoFio());
+  pthread_mutex_unlock(&chaveTrava);
+  return vale;
+}
+static int semPlanoMarcar(int q, int status) {
+  int zero = 0, mudou;
+  pthread_mutex_lock(&chaveTrava);
+  mudou = contextoValeSemTrava(contextoDoFio()) &&
+          atomic_compare_exchange_strong(&semPlano[q], &zero, status);
+  pthread_mutex_unlock(&chaveTrava);
+  return mudou;
+}
+static const char *chaveDoFio(int q) {
+  const DebridContexto *c = contextoDoFio();
+  return c && q >= 0 && q < SN ? c->chave[q] : "";
+}
 
 static int idServico(const char *s) {
   if (!strcasecmp(s, "realdebrid") || !strcasecmp(s, "real-debrid")) return SRD;
@@ -101,12 +156,69 @@ static int idServico(const char *s) {
 }
 int debrid_servico_por_nome(const char *nome) { return nome && *nome ? idServico(nome) : -1; }
 
+int debrid_servico_disponivel(int q) {
+  const DebridContexto *c = contextoDoFio();
+  int vale = 0;
+  if (q < 0 || q >= SN) return 0;
+  pthread_mutex_lock(&chaveTrava);
+  if (!c || contextoValeSemTrava(c))
+    vale = (c ? c->chave[q][0] : chave[q][0]) &&
+           !atomic_load(&recusado[q]) && !atomic_load(&semPlano[q]);
+  pthread_mutex_unlock(&chaveTrava);
+  return vale;
+}
+
 // Recalcula a efetiva de um servico. Chave nova zera "sem plano" e o aviso: a
 // pessoa trocou a chave justamente para sair daquele estado.
 static void efetiva(int q) {
   const char *k = chaveLocal[q][0] ? chaveLocal[q] : chaveConta[q];
-  if (strcmp(chave[q], k)) { atomic_store(&semPlano[q], 0); atomic_store(&avisado[q], 0); }
+  if (strcmp(chave[q], k)) {
+    atomic_fetch_add(&geracao, 1u);
+    atomic_store(&recusado[q], 0);
+    atomic_store(&semPlano[q], 0); atomic_store(&avisado[q], 0);
+  }
   snprintf(chave[q], sizeof chave[q], "%s", k);
+}
+
+void debrid_conta_iniciar(DebridConta *c) { if (c) memset(c, 0, sizeof *c); }
+void debrid_conta_definir(DebridConta *c, const char *servico, const char *k) {
+  int q = servico ? idServico(servico) : -1;
+  if (c && q >= 0) snprintf(c->chave[q], sizeof c->chave[q], "%s", k ? k : "");
+}
+int debrid_aplicar_chaves_conta(const DebridConta *c, uint64_t sessao) {
+  int q;
+  if (!c) return 0;
+  pthread_mutex_lock(&chaveTrava);
+  if (sessao != sessaoAtual) { pthread_mutex_unlock(&chaveTrava); return 0; }
+  for (q = 0; q < SN; q++) {
+    snprintf(chaveConta[q], sizeof chaveConta[q], "%.*s", (int)sizeof c->chave[q] - 1, c->chave[q]);
+    efetiva(q);
+  }
+  pthread_mutex_unlock(&chaveTrava);
+  return 1;
+}
+void debrid_aplicar_chaves_locais(const DebridConta *c) {
+  int q;
+  pthread_mutex_lock(&chaveTrava);
+  for (q = 0; q < SN; q++) {
+    if (c) snprintf(chaveLocal[q], sizeof chaveLocal[q], "%.*s", (int)sizeof c->chave[q] - 1, c->chave[q]);
+    else chaveLocal[q][0] = 0;
+    efetiva(q);
+  }
+  pthread_mutex_unlock(&chaveTrava);
+}
+void debrid_abrir_sessao(uint64_t sessao) {
+  int q;
+  pthread_mutex_lock(&chaveTrava);
+  sessaoAtual = sessao;
+  atomic_fetch_add(&geracao, 1u);
+  memset(chaveConta, 0, sizeof chaveConta); alvoT = alvoE = 0;
+  atomic_store(&foraCache, 0);
+  for (q = 0; q < SN; q++) {
+    atomic_store(&recusado[q], 0); atomic_store(&semPlano[q], 0); atomic_store(&avisado[q], 0);
+    efetiva(q);
+  }
+  pthread_mutex_unlock(&chaveTrava);
 }
 
 void debrid_definir_chave(const char *servico, const char *k) {
@@ -117,8 +229,10 @@ void debrid_definir_chave(const char *servico, const char *k) {
     printf("[debrid] %s: servico sem resolvedor aqui, ignorado\n", servico);
     return;
   }
+  pthread_mutex_lock(&chaveTrava);
   snprintf(chaveConta[q], sizeof chaveConta[q], "%s", k);
   efetiva(q);
+  pthread_mutex_unlock(&chaveTrava);
   printf("[debrid] chave do %s vinda da conta\n", nomeServ[q]);
 }
 
@@ -127,23 +241,32 @@ void debrid_definir_chave(const char *servico, const char *k) {
 void debrid_definir_chave_local(const char *servico, const char *k) {
   int q = servico ? idServico(servico) : -1;
   if (q < 0) return;
+  pthread_mutex_lock(&chaveTrava);
   snprintf(chaveLocal[q], sizeof chaveLocal[q], "%s", k ? k : "");
   efetiva(q);
-  printf("[debrid] chave local do %s %s\n", nomeServ[q], chaveLocal[q][0] ? "definida" : "apagada");
+  pthread_mutex_unlock(&chaveTrava);
+  printf("[debrid] chave local do %s %s\n", nomeServ[q], k && *k ? "definida" : "apagada");
 }
 int debrid_origem(const char *servico) {
-  int q = servico ? idServico(servico) : -1;
+  int r, q = servico ? idServico(servico) : -1;
   if (q < 0) return 0;
-  return chaveLocal[q][0] ? 2 : chaveConta[q][0] ? 1 : 0;
+  pthread_mutex_lock(&chaveTrava);
+  r = chaveLocal[q][0] ? 2 : chaveConta[q][0] ? 1 : 0;
+  pthread_mutex_unlock(&chaveTrava);
+  return r;
 }
 // "····abcd": so os 4 ultimos, o bastante para reconhecer QUAL chave e.
 const char *debrid_chave_mascarada(const char *servico, char *dst, unsigned n) {
   int q = servico ? idServico(servico) : -1;
   size_t L;
   if (dst && n) dst[0] = 0;
-  if (q < 0 || !chave[q][0] || !dst || !n) return dst;
-  L = strlen(chave[q]);
-  snprintf(dst, n, "····%s", L > 8 ? chave[q] + L - 4 : "");
+  if (q < 0 || !dst || !n) return dst;
+  pthread_mutex_lock(&chaveTrava);
+  if (chave[q][0]) {
+    L = strlen(chave[q]);
+    snprintf(dst, n, "····%s", L > 8 ? chave[q] + L - 4 : "");
+  }
+  pthread_mutex_unlock(&chaveTrava);
   return dst;
 }
 // So conta servico que PODE resolver: com todas as chaves em conta sem plano,
@@ -154,18 +277,29 @@ const char *debrid_chave_mascarada(const char *servico, char *dst, unsigned n) {
 int debrid_origens(const char **o, int max) {
   static const char *const API[SN] = { "https://api.real-debrid.com", "https://api.torbox.app",
                                        "https://www.premiumize.me", "https://api.alldebrid.com" };
+  const DebridContexto *c = contextoDoFio();
   int q, k = 0;
-  for (q = 0; q < SN && k < max; q++)
-    if (chave[q][0] && !atomic_load(&semPlano[q])) o[k++] = API[q];
+  pthread_mutex_lock(&chaveTrava);
+  if (!c || contextoValeSemTrava(c))
+    for (q = 0; q < SN && k < max; q++)
+      if ((c ? c->chave[q][0] : chave[q][0]) && !atomic_load(&semPlano[q])) o[k++] = API[q];
+  pthread_mutex_unlock(&chaveTrava);
   return k;
 }
 int debrid_ativo(void) {
-  int q;
-  for (q = 0; q < SN; q++) if (chave[q][0] && !atomic_load(&semPlano[q])) return 1;
-  return 0;
+  const DebridContexto *c = contextoDoFio();
+  int q, r = 0;
+  pthread_mutex_lock(&chaveTrava);
+  if (!c || contextoValeSemTrava(c))
+    for (q = 0; q < SN; q++)
+      if ((c ? c->chave[q][0] : chave[q][0]) && !atomic_load(&semPlano[q])) { r = 1; break; }
+  pthread_mutex_unlock(&chaveTrava);
+  return r;
 }
 void debrid_esquecer(void) {
   int q;
+  pthread_mutex_lock(&chaveTrava);
+  atomic_fetch_add(&geracao, 1u);
   // Logout: a chave DA CONTA sai; a digitada nesta TV fica (ver chaveLocal).
   memset(chaveConta, 0, sizeof chaveConta); alvoT = alvoE = 0;
   atomic_store(&foraCache, 0);
@@ -175,12 +309,15 @@ void debrid_esquecer(void) {
     atomic_store(&avisado[q], 0);
     efetiva(q);
   }
+  pthread_mutex_unlock(&chaveTrava);
 }
 void debrid_nova_busca(void) {
   int q;
+  pthread_mutex_lock(&chaveTrava);
   atomic_fetch_add(&geracao, 1u);
   atomic_store(&foraCache, 0);
   for (q = 0; q < SN; q++) atomic_store(&recusado[q], 0);
+  pthread_mutex_unlock(&chaveTrava);
 }
 int debrid_recusa(char *dst, unsigned n) {
   int q;
@@ -200,9 +337,13 @@ int debrid_recusa(char *dst, unsigned n) {
 int debrid_fora_de_cache(void) { return atomic_load(&foraCache); }
 
 int debrid_sem_plano(void) {
+  const DebridContexto *c = contextoDoFio();
   int q, m = 0;
-  for (q = 0; q < SN; q++)
-    if (chave[q][0] && atomic_load(&semPlano[q])) m |= 1 << q;
+  pthread_mutex_lock(&chaveTrava);
+  if (!c || contextoValeSemTrava(c))
+    for (q = 0; q < SN; q++)
+      if ((c ? c->chave[q][0] : chave[q][0]) && atomic_load(&semPlano[q])) m |= 1 << q;
+  pthread_mutex_unlock(&chaveTrava);
   return m;
 }
 
@@ -236,15 +377,29 @@ const char *debrid_sem_plano_nome(int mascara) {
 
 int debrid_sem_plano_novo(void) {
   int q, m = 0;
+  pthread_mutex_lock(&chaveTrava);
   for (q = 0; q < SN; q++) {
     int zero = 0;
     if (!chave[q][0] || !atomic_load(&semPlano[q])) continue;
     if (atomic_compare_exchange_strong(&avisado[q], &zero, 1)) m |= 1 << q;
   }
+  pthread_mutex_unlock(&chaveTrava);
   return m;
 }
-void debrid_definir_episodio(int t, int e) { alvoT = t; alvoE = e; }
-void debrid_episodio(int *t, int *e) { if (t) *t = alvoT; if (e) *e = alvoE; }
+void debrid_definir_episodio(int t, int e) {
+  // O episodio de um worker ja despachado e imutavel. Ele nao pode alterar
+  // o alvo vivo depois de a pessoa abrir outro perfil/titulo.
+  if (contextoDoFio()) return;
+  pthread_mutex_lock(&chaveTrava); alvoT = t; alvoE = e; pthread_mutex_unlock(&chaveTrava);
+}
+void debrid_episodio(int *t, int *e) {
+  const DebridContexto *c = contextoDoFio();
+  if (c) { if (t) *t = c->temporada; if (e) *e = c->episodio; return; }
+  pthread_mutex_lock(&chaveTrava);
+  if (t) *t = alvoT;
+  if (e) *e = alvoE;
+  pthread_mutex_unlock(&chaveTrava);
+}
 
 // ---------------------------------------------------------------- http
 
@@ -266,8 +421,9 @@ static void urlenc(char *dst, unsigned n, const char *s) {
 static char *get_auth(const char *base, const char *rota, int qual, int *st) {
   char url[900], auth[260];
   const char *cab[2];
+  if (!contextoVale()) { if (st) *st = 0; return NULL; }
   snprintf(url, sizeof url, "%s/%s", base, rota);
-  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chave[qual]);
+  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chaveDoFio(qual));
   cab[0] = auth; cab[1] = NULL;
   return rede_baixar_st(url, 15, cab, st);
 }
@@ -275,8 +431,9 @@ static char *post_form(const char *base, const char *rota, int qual,
                        const char *corpo, int *st) {
   char url[900], auth[260];
   const char *cab[3];
+  if (!contextoVale()) { if (st) *st = 0; return NULL; }
   snprintf(url, sizeof url, "%s/%s", base, rota);
-  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chave[qual]);
+  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chaveDoFio(qual));
   cab[0] = auth; cab[1] = "Content-Type: application/x-www-form-urlencoded"; cab[2] = NULL;
   return rede_postar_st(url, 15, cab, corpo, st);
 }
@@ -315,10 +472,11 @@ static void corpoSeguro(const char *r, char *dst, unsigned n) {
   // quebra de linha e tab viram espaco: uma linha de log por falha
   for (i = 0; i < L; i++) if ((unsigned char)jan[i] < ' ') jan[i] = ' ';
   for (q = 0; q < SN; q++) {
-    size_t K = strlen(chave[q]);
+    const char *k = chaveDoFio(q);
+    size_t K = strlen(k);
     char *p;
     if (!K) continue;
-    while ((p = strstr(jan, chave[q])) != NULL) {
+    while ((p = strstr(jan, k)) != NULL) {
       memcpy(p, "***", 3);
       memmove(p + 3, p + K, strlen(p + K) + 1);
     }
@@ -399,6 +557,7 @@ static int adStatusSintetico(int st, const char *r) {
 // requestdl leva o token.
 static int falha(int q, const char *rota, int st, const char *r) {
   char txt[CORPO_LOG + 1];
+  if (!contextoVale()) return 0;
   if (!r) {
     printf("[debrid] %s %s: HTTP %d sem corpo\n", nomeServ[q], rota, st);
   } else if (st < 200 || st >= 300) {
@@ -417,16 +576,14 @@ static int falha(int q, const char *rota, int st, const char *r) {
            nomeServ[q], rota, st, e[0] ? e : "-", d[0] ? d : "-");
   }
   if (debrid_eh_sem_plano(st, r)) {
-    int zero = 0;
-    if (atomic_compare_exchange_strong(&semPlano[q], &zero, 1))
+    if (semPlanoMarcar(q, 1))
       printf("[debrid] %s: conta sem plano para a API; fora pelo resto da sessao\n",
              nomeServ[q]);
   }
   if (q == SAD) {
     // chave recusada e diferente de plano (ver debrid_sem_plano_frase)
     if (r && (strstr(r, "AUTH_BAD_APIKEY") || strstr(r, "AUTH_MISSING_APIKEY"))) {
-      int zero = 0;
-      if (atomic_compare_exchange_strong(&semPlano[q], &zero, 2))
+      if (semPlanoMarcar(q, 2))
         printf("[debrid] AllDebrid: chave recusada; fora pelo resto da sessao\n");
     }
     if (st >= 200 && st < 300) st = adStatusSintetico(st, r);
@@ -471,9 +628,11 @@ static const char *escolherArquivo(const char *files, int fileIdx,
                                    const char *kNome, const char *kTam) {
   char pad1[16] = "", pad2[16] = "";
   const char *p, *melhor = NULL; int idx = 0; double melhorTam = -1;
-  if (alvoT > 0 && alvoE > 0) {
-    snprintf(pad1, sizeof pad1, "s%02de%02d", alvoT, alvoE);
-    snprintf(pad2, sizeof pad2, "%dx%02d", alvoT, alvoE);
+  int temporada = 0, episodio = 0;
+  debrid_episodio(&temporada, &episodio);
+  if (temporada > 0 && episodio > 0) {
+    snprintf(pad1, sizeof pad1, "s%02de%02d", temporada, episodio);
+    snprintf(pad2, sizeof pad2, "%dx%02d", temporada, episodio);
   }
   for (p = files; p && *p == '{'; p = js_prox(js_fim(p)), idx++) {
     const char *f = js_fim(p);
@@ -591,8 +750,9 @@ static int resolverRD(const char *infoHash, int fileIdx, char *url, unsigned n,
 static char *tb_criar(const char *magnet, int soCache, int *st) {
   char url[300], auth[260], corpo[1200];
   const char *cab[3];
+  if (!contextoVale()) { if (st) *st = 0; return NULL; }
   snprintf(url, sizeof url, TB "/torrents/createtorrent");
-  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chave[STB]);
+  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chaveDoFio(STB));
   cab[0] = auth;
   cab[1] = "Content-Type: multipart/form-data; boundary=" BND;
   cab[2] = NULL;
@@ -721,8 +881,8 @@ criar:
   { char u[1200]; const char *cab[1];
     cab[0] = NULL;
     snprintf(u, sizeof u, TB "/torrents/requestdl?token=%s&torrent_id=%d&file_id=%d&redirect=false",
-             chave[STB], tid, fid);
-    r = rede_baixar_st(u, 15, cab, &st); }
+             chaveDoFio(STB), tid, fid);
+    r = contextoVale() ? rede_baixar_st(u, 15, cab, &st) : NULL; }
   if (!ok2xx(r, st) || !js_texto_raiz(r, "data", url, n)) {
     // "requestdl" e nao a URL: a URL leva o token (ver acima)
     int v = falha(STB, "requestdl", st, r); free(r); return v;
@@ -999,11 +1159,11 @@ static int resolverAD(const char *infoHash, int fileIdx, char *url, unsigned n,
 // "Testar chave" (Ajustes): GET v4/user. Devolve 1 e a frase da conta em
 // `msg` (nunca a chave, nem o e-mail/usuario: esta tela vira foto de issue),
 // ou 0 com o motivo. BLOQUEIA; quem chama usa um fio.
-int debrid_testar_alldebrid(char *msg, unsigned n, char *data, unsigned nd) {
+static int testarAllDebrid(char *msg, unsigned n, char *data, unsigned nd) {
   char *r; int st = 0;
   if (msg && n) msg[0] = 0;
   if (data && nd) data[0] = 0;
-  if (!chave[SAD][0]) { if (msg && n) snprintf(msg, n, "sem chave"); return 0; }
+  if (!chaveDoFio(SAD)[0]) { if (msg && n) snprintf(msg, n, "sem chave"); return 0; }
   r = get_auth(AD, "v4/user?" AD_AGENTE, SAD, &st);
   if (!r) { if (msg && n) snprintf(msg, n, "sem resposta do servidor"); return 0; }
   if (!adOk(r, st)) {
@@ -1027,6 +1187,15 @@ int debrid_testar_alldebrid(char *msg, unsigned n, char *data, unsigned nd) {
     return premium; }
 }
 
+int debrid_testar_alldebrid(char *msg, unsigned n, char *data, unsigned nd) {
+  DebridContexto c;
+  int abriu = contextoAbrir(&c);
+  int r = testarAllDebrid(msg, n, data, nd);
+  if (!contextoVale()) { r = 0; if (msg && n) msg[0] = 0; if (data && nd) data[0] = 0; }
+  if (abriu) debrid_contexto_sair();
+  return r;
+}
+
 // ---------------------------------------------------------------- resolver
 
 // Uma volta pelos servicos com chave, na ORDEM FIXA. `baixarTB` 1 = o TorBox
@@ -1037,7 +1206,8 @@ int debrid_testar_alldebrid(char *msg, unsigned n, char *data, unsigned nd) {
 static int volta(const char *infoHash, int fileIdx, char *url, unsigned n,
                  int baixarTB, int so, int *qb, int *pct, int *fora, int *winner) {
   int q;
-  unsigned g = atomic_load(&geracao);
+  const DebridContexto *ctx = contextoDoFio();
+  unsigned g = ctx ? ctx->busca : 0;
 
   // ORDEM FIXA: Real-Debrid, TorBox, Premiumize; ganha o PRIMEIRO QUE
   // RESOLVER, nao o primeiro que tem chave. Quem tem duas contas costuma ter
@@ -1046,7 +1216,8 @@ static int volta(const char *infoHash, int fileIdx, char *url, unsigned n,
   // um so custa uma consulta de cache quando nao tem o conteudo.
   for (q = 0; q < SN; q++) {
     int deu, p = -1;
-    if (!chave[q][0] || (so >= 0 && q != so)) continue;
+    if (!contextoVale()) { url[0] = 0; return 0; }
+    if (!chaveDoFio(q)[0] || (so >= 0 && q != so)) continue;
     // Recusado pela conta nesta busca: nem tenta, passa ao proximo servico.
     // E o que faltava no registro 1541 — o Premiumize so era perguntado
     // depois de cada 403 do TorBox, torrent por torrent.
@@ -1058,12 +1229,16 @@ static int volta(const char *infoHash, int fileIdx, char *url, unsigned n,
         : (q == STB) ? resolverTB(infoHash, fileIdx, url, n, baixarTB, &p)
         : (q == SAD) ? resolverAD(infoHash, fileIdx, url, n, qb != NULL, &p)
                      : resolverPM(infoHash, fileIdx, url, n);
+    if (!contextoVale()) { url[0] = 0; return 0; }
     if (deu < 0) {
       int zero = 0;
       // so o primeiro fio a ver a recusa escreve a linha, e so se a busca
       // ainda e a mesma (ver `geracao`)
-      if (atomic_load(&geracao) == g
-          && atomic_compare_exchange_strong(&recusado[q], &zero, -deu))
+      pthread_mutex_lock(&chaveTrava);
+      int recusou = contextoValeSemTrava(ctx) && atomic_load(&geracao) == g
+          && atomic_compare_exchange_strong(&recusado[q], &zero, -deu);
+      pthread_mutex_unlock(&chaveTrava);
+      if (recusou)
         printf("[debrid] %s: recusa da conta (HTTP %d), fora do resto desta busca\n",
                nomeServ[q], -deu);
       url[0] = 0;
@@ -1100,30 +1275,44 @@ static int volta(const char *infoHash, int fileIdx, char *url, unsigned n,
 
 int debrid_resolver_servico_cache(int servico, const char *infoHash, int fileIdx,
                                   char *url, unsigned n, int *foraResultado) {
-  int fora = 0, r;
+  DebridContexto c;
+  int fora = 0, r = 0, abriu;
   if (foraResultado) *foraResultado = 0;
   if (url && n) url[0] = 0;
-  if (!debrid_servico_disponivel(servico) || !infoHash || !*infoHash || !url || !n) return 0;
-  r = volta(infoHash, fileIdx, url, n, 0, servico, NULL, NULL, &fora, NULL);
+  if (servico < 0 || servico >= SN || !infoHash || !*infoHash || !url || !n) return 0;
+  abriu = contextoAbrir(&c);
+  if (debrid_servico_disponivel(servico))
+    r = volta(infoHash, fileIdx, url, n, 0, servico, NULL, NULL, &fora, NULL);
+  pthread_mutex_lock(&chaveTrava);
+  if (!contextoValeSemTrava(contextoDoFio())) { r = 0; fora = 0; url[0] = 0; }
   if (r != 1 && (fora & (1 << servico))) {
     atomic_fetch_add(&foraCache, 1);
     if (foraResultado) *foraResultado = 1;
   }
+  pthread_mutex_unlock(&chaveTrava);
+  if (abriu) debrid_contexto_sair();
   return r == 1;
 }
 
 int debrid_resolver_cache(const char *infoHash, int fileIdx, char *url, unsigned n, int *foraResultado) {
-  int fora = 0, r;
+  DebridContexto c;
+  int fora = 0, r, abriu;
   if (foraResultado) *foraResultado = 0;
+  if (url && n) url[0] = 0;
   if (!infoHash || !*infoHash || !url || n == 0) return 0;
+  abriu = contextoAbrir(&c);
   r = volta(infoHash, fileIdx, url, n, 0, -1, NULL, NULL, &fora, NULL);
+  pthread_mutex_lock(&chaveTrava);
+  if (!contextoValeSemTrava(contextoDoFio())) { r = 0; fora = 0; url[0] = 0; }
   if (r != 1 && fora) atomic_fetch_add(&foraCache, 1);
+  pthread_mutex_unlock(&chaveTrava);
   if (foraResultado && r != 1 && fora) {
     int ativos = 0;
-    for (int q = 0; q < SN; q++) if (chave[q][0]) ativos |= 1 << q;
+    for (int q = 0; q < SN; q++) if (chaveDoFio(q)[0]) ativos |= 1 << q;
     // Negativa de um servico + erro/sem resposta de outro ainda e desconhecido.
     *foraResultado = (fora & ativos) == ativos;
   }
+  if (abriu) debrid_contexto_sair();
   return r == 1;
 }
 int debrid_resolver(const char *infoHash, int fileIdx, char *url, unsigned n) {
@@ -1132,31 +1321,28 @@ int debrid_resolver(const char *infoHash, int fileIdx, char *url, unsigned n) {
 
 int debrid_resolver_escolhido(const char *infoHash, int fileIdx, char *url,
                               unsigned n, char *servico, unsigned ns, int *pct) {
-  int fora = 0, qb = -1, p = -1, r, winner = -1;
+  DebridContexto c;
+  int fora = 0, qb = -1, p = -1, r, abriu, winner = -1;
   if (servico && ns) servico[0] = 0;
   if (pct) *pct = -1;
+  if (url && n) url[0] = 0;
   if (!infoHash || !*infoHash || !url || n == 0) return 0;
-  printf("[debrid] escolha manual do torrent %s: em cache primeiro, depois baixar\n",
-         infoHash);
-  // 1a volta: em cache em qualquer servico — exatamente como o automatico.
+  abriu = contextoAbrir(&c);
+  printf("[debrid] escolha manual do torrent %s: em cache primeiro, depois baixar\n", infoHash);
   r = volta(infoHash, fileIdx, url, n, 0, -1, &qb, &p, &fora, &winner);
-  // 2a volta: o TorBox respondeu "fora de cache" e a pessoa quer ESTE
-  // torrent: manda baixar. So o TorBox precisa disto — o Real-Debrid ja
-  // comecou a baixar na 1a volta (addMagnet), e o Premiumize fica como estava
-  // (o transfer/create dele ninguem pediu e nao tem teste).
-  if (r != 1 && (fora & (1 << STB))) {
+  if (r != 1 && (fora & (1 << STB)) && contextoVale()) {
     int qb2 = -1, p2 = -1;
     r = volta(infoHash, fileIdx, url, n, 1, STB, &qb2, &p2, NULL, &winner);
     if (r == DEBRID_BAIXANDO) { qb = qb2; p = p2; }
   }
-  if (r == 1) {
-    if (servico && ns && winner >= 0 && winner < SN) snprintf(servico, ns, "%s", nomeServ[winner]);
-    return 1;
-  }
-  if (qb >= 0) {
+  if (!contextoVale()) { r = 0; qb = -1; url[0] = 0; }
+  if (r == 1 && servico && ns && winner >= 0 && winner < SN)
+    snprintf(servico, ns, "%s", nomeServ[winner]);
+  if (r != 1 && qb >= 0) {
     if (servico && ns) snprintf(servico, ns, "%s", nomeServ[qb]);
     if (pct) *pct = p;
-    return DEBRID_BAIXANDO;
+    r = DEBRID_BAIXANDO;
   }
-  return 0;
+  if (abriu) debrid_contexto_sair();
+  return r == 1 || r == DEBRID_BAIXANDO ? r : 0;
 }

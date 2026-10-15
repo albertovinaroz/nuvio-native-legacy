@@ -12,6 +12,8 @@
 #include "js.h"
 #include "perfis.h"
 #include "sessao.h"
+#include "perfisessao.h"
+#include "debrid.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -638,6 +640,114 @@ typedef struct { char imdb[24]; long tmdb; int serie; } TmC;
 static TmC tmCache[64];
 static int tmProx;
 
+struct PluginsConsulta {
+  PlugRepo repos[PLUG_REPOS_MAX]; int nRepos;
+  Scraper scr[PLUG_SCRAPERS_MAX]; int nScr;
+  TmC tmdb[64];
+  char chaveTmdb[64], usuario[80], so[400];
+  int perfil, ligado, disponivel, log;
+  unsigned geracao;
+  uint64_t sessao;
+  DebridContexto debrid;
+  RedeGrupo *grupo;
+  RedeJob *job;
+};
+PluginsConsulta *plugins_consulta_capturar(void) {
+  PluginsConsulta *c = calloc(1, sizeof *c);
+  if (!c) return NULL;
+  c->sessao = nv_perfil_sessao_ler();
+  c->disponivel = plugins_disponivel();
+  snprintf(c->chaveTmdb, sizeof c->chaveTmdb, "%s", desc_chave_tmdb_reserva());
+  { const char *so = getenv("NUVIO_PLUGINS_SO");
+    snprintf(c->so, sizeof c->so, "%s", so ? so : ""); }
+  c->log = getenv("NUVIO_PLUGINS_LOG") != NULL;
+  debrid_contexto_capturar(&c->debrid);
+  pthread_mutex_lock(&trava);
+  c->geracao = gerAtual(); c->perfil = ctxPerfil; c->ligado = E.ligado;
+  snprintf(c->usuario, sizeof c->usuario, "%s", ctxUsuario);
+  c->nRepos = E.nRepos; c->nScr = E.nScr;
+  for (int i = 0; i < c->nRepos; i++) c->repos[i] = E.repos[i].r;
+  memcpy(c->scr, E.scr, (size_t)c->nScr * sizeof *c->scr);
+  memcpy(c->tmdb, tmCache, sizeof c->tmdb);
+  c->grupo = grupoDe(); c->job = rede_job_criar(c->grupo);
+  pthread_mutex_unlock(&trava);
+  if (!c->job || !nv_perfil_sessao_atual(c->sessao)) { plugins_consulta_liberar(c); return NULL; }
+  return c;
+}
+int plugins_consulta_atual(const PluginsConsulta *c) {
+  if (!c || !nv_perfil_sessao_atual(c->sessao) || rede_job_estado(c->job) != REDE_OK ||
+      c->disponivel != plugins_disponivel() || strcmp(c->chaveTmdb, desc_chave_tmdb_reserva())) return 0;
+  DebridContexto debrid;
+  debrid_contexto_capturar(&debrid);
+  if (c->debrid.sessao != debrid.sessao || memcmp(c->debrid.chave, debrid.chave, sizeof debrid.chave)) return 0;
+  int ok;
+  pthread_mutex_lock(&trava);
+  ok = c->geracao == gerAtual() && c->perfil == ctxPerfil && !strcmp(c->usuario, ctxUsuario) &&
+       c->ligado == E.ligado && c->nRepos == E.nRepos && c->nScr == E.nScr &&
+       !memcmp(c->scr, E.scr, (size_t)c->nScr * sizeof *c->scr);
+  for (int i = 0; ok && i < c->nRepos; i++)
+    if (memcmp(&c->repos[i], &E.repos[i].r, sizeof c->repos[i])) ok = 0;
+  pthread_mutex_unlock(&trava);
+  return ok;
+}
+void plugins_consulta_liberar(PluginsConsulta *c) {
+  if (!c) return;
+  rede_job_soltar(c->job);
+  memset(c, 0, sizeof *c); free(c);
+}
+static const char *espacoCapturado(const char *p) {
+  while (*p && (unsigned char)*p <= ' ') p++;
+  return p;
+}
+static int arrayCapturadoValido(const char *json, const char *chave) {
+  if (!json) return 0;
+  const char *ini = espacoCapturado(json), *fim = js_fim(ini);
+  if (*ini != '{' || !fim || fim <= ini || fim[-1] != '}' || *espacoCapturado(fim)) return 0;
+  int profundidade = 0;
+  size_t nChave = strlen(chave);
+  for (const char *p = ini; p < fim; p++) {
+    if (*p == '"') {
+      const char *nome = p + 1, *fecha = nome;
+      while (fecha < fim && *fecha != '"') {
+        if (*fecha == '\\' && fecha + 1 < fim) fecha++;
+        fecha++;
+      }
+      if (fecha >= fim) return 0;
+      const char *v = espacoCapturado(fecha + 1);
+      if (profundidade == 1 && (size_t)(fecha - nome) == nChave && !memcmp(nome, chave, nChave) && *v == ':') {
+        v = espacoCapturado(v + 1); const char *af = js_fim(v);
+        if (*v != '[' || !af || af <= v || af > fim || af[-1] != ']') return 0;
+        const char *q = espacoCapturado(v + 1);
+        while (q < af - 1) {
+          const char *of = js_fim(q);
+          if (*q != '{' || !of || of <= q || of > af - 1 || of[-1] != '}') return 0;
+          q = espacoCapturado(of);
+          if (q == af - 1) break;
+          if (*q != ',') return 0;
+          q = espacoCapturado(q + 1); if (q == af - 1) return 0;
+        }
+        return q == af - 1;
+      }
+      p = fecha;
+    } else if (*p == '{' || *p == '[') profundidade++;
+    else if (*p == '}' || *p == ']') profundidade--;
+  }
+  return 0;
+}
+static long tmdbDeCapturado(const PluginsConsulta *c, const char *imdb, int serie, int *completo) {
+  char url[300], *corpo;
+  for (int i = 0; i < 64; i++)
+    if (c->tmdb[i].tmdb && c->tmdb[i].serie == serie && !strcmp(c->tmdb[i].imdb, imdb)) return c->tmdb[i].tmdb;
+  if (!c->chaveTmdb[0]) return 0;
+  snprintf(url, sizeof url, "https://api.themoviedb.org/3/find/%s?api_key=%s&external_source=imdb_id", imdb, c->chaveTmdb);
+  corpo = baixar(url, 256 * 1024, 10000, c->job);
+  if (!corpo) { *completo = 0; return 0; }
+  const char *p = js_array(corpo, NULL, serie ? "tv_results" : "movie_results");
+  if (!arrayCapturadoValido(corpo, serie ? "tv_results" : "movie_results")) *completo = 0;
+  long id = p ? (long)js_num(p, js_fim(p), "id", 0) : 0;
+  free(corpo); return id;
+}
+
 static long tmdbDe(const char *imdb, int serie, RedeJob *job) {
   char url[300], *corpo;
   const char *chave = desc_chave_tmdb_reserva();
@@ -677,6 +787,9 @@ typedef struct {
   Stream **res; int *nRes;
   AvisoFn aviso; void *avisoU;
   RedeJob *job;            // geracao desta consulta
+  const PluginsConsulta *capturada;
+  DebridContexto debrid;
+  int incompleta;          // atomico: o preparo nao aceita resposta parcial
 } Rodada;
 
 static int rodadaParou(Rodada *r) {
@@ -696,6 +809,14 @@ static char *codigoDe(const Scraper *s, RedeJob *job) {
   free(corpo);
   return t;   // a rede falhou: fica o codigo velho, se houver
 }
+static char *codigoDeCapturado(const Scraper *s, RedeJob *job) {
+  long idade;
+  char *t = cacheLer(s->url, &idade);
+  if (t && idade >= 0 && idade < PLUG_CACHE_S) return t;
+  char *corpo = baixar(s->url, PLUG_CODIGO_MAX, 15000, job);
+  if (corpo && strlen(corpo) > 20) { free(t); return corpo; }
+  free(corpo); return t;
+}
 
 static void rodarScrapers(Rodada *r) {
   for (;;) {
@@ -709,8 +830,9 @@ static void rodarScrapers(Rodada *r) {
     pthread_mutex_unlock(&r->m);
     if (i < 0 || rodadaParou(r)) return;
     s = &r->lista[i];
-    cod = codigoDe(s, r->job);
+    cod = r->capturada ? codigoDeCapturado(s, r->job) : codigoDe(s, r->job);
     if (!cod) {
+      if (r->capturada) __atomic_store_n(&r->incompleta, 1, __ATOMIC_RELEASE);
       printf("[plugins] %s: sem codigo\n", s->nome);
       if (r->aviso && !rodadaParou(r)) r->aviso(r->avisoU, i, s->nome, 3, NULL, 0);
       continue;
@@ -719,17 +841,19 @@ static void rodarScrapers(Rodada *r) {
     p.codigo = semCarimbo(cod); p.nCodigo = strlen(p.codigo);
     p.arquivo = s->arquivo; p.idScraper = s->id; p.nomeScraper = s->nome;
     p.tmdbId = r->tmdb; p.tipo = r->tipo; p.temporada = r->t; p.episodio = r->e;
-    p.tmdbChave = desc_chave_tmdb_reserva();
+    p.tmdbChave = r->capturada ? r->capturada->chaveTmdb : desc_chave_tmdb_reserva();
     p.ajustesJson = "{}";
     p.prazoMs = PLUG_PRAZO_MS; p.redeSegundos = PLUG_REDE_S;
-    p.verLog = getenv("NUVIO_PLUGINS_LOG") != NULL;
+    p.verLog = r->capturada ? r->capturada->log : getenv("NUVIO_PLUGINS_LOG") != NULL;
     p.cancelado = &r->cancel;
-    p.job = r->job; p.grupo = grupoDe();
+    p.job = r->job; p.grupo = r->capturada ? r->capturada->grupo : grupoDe();
     pj_executar(&p, &res);
+    if (r->capturada && (!arrayCapturadoValido(res.json, "streams") || res.cancelado || res.estourou || res.semMemoria || res.erro[0]))
+      __atomic_store_n(&r->incompleta, 1, __ATOMIC_RELEASE);
     free(cod);
     { Stream *l = NULL;
       int n = res.json && !res.cancelado ? stream_extrair(res.json, s->nome, &l) : 0;
-      if (n < 0) n = 0;
+      if (n < 0) { if (r->capturada) __atomic_store_n(&r->incompleta, 1, __ATOMIC_RELEASE); n = 0; }
       r->res[i] = l; r->nRes[i] = n;
       if (r->aviso && __atomic_load_n(&r->cancel, __ATOMIC_ACQUIRE) != 1 && rede_job_estado(r->job) == REDE_OK)
         r->aviso(r->avisoU, i, s->nome, n > 0 || !res.erro[0] ? 2 : 3, l, n);
@@ -742,7 +866,9 @@ static void rodarScrapers(Rodada *r) {
 }
 static void *fioScraper(void *u) {
   Rodada *r = u;
+  if (r->capturada) debrid_contexto_entrar(&r->debrid);
   rodarScrapers(r);
+  if (r->capturada) debrid_contexto_sair();
   pthread_mutex_lock(&r->m); r->vivos--; pthread_mutex_unlock(&r->m);
   return NULL;
 }
@@ -847,8 +973,103 @@ int plugins_consultar(const char *id, const char *tipo, int (*cancelado)(void *)
   return total;
 }
 
+int plugins_consulta_consultar(const PluginsConsulta *c, const char *id, const char *tipo,
+                              int (*cancelado)(void *), void *ctx,
+                              AvisoFn aviso, void *avisoU, Stream **saida) {
+  if (!saida) return -1;
+  *saida = NULL;
+  if (!c || !id || !*id || !tipo || !*tipo || !plugins_consulta_atual(c) ||
+      (cancelado && cancelado(ctx))) return -1;
+  if (!c->ligado || !c->disponivel) return 0;
+  int serie = !strcmp(tipo, "series");
+  if (!serie && strcmp(tipo, "movie")) return 0;
+  Rodada r = {0};
+  r.capturada = c; r.job = c->job; r.debrid = c->debrid;
+  r.lista = malloc(sizeof *r.lista * (size_t)(c->nScr ? c->nScr : 1));
+  if (!r.lista) return -1;
+  for (int i = 0; i < c->nScr; i++) {
+    const Scraper *s = &c->scr[i];
+    if (!s->ativo || s->repo < 0 || s->repo >= c->nRepos || !c->repos[s->repo].ativo ||
+        (serie ? !s->serie : !s->filme)) continue;
+    if (c->so[0]) { char alvo[80], lista[sizeof c->so + 3];
+      snprintf(alvo, sizeof alvo, ",%s,", s->id); snprintf(lista, sizeof lista, ",%s,", c->so);
+      if (!strstr(lista, alvo)) continue; }
+    r.lista[r.n++] = *s;
+  }
+  if (!r.n) { free(r.lista); return 0; }
+  char base[64]; int completo = 1;
+  if (!strncmp(id, "tmdb:", 5)) {
+    snprintf(r.tmdb, sizeof r.tmdb, "%ld", atol(id + 5));
+    const char *q = strchr(id + 5, ':');
+    if (q) { r.t = atoi(q + 1); q = strchr(q + 1, ':'); if (q) r.e = atoi(q + 1); }
+  } else if (idbase_e_imdb(id)) {
+    idbase_copiar(id, base, sizeof base); idbase_episodio(id, &r.t, &r.e);
+    long tm = tmdbDeCapturado(c, base, serie, &completo);
+    if (!tm) { free(r.lista); return completo && plugins_consulta_atual(c) &&
+        !(cancelado && cancelado(ctx)) ? 0 : -1; }
+    snprintf(r.tmdb, sizeof r.tmdb, "%ld", tm);
+  } else { free(r.lista); return 0; }
+  if (serie) { r.t = r.t > 0 ? r.t : 1; r.e = r.e > 0 ? r.e : 1; }
+  else r.t = r.e = 0;
+  r.debrid.temporada = r.t; r.debrid.episodio = r.e;
+  r.tipo = serie ? "tv" : "movie";
+  r.res = calloc((size_t)r.n, sizeof *r.res);
+  r.nRes = calloc((size_t)r.n, sizeof *r.nRes);
+  if (!r.res || !r.nRes) { free(r.lista); free(r.res); free(r.nRes); return -1; }
+  pthread_mutex_init(&r.m, NULL); r.aviso = aviso; r.avisoU = avisoU;
+  if (aviso) for (int i = 0; i < r.n; i++) aviso(avisoU, i, r.lista[i].nome, 1, NULL, 0);
+  unsigned long inicio = agoraMsPlug();
+  pthread_t fios[PLUG_PARALELOS]; int criados = 0;
+  int nf = r.n < PLUG_PARALELOS ? r.n : PLUG_PARALELOS;
+  pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, pj_pilha());
+  for (int i = 0; i < nf; i++) {
+    pthread_mutex_lock(&r.m); r.vivos++; pthread_mutex_unlock(&r.m);
+    if (!pthread_create(&fios[criados], &a, fioScraper, &r)) criados++;
+    else { pthread_mutex_lock(&r.m); r.vivos--; pthread_mutex_unlock(&r.m); }
+  }
+  pthread_attr_destroy(&a);
+  if (!criados) __atomic_store_n(&r.incompleta, 1, __ATOMIC_RELEASE);
+  for (;;) {
+    pthread_mutex_lock(&r.m); int fim = r.vivos <= 0; pthread_mutex_unlock(&r.m);
+    if (fim) break;
+    if (!plugins_consulta_atual(c) || (cancelado && cancelado(ctx)))
+      __atomic_store_n(&r.cancel, 1, __ATOMIC_RELEASE);
+    if (agoraMsPlug() - inicio > PLUG_TETO_MS)
+      __atomic_store_n(&r.cancel, 1, __ATOMIC_RELEASE);
+    struct timespec espera = {0, 50 * 1000000L}; nanosleep(&espera, NULL);
+  }
+  for (int i = 0; i < criados; i++) pthread_join(fios[i], NULL);
+  int falhou = __atomic_load_n(&r.cancel, __ATOMIC_ACQUIRE) ||
+               __atomic_load_n(&r.incompleta, __ATOMIC_ACQUIRE) ||
+               !plugins_consulta_atual(c) || (cancelado && cancelado(ctx));
+  int total = 0;
+  for (int i = 0; i < r.n; i++) if (r.nRes[i] > 0) total += r.nRes[i];
+  Stream *todos = !falhou && total ? malloc((size_t)total * sizeof *todos) : NULL;
+  if (total && !todos) falhou = 1;
+  int n = 0;
+  for (int i = 0; i < r.n; i++) {
+    if (!falhou && r.nRes[i] > 0) { memcpy(todos + n, r.res[i], (size_t)r.nRes[i] * sizeof *todos); n += r.nRes[i]; }
+    free(r.res[i]);
+  }
+  free(r.lista); free(r.res); free(r.nRes); pthread_mutex_destroy(&r.m);
+  if (falhou) { free(todos); return -1; }
+  *saida = todos; return n;
+}
+
 static int origem(const char *id, const char *tipo, int (*cancelado)(void *), void *ctx,
                   OrigemAviso aviso, void *avisoU, void *saida) {
   return plugins_consultar(id, tipo, cancelado, ctx, aviso, avisoU, (Stream **)saida);
 }
-void plugins_ligar_aos_addons(void) { addons_definir_origem_extra(origem, plugins_ligado); }
+static void *preparoCapturar(void) { return plugins_consulta_capturar(); }
+static int preparoAtual(const void *c) { return plugins_consulta_atual(c); }
+static int preparoConsultar(const void *c, const char *id, const char *tipo,
+                           int (*cancelado)(void *), void *ctx, OrigemAviso aviso,
+                           void *avisoU, Stream **saida) {
+  return plugins_consulta_consultar(c, id, tipo, cancelado, ctx, aviso, avisoU, saida);
+}
+static void preparoLiberar(void *c) { plugins_consulta_liberar(c); }
+void plugins_ligar_aos_addons(void) {
+  static const OrigemPreparoOps ops = {preparoCapturar, preparoAtual, preparoConsultar, preparoLiberar};
+  addons_definir_origem_extra(origem, plugins_ligado);
+  addons_definir_origem_extra_preparo(origem, &ops);
+}

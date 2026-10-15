@@ -121,6 +121,25 @@ static void grupos(void) {
   // A lembrada continua na frente, mesmo de outro grupo.
   nf = fonteauto_fila_g(FONTEAUTO_MELHOR, 5, 0, pt, NULL, ex, g, 8, fila);
   CONFERE(fila[0] == 0 && fila[1] == 3, "lembrada em grupos: %d %d", fila[0], fila[1]);
+  // ...e mesmo quando a regex em "Exigir" a recusa (grupo -1): a ultima fonte
+  // usada neste titulo e a prioridade (o dono), a regex so ordena as outras.
+  nf = fonteauto_fila_g(FONTEAUTO_MELHOR, 5, 4, pt, NULL, ex, g, 8, fila);
+  CONFERE(nf == 5 && fila[0] == 4 && fila[1] == 3, "lembrada recusada pela regex: %d [%d %d]", nf, fila[0], fila[1]);
+  nf = fonteauto_fila_g(FONTEAUTO_PRIMEIRA, 5, 4, pt, NULL, ex, g, 1, fila);
+  CONFERE(nf == 1 && fila[0] == 4, "lembrada recusada pela regex (primeira): %d", fila[0]);
+  { FonteautoParcial q;
+    memset(&q, 0, sizeof q);
+    q.modo = FONTEAUTO_MELHOR; q.total = 5; q.preferida = 4; q.algumPendente = 1; q.prefPendente = 1;
+    q.pontos = pt; q.acimaTeto = ac; q.excluida = ex; q.boa = bo; q.grupo = g;
+    CONFERE(fonteauto_pode_decidir(&q), "lembrada recusada pela regex nao decidiu"); }
+  // Preferir pela distancia (fonteregra.h): grupos alem de 3. A que falha
+  // menos condicoes vem antes, mesmo com menos pontos; "os outros" no fim.
+  { signed char gd[5] = { 3, 1, FR_GRUPO_OUTROS, 2, FR_GRUPO_OUTROS + FR_FALTAS_MAX };
+    nf = fonteauto_fila_g(FONTEAUTO_MELHOR, 5, -1, pt, NULL, ex, gd, 8, fila);
+    CONFERE(nf == 5 && fila[0] == 1 && fila[1] == 3 && fila[2] == 0 && fila[3] == 2 && fila[4] == 4,
+            "distancia: %d [%d %d %d %d %d]", nf, fila[0], fila[1], fila[2], fila[3], fila[4]);
+    nf = fonteauto_fila_g(FONTEAUTO_PRIMEIRA, 5, -1, pt, NULL, ex, gd, 1, fila);
+    CONFERE(nf == 1 && fila[0] == 1, "distancia (primeira): %d", fila[0]); }
   // Sem grupos e igual a fila de sempre.
   nf = fonteauto_fila_g(FONTEAUTO_MELHOR, 5, -1, pt, NULL, ex, NULL, 1, fila);
   CONFERE(fila[0] == 4, "sem grupos mudou a fila: %d", fila[0]);

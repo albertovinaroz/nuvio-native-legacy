@@ -37,12 +37,13 @@ enum { FONTEAUTO_MELHOR = 0, FONTEAUTO_PRIMEIRA = 1 };
 int fonteauto_fila(int modo, int total, int preferida, const long *pontos,
                    const unsigned char *acimaTeto, const unsigned char *excluida,
                    int max, int *fila);
-// A MESMA FILA EM GRUPOS (#202, fonteregra.h): `grupo` de cada fonte, 0..3 na
-// ordem em que os grupos entram (0 = add-on permitido que casa a regex ...
-// 3 = de fora sem casar), -1 = nunca entra. Dentro de cada grupo vale a regra
+// A MESMA FILA EM GRUPOS (#202, fonteregra.h): `grupo` de cada fonte,
+// 0..FONTEAUTO_GRUPOS-1 na ordem em que os grupos entram (0 = add-on permitido
+// que casa a regex; depois os que falham 1, 2... condicoes; depois "os outros"
+// do mesmo jeito), -1 = nunca entra. Dentro de cada grupo vale a regra
 // do modo, igual a de sempre. NULL = todas no grupo 0 (fonteauto_fila). A
 // preferida continua na frente de tudo: e a escolha da pessoa neste titulo.
-#define FONTEAUTO_GRUPOS 4
+#define FONTEAUTO_GRUPOS 16   // 2 x (FR_FALTAS_MAX + 1)
 int fonteauto_fila_g(int modo, int total, int preferida, const long *pontos,
                      const unsigned char *acimaTeto, const unsigned char *excluida,
                      const signed char *grupo, int max, int *fila);
