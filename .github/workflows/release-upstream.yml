@@ -2,7 +2,7 @@
 # Si la hay y este fork aún no la tiene:
 #   1. integra (merge) la tag del upstream en master, conservando nuestros
 #      commits (banderas de idioma, auto-update apuntando a este fork);
-#   2. compila el .tpk de Tizen 8–9 (NuvioTpk) con tools/tpk.sh;
+#   2. compila los .tpk de Tizen 6.5–7 (NuvioTpk65) y 8–9 (NuvioTpk) con tools/tpk.sh;
 #   3. publica la release aquí con la MISMA tag y las notas del upstream, más
 #      la libnuvio-<v>-tpk-arm.so que usa el auto-update del app.
 # Si el merge tiene conflictos, abre un issue y no publica nada.
@@ -27,6 +27,10 @@ on:
       version:
         description: "Release propia del fork, p.ej. 2.0.5-b1 (pre-release del master actual; ignora 'tag')"
         required: false
+      pacotes:
+        description: "Paquetes .tpk (NuvioTpk40 = Tizen 4/5, NuvioTpk60 = 6.0, NuvioTpk65 = 6.5–7, NuvioTpk = 8–9)"
+        required: false
+        default: "NuvioTpk65 NuvioTpk"
 
 permissions:
   contents: write
@@ -139,14 +143,16 @@ jobs:
           key: nuvio-tpk-${{ hashFiles('tools/tpk/deps.sh', 'tools/tpk.sh', '.github/fork/sdk/Dockerfile') }}-${{ github.run_id }}
           restore-keys: nuvio-tpk-${{ hashFiles('tools/tpk/deps.sh', 'tools/tpk.sh', '.github/fork/sdk/Dockerfile') }}-
 
-      - name: Compilar NuvioTpk (Tizen 8–9)
+      - name: Compilar los .tpk
         env:
           NUVIO_LOCAL_PROPERTIES: ${{ secrets.NUVIO_LOCAL_PROPERTIES }}
+          # El cron no tiene inputs: vale el mismo default que el manual.
+          PACOTES: ${{ inputs.pacotes || 'NuvioTpk65 NuvioTpk' }}
         run: |
           [ -n "$NUVIO_LOCAL_PROPERTIES" ] || { echo "falta el secret NUVIO_LOCAL_PROPERTIES"; exit 1; }
           printf '%s\n' "$NUVIO_LOCAL_PROPERTIES" > "$RUNNER_TEMP/local.properties"
           export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet" DOTNET_CLI_TELEMETRY_OPTOUT=1
-          NUVIO_PROPERTIES="$RUNNER_TEMP/local.properties" NV_TPK_PACOTES=NuvioTpk bash tools/tpk.sh
+          NUVIO_PROPERTIES="$RUNNER_TEMP/local.properties" NV_TPK_PACOTES="$PACOTES" bash tools/tpk.sh
           rm -f "$RUNNER_TEMP/local.properties"
           # Docker escribe la caché como root; actions/cache la guarda como runner.
           sudo chown -R "$(id -u):$(id -g)" ~/.cache/nuvio-tpk
@@ -158,18 +164,21 @@ jobs:
           [ -f "$NOTAS" ] || { echo "faltan las notas: $NOTAS"; exit 1; }
           VERSAO="${TAG#v}"
           # El .tpk sale con la versión interna (appinfo.json); el anexo lleva la del fork.
-          cp build/tpk/Nuvio-*-NuvioTpk.tpk "build/tpk/Nuvio-$VERSAO-NuvioTpk.tpk" 2>/dev/null || true
+          mkdir -p anexos
+          for t in build/tpk/Nuvio-*-NuvioTpk*.tpk; do
+            cp "$t" "anexos/Nuvio-$VERSAO-${t##*-}"
+          done
           git tag -f "$TAG" HEAD
           git push -f origin "refs/tags/$TAG"
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
             --title "Nuvio Legacy (fork) $VERSAO" --notes-file "$NOTAS" \
-            "build/tpk/Nuvio-$VERSAO-NuvioTpk.tpk" build/tpk/libnuvio-*-tpk-arm.so
+            anexos/*.tpk build/tpk/libnuvio-*-tpk-arm.so
 
       - name: Publicar la release
         if: needs.comprobar.outputs.modo != 'fork'
         run: |
           NOMBRE=$(gh release view "$TAG" -R "$UPSTREAM" --json name -q .name)
-          { echo "> Fork de [$UPSTREAM](https://github.com/$UPSTREAM/releases/tag/$TAG) con las banderas de idioma de audio y subtítulos en la lista de fuentes. Solo incluye el paquete Samsung Tizen 8–9 (\`NuvioTpk\`); el resto de plataformas, en el upstream."
+          { echo "> Fork de [$UPSTREAM](https://github.com/$UPSTREAM/releases/tag/$TAG) con las banderas de idioma de audio y subtítulos en la lista de fuentes. Incluye los paquetes Samsung Tizen 6.5–7 (\`NuvioTpk65\`) y 8–9 (\`NuvioTpk\`); el resto de plataformas, en el upstream."
             echo
             gh release view "$TAG" -R "$UPSTREAM" --json body -q .body; } > notas.md
           # La tag apunta a NUESTRO merge, no al commit del upstream con el mismo nombre.
@@ -177,4 +186,4 @@ jobs:
           git push -f origin "refs/tags/$TAG"
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "$NOMBRE" --notes-file notas.md \
-            build/tpk/Nuvio-*-NuvioTpk.tpk build/tpk/libnuvio-*-tpk-arm.so
+            build/tpk/Nuvio-*.tpk build/tpk/libnuvio-*-tpk-arm.so
