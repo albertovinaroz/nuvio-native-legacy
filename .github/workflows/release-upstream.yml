@@ -7,6 +7,11 @@
 #      la libnuvio-<v>-tpk-arm.so que usa el auto-update del app.
 # Si el merge tiene conflictos, abre un issue y no publica nada.
 #
+# MODO RELEASE DEL FORK (manual, input `version`, p.ej. 2.0.5-b1): compila el
+# master actual tal cual, sin merge, y lo publica como PRE-RELEASE v<version>
+# con las notas de .github/fork/release-notes/v<version>.md. El auto-update del
+# app solo mira la última release normal, así que una beta no llega sola a las TV.
+#
 # Secret necesario: NUVIO_LOCAL_PROPERTIES (contenido del local.properties con
 # las claves de servidor, ver tools/env.sh).
 name: Release desde upstream
@@ -18,6 +23,9 @@ on:
     inputs:
       tag:
         description: "Tag del upstream a publicar (vacío = la última release)"
+        required: false
+      version:
+        description: "Release propia del fork, p.ej. 2.0.5-b1 (pre-release del master actual; ignora 'tag')"
         required: false
 
 permissions:
@@ -38,13 +46,19 @@ jobs:
     outputs:
       tag: ${{ steps.v.outputs.tag }}
       nueva: ${{ steps.v.outputs.nueva }}
+      modo: ${{ steps.v.outputs.modo }}
     steps:
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_MANUAL: ${{ inputs.tag }}
+          VERSAO_FORK: ${{ inputs.version }}
         run: |
-          TAG="${TAG_MANUAL:-$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)}"
+          if [ -n "$VERSAO_FORK" ]; then
+            TAG="v${VERSAO_FORK#v}"; echo "modo=fork" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${TAG_MANUAL:-$(gh api "repos/$UPSTREAM/releases/latest" -q .tag_name)}"; echo "modo=upstream" >> "$GITHUB_OUTPUT"
+          fi
           [ -n "$TAG" ] || { echo "sin release en $UPSTREAM"; exit 1; }
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -60,6 +74,7 @@ jobs:
     timeout-minutes: 340
     env:
       TAG: ${{ needs.comprobar.outputs.tag }}
+      MODO: ${{ needs.comprobar.outputs.modo }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +83,7 @@ jobs:
           fetch-depth: 0
 
       - name: Integrar la tag del upstream en master
+        if: needs.comprobar.outputs.modo != 'fork'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -135,7 +151,22 @@ jobs:
           # Docker escribe la caché como root; actions/cache la guarda como runner.
           sudo chown -R "$(id -u):$(id -g)" ~/.cache/nuvio-tpk
 
+      - name: Publicar la release del fork (pre-release)
+        if: needs.comprobar.outputs.modo == 'fork'
+        run: |
+          NOTAS=".github/fork/release-notes/$TAG.md"
+          [ -f "$NOTAS" ] || { echo "faltan las notas: $NOTAS"; exit 1; }
+          VERSAO="${TAG#v}"
+          # El .tpk sale con la versión interna (appinfo.json); el anexo lleva la del fork.
+          cp build/tpk/Nuvio-*-NuvioTpk.tpk "build/tpk/Nuvio-$VERSAO-NuvioTpk.tpk" 2>/dev/null || true
+          git tag -f "$TAG" HEAD
+          git push -f origin "refs/tags/$TAG"
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
+            --title "Nuvio Legacy (fork) $VERSAO" --notes-file "$NOTAS" \
+            "build/tpk/Nuvio-$VERSAO-NuvioTpk.tpk" build/tpk/libnuvio-*-tpk-arm.so
+
       - name: Publicar la release
+        if: needs.comprobar.outputs.modo != 'fork'
         run: |
           NOMBRE=$(gh release view "$TAG" -R "$UPSTREAM" --json name -q .name)
           { echo "> Fork de [$UPSTREAM](https://github.com/$UPSTREAM/releases/tag/$TAG) con las banderas de idioma de audio y subtítulos en la lista de fuentes. Solo incluye el paquete Samsung Tizen 8–9 (\`NuvioTpk\`); el resto de plataformas, en el upstream."
