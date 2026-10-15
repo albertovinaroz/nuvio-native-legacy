@@ -261,7 +261,9 @@ int layout_modo_mobile(void);
 // Altura e respiro do botao do destaque (o "Ver titulo"), e a mesma medida do
 // NV_HERO_BOTAO_H que o layout do hero ja usava para a linha de acoes.
 #define NV_HOME_HERO_BOTAO_GAP 26.0f
-#define NV_LEGACY_ROW_HEAD_H 46.0f // titulo + margem ate os cards (564 - 518)
+// 58 e nao os 46 medidos no web (564 - 518): com a pilula de tipo/addon ao
+// lado do titulo, 46 deixava o titulo colado nos cards (pedido do dono do fork).
+#define NV_LEGACY_ROW_HEAD_H 58.0f // titulo + margem ate os cards
 
 // --- LAYOUTS DA HOME (ajustes_home_layout) ---------------------------------
 // MODERNA e tudo o que esta acima. As medidas abaixo sao DESTES DOIS layouts

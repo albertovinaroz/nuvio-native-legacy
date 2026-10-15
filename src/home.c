@@ -5878,6 +5878,34 @@ static void veusDoCard(const CatItem *cItem, TipoFileira tipo, int deitado, floa
   if (editorial(tipo)) gfx_veu_card_por(NV_EDITORIAL_VEU_F, NV_EDITORIAL_VEU_A);
 }
 
+// "2026 · Drama · Romance": o ano do `meta` ("2026  ·  1h46min") e ate dois
+// generos de `genero` ("Movie · Drama · Romance"), sem o segmento de tipo.
+static void legendaDeFora(const CatItem *ci, char *dst, size_t tam) {
+  static const char *const TIPO[] = { "Filme", "Movie", "Série", "Serie", "Series",
+                                      "Programa de TV", "TV Show", "Show" };
+  size_t k = 0;
+  int generos = 0;
+  dst[0] = 0;
+  if (ci->meta[0] >= '0' && ci->meta[0] <= '9' && ci->meta[1] && ci->meta[2] && ci->meta[3])
+    k += (size_t)snprintf(dst, tam, "%.4s", ci->meta);
+  for (const char *p = ci->genero; *p && generos < 2 && k + 1 < tam; ) {
+    const char *f = strstr(p, "\xc2\xb7"), *ate = f ? f : p + strlen(p);
+    char seg[64];
+    int tipo = 0;
+    while (p < ate && *p == ' ') p++;
+    while (ate > p && ate[-1] == ' ') ate--;
+    snprintf(seg, sizeof seg, "%.*s", (int)(ate - p), p);
+    for (size_t t = 0; t < sizeof TIPO / sizeof *TIPO; t++)
+      tipo |= !strcasecmp(seg, TIPO[t]) || !strcasecmp(seg, i18n(TIPO[t]));
+    if (seg[0] && !tipo) {
+      k += (size_t)snprintf(dst + k, tam - k, "%s%s", k ? "  \xc2\xb7  " : "", seg);
+      generos++;
+    }
+    if (!f) break;
+    p = f + 2;
+  }
+}
+
 // A legenda do cartaz (dentro do deitado, abaixo do cartaz em pe).
 static void desenhaRotuloCard(const CatItem *cItem, TipoFileira tipo, int deitado,
                               int rotuloFora, float px, float py, float w, float h,
@@ -5921,13 +5949,18 @@ static void desenhaRotuloCard(const CatItem *cItem, TipoFileira tipo, int deitad
       float bx = px + NV_POSTER_COPY_PADX;
       float by = py + h + NV_POSTER_COPY_PADT;
       float maxW = w - NV_POSTER_COPY_PADX * 2.0f;
-      // 16/500 e 13/400 rgba(255,255,255,.7) — os corpos de
-      // .home-poster-title e .home-poster-subtitle.
-      TxtLinha tn = txt_linha_corta(TXT_CAPTION2, nome, 245, 246, 250, 255, maxW);
+      // A LEGENDA DE FORA (fork): o nome em 21/500, e embaixo, mais apagada e
+      // sem negrito, "2026 · Drama · Romance" — o ano do `meta` e no maximo
+      // dois generos. O tipo ("Movie") sai: a fileira ja diz (titulo/pilula)
+      // e era a palavra que mais se repetia. Antes: 21/400 e o genero inteiro
+      // no corpo de selo (15/700), que lia como um carimbo.
+      char linha[192];
+      TxtLinha tn = txt_linha_corta(TXT_HERO_META, nome, 245, 246, 250, 255, maxW);
       txt_desenhar_alpha(tn, bx, by, 0.98f);
-      if (sub) {
-        TxtLinha ts = txt_linha_corta(TXT_MINI, sub, 255, 255, 255, 255, maxW);
-        txt_desenhar_alpha(ts, bx, by + tn.h + 2.0f, 0.70f);
+      legendaDeFora(cItem, linha, sizeof linha);
+      if (linha[0]) {
+        TxtLinha ts = txt_linha_corta(TXT_ILHA_META, linha, 168, 172, 182, 255, maxW);
+        txt_desenhar_alpha(ts, bx, by + tn.h + 3.0f, 0.92f);
       }
     }
   }

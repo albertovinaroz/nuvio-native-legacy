@@ -94,8 +94,8 @@ static void medirCabecalho(void);
 #define FOLHA_MARCA_H   30.0f  // "SUA ESCOLHA ANTERIOR" / "REPRODUZINDO AGORA"
 #define FOLHA_FIT_H     32.0f  // StreamFit: evidencia da conexao, so na linha em foco
 #define FOLHA_IDIOMA_H  32.0f  // bandeiras de audio e legenda, quando o addon diz
-// 22 e nao 18: a 3 m de uma TV de 55" a de 18 lia como mancha de cor.
-#define FOLHA_BANDEIRA_H 22.0f
+// 19: a de 18 lia como mancha a 3 m; a de 22 pesava mais que os selos.
+#define FOLHA_BANDEIRA_H 19.0f
 #define FOLHA_LINHA_GAP  4.0f
 #define FOLHA_SEC_H     64.0f  // cabecalho "4K  ULTRA HD ... 3 fontes"
 #define FOLHA_SEC_GAP   26.0f
@@ -3248,17 +3248,27 @@ static float grupoBandeiras(const char *icone, const char (*lista)[6], int n,
   if (!n || x + 60 > maxX) return x;
   gfx_icone((GfxRect){x, meio - 11, 22, 22}, icone, c, c, c, a);
   x += 22 + 10;
+  int desenhados = 0;
+  TxtLinha ponto = txt_linha(TXT_PG_FIM, "\xE2\x80\xA2", tinta, tinta, tinta - 2, 255);
   for (int k = 0; k < n; k++) {
     const char *pais = bandeiraDe(lista[k]);
     float w;
+    // "•" ENTRE as bandeiras (pedido, como no app do iOS): com elas encostadas
+    // a fileira lia como uma faixa colorida so.
+    { int rep = 0;   // pais ja desenhado (hindi e tamil): nem bandeira nem ponto
+      for (int j = 0; j < nf && pais; j++) rep |= !strcmp(feitos[j], pais);
+      if (rep) continue; }
+    if (desenhados) {
+      if (x + ponto.w + 16 > maxX) break;
+      txt_desenhar_alpha(ponto, x, meio - ponto.h * .5f, a * .7f);
+      x += ponto.w + 8;
+    }
+    desenhados++;
     if (!strcmp(lista[k], "multi")) {
       if (x + 22 > maxX) break;
       gfx_icone((GfxRect){x, meio - 11, 22, 22}, "aj_globe", c, c, c, a);
       w = 22;
     } else if (pais && dirBandeiras[0]) {
-      int rep = 0;
-      for (int j = 0; j < nf; j++) rep |= !strcmp(feitos[j], pais);
-      if (rep) continue;
       feitos[nf++] = pais;
       GLuint t = bandeiraTex(pais, FOLHA_BANDEIRA_H, &w);
       if (x + w > maxX) break;
