@@ -128,6 +128,11 @@ const char *stream_idioma_codigo(const char *etiqueta);
 // centrada em (cx, cy) com altura h. 0 = sem bandeira (idioma sem pais ou
 // imagem ainda carregando): quem chama desenha a sigla no lugar.
 int stream_bandeira_desenhar(const char *idioma, float cx, float cy, float h, float a);
+// OS IDIOMAS DE AUDIO das fontes de `alvo` (o id que vai aos addons), o mais
+// declarado primeiro, como na folha: "[alto-falante] bandeira • bandeira",
+// centrados em `cy`, ate `maxX`. Devolve a largura (0 = a lista e de outro
+// alvo ou nenhuma fonte declara idioma: nada desenhado).
+float stream_idiomas_alvo_desenhar(const char *alvo, float x, float cy, float maxX, float a);
 
 // Parser sem rede: o chamador libera *saida. Retorna -1 se a alocacao falhar.
 int stream_extrair(const char *json, const char *provedor, Stream **saida);

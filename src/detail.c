@@ -4604,6 +4604,7 @@ static void heroWeb(float a, float desloc) {
       }
       desenhaBotao(anchor,NULL,ACAO_LISTA,nivel == 0 && botao == first,a);
       if (a > .3f) ponteiro_alvo(anchor.x,anchor.y,anchor.w,anchor.h,ponteiroDetalhe,NULL,-1,first);
+      bx = anchor.x + anchor.w + NV_DETW2_BTN_GAP;
     } else for (; nb < n; nb++) {
       GfxRect rc = { bx, cyBtn - NV_DETW2_CIRC * 0.5f,
                      NV_DETW2_CIRC, NV_DETW2_CIRC };
@@ -4614,6 +4615,21 @@ static void heroWeb(float a, float desloc) {
         desenhaDicaBotao(rc, i18n("Mais opções"), a);
       if (a > 0.3f) ponteiro_alvo(rc.x, rc.y, rc.w, rc.h, ponteiroDetalhe, NULL, -1, nb);
       bx += NV_DETW2_CIRC + NV_DETW2_BTN_GAP;
+    }
+    // IDIOMAS DE AUDIO DISPONIVEIS (fork): as fontes ja sao pedidas ao abrir a
+    // ficha (app.c); quando chegam, "🔊 🇪🇸 • 🇬🇧" ao lado dos botoes, para
+    // saber se ha versao no seu idioma antes de dar play. Na serie, as do
+    // episodio em foco — o mesmo alvo que a busca usou. A linha de meta nao
+    // tinha largura sobrando (generos, ano, duracao e tres notas).
+    if (!detalheRetrato()) {
+      char alvoF[64];
+      const CatItem *ciF = cat_item(idx);
+      int tF = 0, eF = 0;
+      alvoF[0] = 0;
+      if (ciF && !strcmp(ciF->tipo, "series") && detail_ep_foco(&tF, &eF) && tF > 0 && eF > 0)
+        cat_id_stream(idx, tF, eF, alvoF, sizeof alvoF);
+      else if (ciF) snprintf(alvoF, sizeof alvoF, "%s", ciF->imdb);
+      if (alvoF[0]) stream_idiomas_alvo_desenhar(alvoF, bx + 12.0f, cyBtn, NV_TELA_W - 120.0f, a);
     }
   }
 

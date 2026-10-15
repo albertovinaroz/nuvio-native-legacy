@@ -349,6 +349,47 @@ static void ajcHSelo(int op) {
   ajcChaveCanto(k);
 }
 // Rotulos: o nome escrito abaixo do cartaz.
+// POSICAO DOS ROTULOS (fork): cartazes em pe em cima e deitados embaixo; o
+// rotulo de cada um DESLIZA entre dentro (sobre um veu) e abaixo do cartaz
+// conforme o valor, pela mola da linha (ajcValor). Automatico e o do app:
+// em pe abaixo, deitado dentro. O foco passeia pelos cartazes.
+static void ajcHRotuloPos(void) {
+  float v = ajcValor(AJ_ROTULO_POS);
+  float dentroPe = v <= 1 ? 0 : v - 1, dentroDeitado = v <= 1 ? 1 - v : v - 1;
+  int foco = ajc_passo(1.3f, 5), i;
+  ajcHTela(60, 24, 520, 280, 1);
+  for (i = 0; i < 5; i++) {
+    int deitado = i >= 3;
+    float w = deitado ? 152 : 80, h = deitado ? 62 : 104;
+    float x = deitado ? 86 + (i - 3) * 172 : 86 + i * 100, y = deitado ? 194 : 42;
+    float d = ajcHK(deitado ? dentroDeitado : dentroPe), al = i == foco ? 1.0f : 0.7f;
+    float yFora = y + h + 10, yDentro = y + h - 28;
+    ajcHBloco(x, y, w, h, i + 2, 1);
+    // o veu da legenda de dentro sobe junto com ela
+    ajc_ret(x, y + h - 40, w, 40, 6, 0.02f, 0.02f, 0.03f, 0.55f * d);
+    ajc_barra(x + 8, ajcHMix(yFora, yDentro, d), w * 0.62f, 0.9f * al);
+    ajc_barra(x + 8, ajcHMix(yFora, yDentro, d) + 13, w * 0.38f, 0.4f * al);
+    if (i == foco) ajc_foco(x, y, w, h, 6, 0.6f + 0.4f * ajc_onda(1.3f));
+  }
+}
+// FILME OU SERIE COMO (fork): a pilula ao lado do titulo da fileira troca o
+// texto ("Filme"/"Série") pelo icone (claquete/TV), encolhendo pela mola.
+static void ajcHTipoEstilo(void) {
+  float k = ajcHK(ajcValor(AJ_SUFIXO_ESTILO)), liga = ajcLig(AJ_SUFIXO_TIPO) * 0.6f + 0.4f;
+  int i, j;
+  ajcHTela(60, 24, 520, 280, 1);
+  for (i = 0; i < 2; i++) {
+    const char *rot = i == 0 ? "Filme" : "Série";
+    float y = 48 + i * 120, x = 86, bar = 70;
+    float wTexto = ajcLargura(rot, 12, 1) + 26, w = ajcHMix(wTexto, 34, k);
+    ajc_barra(x, y, bar, 0.85f * liga);
+    ajc_ret(x + bar + 10, y - 7, w, 24, 12, 0.17f, 0.18f, 0.21f, liga);
+    ajcTexto(rot, 12, 1, x + bar + 23, y - 2, (1 - k) * liga);
+    ajc_icone(i == 0 ? "aj_film" : "aj_tv-minimal-play", x + bar + 27, y + 5, 16, k * liga);
+    if (i == 0) ajc_foco(x + bar + 10, y - 7, w, 24, 12, (0.5f + 0.5f * ajc_onda(2.0f)) * liga);
+    for (j = 0; j < 5; j++) ajcHBloco(x + j * 94, y + 22, 82, 70, i * 5 + j, 1);
+  }
+}
 static void ajcHRotulos(int op) {
   float k = ajcLig(op);
   int i;
@@ -771,9 +812,10 @@ static int ajcNovaHome(int sec, int op) {
     case AJ_OCULTAR_NLANC: ajcHNaoLancados(op); return 1;
     case AJ_NOTAS_HOME: ajcHNotas(op); return 1;
     case AJ_SELO_VISTO: ajcHSelo(op); return 1;
-    case AJ_ROTULOS: case AJ_ROTULO_POS: ajcHRotulos(AJ_ROTULOS); return 1;
+    case AJ_ROTULOS: ajcHRotulos(op); return 1;
+    case AJ_ROTULO_POS: ajcHRotuloPos(); return 1;
     case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: ajcHTituloFileira(op); return 1;
-    case AJ_SUFIXO_ESTILO: ajcHTituloFileira(AJ_SUFIXO_TIPO); return 1;
+    case AJ_SUFIXO_ESTILO: ajcHTipoEstilo(); return 1;
     case AJ_CW_LIGADO: ajcHCwLigado(op); return 1;
     case AJ_CW_OK: ajcHCwOk(op); return 1;
     case AJ_CW_ESTILO: ajcHCwEstilo(); return 1;
