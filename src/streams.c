@@ -2715,19 +2715,6 @@ static void filtroIdiomaProximo(void) {
   if (pos < nc) { soDub = 2; snprintf(filtroCod, sizeof filtroCod, "%s", cods[pos]); }
   else soDub = 0;
 }
-static float grupoBandeiras(const char *icone, const char (*lista)[6], int n,
-                            float x, float y, float maxX, int tinta, float a);
-float stream_idiomas_alvo_desenhar(const char *alvo, float x, float cy, float maxX, float a) {
-  char cods[24][6];
-  int nc;
-  float fim;
-  if (!alvo || !alvo[0] || !stream_lista_do_alvo(alvo)) return 0;
-  if ((nc = idiomasDaLista(cods, 24)) <= 0) return 0;
-  if (nc > STREAM_IDIOMAS) nc = STREAM_IDIOMAS;   // grupoBandeiras guarda ate STREAM_IDIOMAS paises
-  fim = grupoBandeiras("aj_volume-2", (const char (*)[6])cods, nc, x,
-                       cy - (FOLHA_IDIOMA_H - 6.0f) * .5f, maxX, 200, a);
-  return fim > x ? fim - x : 0;
-}
 static int botaoLigado(int b) {
   return (b == BT_SO_MP4 && soMp4) || (b == BT_CACHE && soCache) || (b == BT_DUB && soDub);
 }
