@@ -102,9 +102,34 @@ const char *ling_original(void);
 // Indice de "Original do titulo" dentro da lista de opcoes. E o ULTIMO item de
 // proposito: o ajustes.txt grava indice, nao codigo, entao inserir no meio
 // reinterpreta o arquivo de quem ja tem ajuste salvo (ver a nota em linguas.c).
-#define LING_OPC_ORIGINAL 30
+// FORK: o indice e a posicao NA TELA (ver ORDEM_UI em linguas.c); no disco o
+// "Original" continua 30.
+#define LING_OPC_ORIGINAL 32
 int         ling_opcao_n(void);
 const char *ling_opcao_codigo(int i);   // "" para conta, "*" para sem filtro
+// POSICAO NA TELA <-> INDICE GRAVADO no ajustes.txt (que nunca muda de
+// sentido). A tela de Ajustes guarda na memoria a posicao; so a leitura e a
+// gravacao do arquivo convertem. Aqui, e nao em linguas.c, para ajustes.c nao
+// passar a depender de linguas.c no link (varios testes o linkam sem ela).
+// Os numeros sao indices de OPCOES_COD: 2 pt, 3 en, 4 es, 5..29 o resto,
+// 30 "~", e as variantes de depois dele, 31 "es-419" e 32 "pt-br", na tela
+// ao lado da familia.
+#define LING_DISCO_ORIGINAL 30
+#define LING_OPC_N 33
+static inline int ling_opcao_para_disco(int i) {
+  static const unsigned char ORDEM_UI[LING_OPC_N] = {
+    0, 1,
+    2, 32, 3, 4, 31,
+    5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+    17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    LING_DISCO_ORIGINAL
+  };
+  return (i >= 0 && i < LING_OPC_N) ? ORDEM_UI[i] : i;
+}
+static inline int ling_opcao_de_disco(int d) {
+  for (int i = 0; i < LING_OPC_N; i++) if (ling_opcao_para_disco(i) == d) return i;
+  return d;
+}
 
 // LEGENDA QUE LIGA SOZINHA quando o video comeca (#129).
 //

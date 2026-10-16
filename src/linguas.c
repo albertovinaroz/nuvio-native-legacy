@@ -12,6 +12,7 @@ static const struct { const char *cod, *nome; } NOMES[] = {
   { "pt-br", "Português (BR)" }, { "ptb", "Português (BR)" }, { "br", "Português (BR)" },
   { "en", "Inglês" },     { "eng", "Inglês" },
   { "es", "Espanhol" },   { "spa", "Espanhol" }, { "esp", "Espanhol" },
+  { "es-419", "Espanhol latino" },
   { "fr", "Francês" },    { "fre", "Francês" },  { "fra", "Francês" },
   { "de", "Alemão" },     { "ger", "Alemão" },   { "deu", "Alemão" },
   { "it", "Italiano" },   { "ita", "Italiano" },
@@ -326,16 +327,21 @@ static const char *OPCOES_COD[] = {
   //
   // REGRA PARA QUEM MEXER AQUI: item novo entra NO FIM. Reordenar ou inserir no
   // meio exige migracao do ajustes.txt, que hoje nao tem marca de versao.
-  "~"
+  "~",
+  // FORK: as variantes regionais que o filtro de fontes ja separa ("lat",
+  // "ptbr" em stream_idioma_codigo). Depois do "~", pela regra acima; na TELA
+  // elas aparecem ao lado da familia (ORDEM_UI).
+  "es-419", "pt-br"
 };
-// Se alguem acrescentar idioma depois do "~", o indice gravado deixa de bater
-// com LING_OPC_ORIGINAL e o padrao de audio vira outra coisa em silencio. Isto
-// quebra o build em vez de deixar passar.
-typedef char nv_checa_indice_original[
-  (sizeof OPCOES_COD / sizeof *OPCOES_COD) == LING_OPC_ORIGINAL + 1 ? 1 : -1];
-int ling_opcao_n(void) { return (int)(sizeof OPCOES_COD / sizeof *OPCOES_COD); }
+#define LING_OPC_TOTAL ((int)(sizeof OPCOES_COD / sizeof *OPCOES_COD))
+typedef char nv_checa_disco_original[LING_OPC_TOTAL > LING_DISCO_ORIGINAL ? 1 : -1];
+// ORDEM_UI (linguas.h) cobre cada indice de OPCOES_COD uma vez, e o "~" fica no
+// LING_OPC_ORIGINAL.
+typedef char nv_checa_ordem_ui[LING_OPC_N == LING_OPC_TOTAL &&
+                               LING_OPC_ORIGINAL == LING_OPC_TOTAL - 1 ? 1 : -1];
+int ling_opcao_n(void) { return LING_OPC_TOTAL; }
 const char *ling_opcao_codigo(int i) {
-  return (i >= 0 && i < ling_opcao_n()) ? OPCOES_COD[i] : "";
+  return (i >= 0 && i < LING_OPC_TOTAL) ? OPCOES_COD[ling_opcao_para_disco(i)] : "";
 }
 
 // ------------------------------------------------------------ nome da faixa

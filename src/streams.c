@@ -898,8 +898,10 @@ static long penalAudioTv(const Stream *s) {
 #endif
 
 static int idiomaMeu(int explicito, char *dst);
+static int varianteMinha(char *dst);
 static const char *familiaFonte(const char *cod);
 static int audioNoIdioma(const Stream *s, const char *fam);
+static int audioExato(const Stream *s, const char *cod);
 static int legendaNoIdiomaMeu(const Stream *s);
 
 // AS MULTAS de pontos() (teto, cache, origem, P2P, StreamFit, sem resolucao),
@@ -926,9 +928,16 @@ static long multasDeAlvo(const Stream *s, const char *alvo) {
   // LEGENDA NO IDIOMA DA PESSOA (preferencia de legenda, linguas.h): sem o
   // audio dela, a fonte que traz a legenda dela perde menos (15000, ainda mais
   // que um degrau): audio dela > legenda dela > nenhum dos dois.
-  { char fam[8];
-    if (idiomaMeu(1, fam) && audioNoIdioma(s, fam) == 0)
-      m += legendaNoIdiomaMeu(s) ? 15000 : 25000; }
+  // VARIANTE (fork): quem pediu espanhol latino ou portugues do Brasil
+  // (Ajustes) ainda prefere o castelhano ao ingles, mas o latino primeiro:
+  // 12000, mais que um degrau de resolucao e menos que a legenda.
+  { char fam[8], var[6];
+    int tem;
+    if (idiomaMeu(1, fam)) {
+      tem = audioNoIdioma(s, fam);
+      if (tem == 0) m += legendaNoIdiomaMeu(s) ? 15000 : 25000;
+      else if (tem == 1 && varianteMinha(var) && !audioExato(s, var)) m += 12000;
+    } }
   if (!cabeNoTeto(s)) m += 1000000;
   // Fora de cache conhecido tambem sai do automatico (foraDoAuto, #402).
   // O peso continua util para quem inspeciona a pontuacao de uma fonte.
@@ -2639,7 +2648,7 @@ int stream_automatico_canal(void) { return automaticoCom(0); }
 
 
 static int grupo, filtro, soMp4, soCache, soDub;
-// soDub: 0 desligado, 1 o idioma da pessoa, 2 um idioma da lista (filtroCod).
+// soDub: 0 desligado, 1 so fontes com audio no codigo filtroCod ("es" ou "en").
 static char filtroCod[6];
 
 // BOTOES DO CABECALHO. "Sem HDR" so existe onde ha o que renegociar (webOS);
@@ -2669,51 +2678,29 @@ static const char *rotuloBotao(int b) {
   if (b == BT_SEM_HDR) return "Sem HDR";
   if (b == BT_SO_MP4)  return "Só MP4";
   if (b == BT_CACHE)   return "Em cache";
-  if (b == BT_DUB)     return soDub == 2 ? nomeIdiomaFonte(filtroCod) : "Dublado";
+  if (b == BT_DUB)     return soDub ? nomeIdiomaFonte(filtroCod) : "Dublado";
   return NULL;
 }
-// OS IDIOMAS DE AUDIO DESTA LISTA, o mais declarado primeiro ("multi" fica de
-// fora: nao diz qual). Montado so quando o OK pede o proximo, nao por quadro.
-static int idiomasDaLista(char (*cods)[6], int max) {
-  int conta[24] = {0}, q = 0;
-  for (int i = 0; i < n; i++)
-    for (int k = 0; k < lista[i].nIdiomasAudio; k++) {
-      const char *c = lista[i].idiomasAudio[k];
-      int j;
-      if (!strcmp(c, "multi")) continue;
-      for (j = 0; j < q && strcmp(cods[j], c); j++) {}
-      if (j == q) { if (q == max || q == 24) continue; snprintf(cods[q++], 6, "%s", c); }
-      conta[j]++;
-    }
-  for (int a = 1; a < q; a++)
-    for (int b = a; b > 0 && conta[b] > conta[b - 1]; b--) {
-      char t[6]; int ct = conta[b];
-      memcpy(t, cods[b], 6); memcpy(cods[b], cods[b - 1], 6); memcpy(cods[b - 1], t, 6);
-      conta[b] = conta[b - 1]; conta[b - 1] = ct;
-    }
-  return q;
+// O BOTAO "DUBLADO" SO TEM ESPANHOL E INGLES (fork, pedido do dono 16/10):
+// desligado -> espanhol -> ingles -> desligado. Espanhol e so o CASTELHANO
+// ("es"): a fonte so em latino ("lat") fica de fora (dono, 16/10).
+// Percorrer todo idioma declarado dava dez paradas num filme comum, e os nomes
+// longos ("Espanhol latino") espremiam os outros botoes.
+static const char *const FILTRO_IDIOMAS[] = { "es", "en" };
+#define FILTRO_N ((int)(sizeof FILTRO_IDIOMAS / sizeof *FILTRO_IDIOMAS))
+// O que o proximo OK filtra; NULL = desliga.
+static const char *filtroIdiomaSeguinte(void) {
+  int k = 0;
+  if (soDub) {
+    while (k < FILTRO_N && strcmp(FILTRO_IDIOMAS[k], filtroCod)) k++;
+    k++;
+  }
+  return k < FILTRO_N ? FILTRO_IDIOMAS[k] : NULL;
 }
-// O BOTAO "DUBLADO" PERCORRE: desligado -> o idioma da pessoa -> cada idioma
-// de audio que as fontes desta lista declaram -> desligado. Assim da para ver
-// so as em latino, ou so as em ingles, sem um botao por idioma no cabecalho.
 static void filtroIdiomaProximo(void) {
-  char cods[24][6];
-  int nc = idiomasDaLista(cods, 24), pos = -1;
-  if (soDub == 0) { soDub = 1; return; }
-  if (soDub == 2) for (int j = 0; j < nc; j++) if (!strcmp(cods[j], filtroCod)) pos = j;
-  // O idioma que e SOZINHO a familia da pessoa repetiria o passo "meu idioma"
-  // (interface em ingles: "Dublado" e "English" davam a mesma lista). "es"
-  // com "lat" na lista fica: castelhano so, sem o latino, e outra lista.
-  { char fam[8];
-    int temFam = idiomaMeu(0, fam);
-    for (pos++; pos < nc; pos++) {
-      int mesma = 0;
-      if (temFam && !strcmp(familiaFonte(cods[pos]), fam))
-        for (int j = 0; j < nc; j++) mesma += !strcmp(familiaFonte(cods[j]), fam);
-      if (mesma != 1) break;
-    } }
-  if (pos < nc) { soDub = 2; snprintf(filtroCod, sizeof filtroCod, "%s", cods[pos]); }
-  else soDub = 0;
+  const char *c = filtroIdiomaSeguinte();
+  soDub = c != NULL;
+  snprintf(filtroCod, sizeof filtroCod, "%s", c ? c : "");
 }
 static int botaoLigado(int b) {
   return (b == BT_SO_MP4 && soMp4) || (b == BT_CACHE && soCache) || (b == BT_DUB && soDub);
@@ -2724,20 +2711,12 @@ static const char *iconeBotao(int b) {
 static char provedores[13][96];
 static int nProvedores;
 
-static int temAudioPt(const Stream *s);
-static int temAudioMeu(const Stream *s);
-static int filtroEmPortugues(void);
 // Os chips (MP4, cache, dublado) valem para a lista E para a contagem de cada
 // aba; o addon so para a lista.
 static int passaChips(int i) {
   if (soMp4 && !lista[i].mp4) return 0;
   if (soCache && lista[i].foraCache) return 0;
-  if (soDub == 1 && !temAudioMeu(&lista[i])) return 0;
-  if (soDub == 2) {
-    int tem = 0;
-    for (int k = 0; k < lista[i].nIdiomasAudio; k++) tem |= !strcmp(lista[i].idiomasAudio[k], filtroCod);
-    if (!tem) return 0;
-  }
+  if (soDub && !audioExato(&lista[i], filtroCod)) return 0;
   return 1;
 }
 static int passaFiltro(int i) {
@@ -3169,11 +3148,6 @@ static const char *idiomaDa(const Stream *s) {
   if (temNoTexto(s, "legendado") || temNoTexto(s, "leg")) return "Legendado";
   return NULL;
 }
-static int temAudioPt(const Stream *s) {
-  if (s->audioIdiomas[0]) return audioDeclaradoPt(s);
-  const char *id = idiomaDa(s);
-  return id && strcmp(id, "Legendado");
-}
 
 // AS BANDEIRAS DOS IDIOMAS (Stream.idiomas*, lidos no parser): linha propria
 // abaixo dos selos, "[alto-falante] 🇪🇸 🇬🇧   [legenda] 🇪🇸 🇬🇧", como o app do
@@ -3331,16 +3305,19 @@ static int audioNoIdioma(const Stream *s, const char *fam) {
   }
   return multi ? -1 : 0;
 }
-// O FILTRO "DUBLADO": audio no idioma da pessoa. Era "audio em portugues"
-// cravado; para quem fala espanhol nao filtrava nada de util. Fonte que nao
-// declara idioma fica de fora, salvo em portugues, onde vale a deteccao antiga
-// ("dublado", "dual" no texto).
-static int temAudioMeu(const Stream *s) {
-  char fam[8];
-  int r;
-  if (!idiomaMeu(0, fam)) return temAudioPt(s);
-  if ((r = audioNoIdioma(s, fam)) >= 0) return r;
-  return !strcmp(fam, "pt") && temAudioPt(s);
+// A VARIANTE REGIONAL pedida em Ajustes ("es-419" -> "lat", "pt-br" ->
+// "ptbr"), ou 0. So olha a tabela quando a preferencia tem regiao: multasDe
+// chama isto por fonte.
+static int varianteMinha(char *dst) {
+  const char *a = ling_audio(), *c;
+  if (!a || !strchr(a, '-') || !(c = stream_idioma_codigo(a))) return 0;
+  if (strcmp(c, "lat") && strcmp(c, "ptbr")) return 0;
+  snprintf(dst, 6, "%s", c);
+  return 1;
+}
+static int audioExato(const Stream *s, const char *cod) {
+  for (int k = 0; k < s->nIdiomasAudio; k++) if (!strcmp(s->idiomasAudio[k], cod)) return 1;
+  return 0;
 }
 static int legendaNoIdiomaMeu(const Stream *s) {
   char fam[8];
@@ -3350,15 +3327,12 @@ static int legendaNoIdiomaMeu(const Stream *s) {
     if (!strcmp(familiaFonte(s->idiomasLegenda[k]), fam)) return 1;
   return 0;
 }
-// O NOME de um codigo da fonte, em portugues (a camada de texto traduz).
+// O NOME de um codigo da fonte, JA TRADUZIDO (vai montado em frases e no
+// painel de detalhes; a camada de texto traduzir de novo nao muda nada).
 static const char *nomeIdiomaFonte(const char *cod) {
-  if (!strcmp(cod, "lat")) return "Espanhol latino";
-  if (!strcmp(cod, "ptbr")) return "Português (BR)";
-  return ling_nome(cod);
-}
-static int filtroEmPortugues(void) {
-  char fam[8];
-  return !idiomaMeu(0, fam) || !strcmp(fam, "pt");
+  if (!strcmp(cod, "lat")) return i18n("Espanhol latino");
+  if (!strcmp(cod, "ptbr")) return i18n("Português (BR)");
+  return i18n(ling_nome(cod));
 }
 
 // O TITULO DA LINHA, modo "Do Nuvio": o NOME DO CONTEUDO (dono, 02/10: "deixar
@@ -3866,10 +3840,10 @@ static void detalheAbrir(const Stream *s) {
   // nao casa com chave nenhuma na camada de texto.
   for(int k=0;k<s->nIdiomasAudio;k++){ size_t u=strlen(detAudio);
     snprintf(detAudio+u,sizeof detAudio-u,"%s%s",k?" · ":"",
-             !strcmp(s->idiomasAudio[k],"multi")?"Multi":i18n(nomeIdiomaFonte(s->idiomasAudio[k]))); }
+             !strcmp(s->idiomasAudio[k],"multi")?"Multi":nomeIdiomaFonte(s->idiomasAudio[k])); }
   for(int k=0;k<s->nIdiomasLegenda;k++){ size_t u=strlen(detLeg);
     snprintf(detLeg+u,sizeof detLeg-u,"%s%s",k?" · ":"",
-             !strcmp(s->idiomasLegenda[k],"multi")?"Multi":i18n(nomeIdiomaFonte(s->idiomasLegenda[k]))); }
+             !strcmp(s->idiomasLegenda[k],"multi")?"Multi":nomeIdiomaFonte(s->idiomasLegenda[k])); }
   // Sem NV_LIMPA_UMA_LINHA: o \n da descricao fica, txt_bloco quebra nele.
   nv_limpar_texto(s->provedor,detProv,sizeof detProv,NV_LIMPA_UMA_LINHA);
   nv_limpar_texto(s->rotulo,detTit,sizeof detTit,0);
@@ -4456,23 +4430,19 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         ? "Mostrando só fontes que o debrid já tem: tocam na hora. OK tira o filtro."
         : "Filtra para fontes que o debrid já tem (tocam na hora, sem baixar antes). OK liga o filtro.";
     else if(botaoDe(foco)==BT_DUB) {
+      // Frase montada: o formato e os nomes passam por i18n separados (idioma.h).
       static char ajudaIdioma[200];
-      char cods[24][6];
-      int nc=idiomasDaLista(cods,24), ultimo=soDub==2 && nc && !strcmp(cods[nc-1],filtroCod);
-      if(soDub==2) {
-        // Frase montada: o formato e o nome passam por i18n separados (idioma.h).
-        snprintf(ajudaIdioma,sizeof ajudaIdioma,
-                 i18n(ultimo ? "Só fontes com áudio em %s. OK tira o filtro."
-                             : "Só fontes com áudio em %s. OK passa para o próximo idioma."),
-                 i18n(nomeIdiomaFonte(filtroCod)));
-        ajuda=ajudaIdioma;
-      } else if(soDub==1 && nc)
-        ajuda="Mostrando só fontes com áudio no seu idioma. OK passa para o próximo idioma.";
-      else ajuda=filtroEmPortugues()
-        ? (soDub ? "Mostrando só fontes com áudio em português. OK tira o filtro."
-                 : "Filtra para fontes dubladas ou com áudio em português. OK liga o filtro.")
-        : (soDub ? "Mostrando só fontes com áudio no seu idioma. OK tira o filtro."
-                 : "Filtra para fontes com áudio no seu idioma. OK liga o filtro.");
+      const char *seg=filtroIdiomaSeguinte();
+      if(!soDub)
+        snprintf(ajudaIdioma,sizeof ajudaIdioma,i18n("Filtra por áudio em %s ou %s. OK liga o filtro."),
+                 nomeIdiomaFonte(FILTRO_IDIOMAS[0]),nomeIdiomaFonte(FILTRO_IDIOMAS[1]));
+      else if(seg)
+        snprintf(ajudaIdioma,sizeof ajudaIdioma,i18n("Só fontes com áudio em %s. OK: %s."),
+                 nomeIdiomaFonte(filtroCod),nomeIdiomaFonte(seg));
+      else
+        snprintf(ajudaIdioma,sizeof ajudaIdioma,i18n("Só fontes com áudio em %s. OK tira o filtro."),
+                 nomeIdiomaFonte(filtroCod));
+      ajuda=ajudaIdioma;
     }
     else if(botaoDe(foco)==BT_SO_MP4)
       ajuda=soMp4

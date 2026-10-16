@@ -361,6 +361,8 @@ int   ajustes_sufixo_tipo(void);        // catalogTypeSuffixEnabled
 int   ajustes_sufixo_icone(void);       // local: o tipo como icone e nao "Filme"/"Série"
 // Rotulo do cartaz: 0 automatico (abaixo do em pe, dentro do deitado), 1 abaixo, 2 dentro.
 int   ajustes_rotulo_posicao(void);
+// Logo do titulo dentro do card deitado (fork): 0 desligado, 1 ligado.
+int   ajustes_logo_cards(void);
 int   ajustes_ocultar_nao_lancados(void);   // hideUnreleasedContent
 void  ajustes_definir_ocultar_nao_lancados(int ligado);
 int   ajustes_data_completa(void);      // showFullReleaseDate

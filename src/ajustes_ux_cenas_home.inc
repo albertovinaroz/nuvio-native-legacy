@@ -372,6 +372,28 @@ static void ajcHRotuloPos(void) {
     if (i == foco) ajc_foco(x, y, w, h, 6, 0.6f + 0.4f * ajc_onda(1.3f));
   }
 }
+// LOGOS NOS CARDS (fork): cartazes em pe em cima, que ficam como estao (o nome
+// ja esta na arte), e deitados embaixo, onde o logo (aqui um nome em negrito)
+// entra na base sobre o veu no lugar da barra do nome, pela mola da linha.
+static void ajcHLogoCards(void) {
+  static const char *const LOGO[] = { "DUNE", "SILO" };
+  float k = ajcHK(ajcValor(AJ_LOGO_CARDS));
+  int foco = ajc_passo(1.3f, 5), i;
+  ajcHTela(60, 24, 520, 280, 1);
+  for (i = 0; i < 5; i++) {
+    int deitado = i >= 3;
+    float w = deitado ? 152 : 80, h = deitado ? 62 : 104;
+    float x = deitado ? 86 + (i - 3) * 172 : 86 + i * 100, y = deitado ? 194 : 42;
+    float al = i == foco ? 1.0f : 0.7f;
+    ajcHBloco(x, y, w, h, i + 2, 1);
+    if (deitado) {
+      ajc_ret(x, y + h - 40, w, 40, 6, 0.02f, 0.02f, 0.03f, 0.55f * k);
+      ajc_barra(x + 8, y + h - 16, w * 0.62f, 0.9f * al * (1 - k));
+      ajcTexto(LOGO[i - 3], 15, 1, x + 8, y + h - 24, k * al);
+    }
+    if (i == foco) ajc_foco(x, y, w, h, 6, 0.6f + 0.4f * ajc_onda(1.3f));
+  }
+}
 // FILME OU SERIE COMO (fork): a pilula ao lado do titulo da fileira troca o
 // texto ("Filme"/"Série") pelo icone (claquete/TV), encolhendo pela mola.
 static void ajcHTipoEstilo(void) {
@@ -814,6 +836,7 @@ static int ajcNovaHome(int sec, int op) {
     case AJ_SELO_VISTO: ajcHSelo(op); return 1;
     case AJ_ROTULOS: ajcHRotulos(op); return 1;
     case AJ_ROTULO_POS: ajcHRotuloPos(); return 1;
+    case AJ_LOGO_CARDS: ajcHLogoCards(); return 1;
     case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: ajcHTituloFileira(op); return 1;
     case AJ_SUFIXO_ESTILO: ajcHTipoEstilo(); return 1;
     case AJ_CW_LIGADO: ajcHCwLigado(op); return 1;

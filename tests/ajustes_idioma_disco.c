@@ -61,7 +61,8 @@ int main(void) {
   snprintf(caminho, sizeof caminho, "%s/ajustes.txt", dir);
   f = fopen(caminho, "w");
   assert(f);
-  fprintf(f, "legendaIdioma %d\naudioIdioma %d\n", en, es);
+  // No disco vai o indice de sempre; na memoria, a posicao na tela (fork).
+  fprintf(f, "legendaIdioma %d\naudioIdioma %d\n", ling_opcao_para_disco(en), ling_opcao_para_disco(es));
   fclose(f);
 
   ajustes_dir(dir);
@@ -69,6 +70,11 @@ int main(void) {
   assert(valor[AJ_AUD_LINGUA] == es);
   assert(!strcmp(ling_legenda(), "en"));
   assert(!strcmp(ling_audio(), "es"));
+  // Fork: as variantes moram depois do "~" no disco e ao lado da familia na tela.
+  assert(ling_opcao_para_disco(LING_OPC_ORIGINAL) == 30);
+  assert(!strcmp(ling_opcao_codigo(es + 1), "es-419"));
+  assert(ling_opcao_para_disco(es + 1) == 31);
+  for (i = 0; i < ling_opcao_n(); i++) assert(ling_opcao_de_disco(ling_opcao_para_disco(i)) == i);
 
   // A conta com outro idioma nao desfaz a escolha desta TV (linguas.c: a
   // local ganha). E o blob da linha "[ajustes] idiomas da conta" do relato.
@@ -95,7 +101,7 @@ int main(void) {
     assert(f);
     while (fgets(linha, sizeof linha, f)) {
       int v;
-      if (sscanf(linha, "legendaIdioma %d", &v) == 1) { assert(v == en); achouLeg = 1; }
+      if (sscanf(linha, "legendaIdioma %d", &v) == 1) { assert(v == ling_opcao_para_disco(en)); achouLeg = 1; }
     }
     fclose(f);
     assert(achouLeg); }

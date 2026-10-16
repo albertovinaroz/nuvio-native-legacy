@@ -79,28 +79,34 @@ int main(void) {
   espera("1080p espanhol", vence(l, 3), "audio dela > legenda dela, mesmo um degrau abaixo");
   ling_local_legenda("");
 
-  // Filtro "Dublado" percorre: desligado -> meu idioma -> idiomas da lista.
-  { Stream f[3];
-    fonte(&f[0], "a", 1080, "en"); fonte(&f[1], "b", 1080, "lat"); fonte(&f[2], "c", 1080, "en,es");
-    stream_definir_lista(f, 3);
-    soDub = 0;
-    filtroIdiomaProximo(); verdade(soDub == 1, "filtro: 1o OK = meu idioma");
-    filtroIdiomaProximo(); verdade(soDub == 2 && !strcmp(filtroCod, "en"), "filtro: 2o OK = o mais declarado (en)");
-    verdade(passaChips(0) && !passaChips(1) && passaChips(2), "filtro en: so as com ingles");
-    filtroIdiomaProximo(); verdade(soDub == 2 && !strcmp(filtroCod, "lat"), "filtro: 3o OK = latino");
-    verdade(!passaChips(0) && passaChips(1) && !passaChips(2), "filtro lat: so a latina");
-    filtroIdiomaProximo(); verdade(soDub == 2 && !strcmp(filtroCod, "es"), "filtro: 4o OK = castellano");
-    filtroIdiomaProximo(); verdade(soDub == 0, "filtro: depois do ultimo idioma, desliga");
-    verdade(!strcmp(nomeIdiomaFonte("lat"), "Espanhol latino"), "nome do latino"); }
-
-  // Filtro "Dublado": audio no idioma da pessoa.
-  ling_local_audio("es");
+  // Variante regional (fork): quem pediu latino ve o latino antes do
+  // castelhano, e o castelhano antes do ingles.
+  ling_local_audio("es-419");
+  fonte(&l[0], "1080p castelhano", 1080, "es");
+  fonte(&l[1], "720p latino", 720, "lat");
+  espera("720p latino", vence(l, 2), "preferencia es-419: latino > castelhano um degrau acima");
   fonte(&l[0], "4K ingles", 2160, "en");
-  fonte(&l[1], "1080p latino", 1080, "lat");
-  verdade(temAudioMeu(&l[1]) && !temAudioMeu(&l[0]), "filtro: latino entra, so ingles fica de fora");
-  verdade(!filtroEmPortugues(), "filtro em espanhol usa o texto 'no seu idioma'");
-  ling_local_audio("pt");
-  { Stream d; fonte(&d, "Filme Dublado", 1080, ""); verdade(temAudioMeu(&d), "portugues: 'Dublado' sem idioma declarado ainda entra"); }
+  fonte(&l[1], "1080p castelhano", 1080, "es");
+  espera("1080p castelhano", vence(l, 2), "preferencia es-419: castelhano > ingles");
+  ling_local_audio("pt-br");
+  fonte(&l[0], "1080p portugal", 1080, "pt");
+  fonte(&l[1], "720p brasil", 720, "ptbr");
+  espera("720p brasil", vence(l, 2), "preferencia pt-br: Brasil > Portugal");
+
+  // Filtro "Dublado" (fork): desligado -> espanhol -> ingles -> desligado.
+  { Stream f[4];
+    ling_local_audio("en");
+    fonte(&f[0], "a", 1080, "en"); fonte(&f[1], "b", 1080, "lat"); fonte(&f[2], "c", 1080, "en,es");
+    fonte(&f[3], "d", 1080, "fr");
+    stream_definir_lista(f, 4);
+    soDub = 0;
+    filtroIdiomaProximo(); verdade(soDub && !strcmp(filtroCod, "es"), "filtro: 1o OK = espanhol");
+    verdade(!passaChips(0) && !passaChips(1) && passaChips(2) && !passaChips(3), "filtro es: so castelhano, sem o latino");
+    filtroIdiomaProximo(); verdade(soDub && !strcmp(filtroCod, "en"), "filtro: 2o OK = ingles");
+    verdade(passaChips(0) && !passaChips(1) && passaChips(2) && !passaChips(3), "filtro en: so as com ingles");
+    verdade(filtroIdiomaSeguinte() == NULL, "filtro: depois do ingles, desliga");
+    filtroIdiomaProximo(); verdade(soDub == 0, "filtro: 3o OK desliga");
+    verdade(!strcmp(rotuloBotao(BT_DUB), "Dublado"), "rotulo desligado: Dublado"); }
 
   // Etiquetas de faixa e de legenda.
   verdade(!strcmp(stream_idioma_codigo("spa"), "es") && !strcmp(stream_idioma_codigo("pt-BR"), "ptbr") &&

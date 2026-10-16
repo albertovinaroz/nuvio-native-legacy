@@ -260,6 +260,12 @@ static TipoFileira perfilCatalogo(const char *nome) {
                                        "timeline", "cronolog", "linha do tempo"};
     for (size_t i = 0; i < sizeof cronologia / sizeof cronologia[0]; i++)
       if (contemNome(nome, cronologia[i])) return FILEIRA_LINHA_TEMPO; }
+  // CARTAZ EM PE (Ajustes > Posteres deitados desligado, fork): premiacao e
+  // servico sao cartoes deitados (480x270, 360x203) escolhidos so pelo NOME,
+  // e a home em pe ficava com metade das fileiras deitadas mesmo assim (dono,
+  // 16/10). Com o ajuste desligado elas sao fileira comum; a forma escolhida a
+  // mao em Fileiras da Home continua mandando (tipoDaEscolha, depois disto).
+  if (!ajustes_posteres_deitados()) return FILEIRA_NORMAL;
   for (size_t i = 0; i < sizeof premios / sizeof premios[0]; i++)
     if (contemNome(nome, premios[i])) return FILEIRA_COLECAO;
   for (size_t i = 0; i < sizeof servicos / sizeof servicos[0]; i++)
@@ -430,6 +436,18 @@ static Uint32 heroVizTentaEm;
 static int    expFileira = -1, expColuna = -1;
 static Uint32 expDesde = 0;
 static float  expAbre = 0.0f;   // 0 fechado, 1 aberto
+// O CARD QUE ESTAVA ABERTO E PERDEU O FOCO fecha pela mesma mola, e nao de uma
+// vez (dono, 16/10: "que vuelva a su estado original con una animacion de
+// salida"). Um so de cada vez: o proximo so abre depois do atraso, e o que
+// fecha leva ~0,3 s.
+static int    fechaFileira = -1, fechaColuna = -1;
+static float  fechaAbre = 0.0f;
+// Quanto o card (r, c) esta aberto neste quadro: o que abre ou o que fecha.
+static float abertoEm(int r, int c) {
+  if (r == expFileira && c == expColuna) return expAbre;
+  if (r == fechaFileira && c == fechaColuna) return fechaAbre;
+  return 0.0f;
+}
 
 // MEDIDO na TCL (1920x1080, com.nuvio.tv), capturando 0,8 s e 7,8 s apos a
 // tecla: o card focado vai de 214x320 para 565x320. A ALTURA NAO MUDA e a
@@ -441,6 +459,7 @@ static float  expAbre = 0.0f;   // 0 fechado, 1 aberto
 // a de posteres deitados ja mostram a arte larga — nao ha para o que abrir.
 static int podeExpandir(int r) {
   if (r < 0 || r >= nFileiras) return 0;
+  if (fileiras[r].tipo == FILEIRA_CARTAZ) return 1;
   if (fileiras[r].tipo != FILEIRA_NORMAL) return 0;
   return !ajustes_posteres_deitados();
 }
@@ -804,6 +823,10 @@ static float xOffTipo(TipoFileira t) {
 static int cartazPadrao(void) {
   return layoutHome() == HOME_LAYOUT_PADRAO && !ajustes_posteres_deitados();
 }
+static float escalaCartazPadrao(void);
+// A escala do cartaz em pe do Padrao, valendo tambem com "Posteres deitados"
+// ligado (FILEIRA_CARTAZ, a fileira que a pessoa pediu em pe).
+static float escalaCartazPadraoEmPe(void) { return escalaCartazPadrao(); }
 static float escalaCartazPadrao(void) {
   float teto = (NV_TELA_H - topoFileiras() - NV_LEGACY_ROW_HEAD_H - NV_PAD_CARTAZ_FOLGA)
              / NV_PAD_CARTAZ_H;
@@ -846,6 +869,9 @@ static float larguraDe(TipoFileira t) {
     case FILEIRA_DESTAQUE: return layoutHome() == HOME_LAYOUT_DINAMICA
                                 ? NV_DIN_DEST_W : NV_DESTAQUE_EDITORIAL_W;
     case FILEIRA_TOP10_NUM: return NV_CARD_W * escalaPosterTelefone();
+    case FILEIRA_CARTAZ:   return layoutHome() == HOME_LAYOUT_PADRAO
+                                ? escalaCartazPadraoEmPe() * NV_PAD_CARTAZ_W
+                                : escalaDoAjuste() * escalaPosterTelefone() * NV_CARD_W;
     case FILEIRA_LINHA_TEMPO: return NV_CARD_W;
     case FILEIRA_FICHA:    return NV_FICHA_W;
     case FILEIRA_PALCO:    return NV_CARD_W * NV_PALCO_ESC;
@@ -1338,6 +1364,9 @@ static float alturaDe(TipoFileira t) {
     case FILEIRA_DESTAQUE: return layoutHome() == HOME_LAYOUT_DINAMICA
                                 ? NV_DIN_DEST_H : NV_DESTAQUE_EDITORIAL_H;
     case FILEIRA_TOP10_NUM: return NV_CARD_H * escalaPosterTelefone();
+    case FILEIRA_CARTAZ:   return layoutHome() == HOME_LAYOUT_PADRAO
+                                ? escalaCartazPadraoEmPe() * NV_PAD_CARTAZ_H
+                                : escalaDoAjuste() * escalaPosterTelefone() * NV_CARD_H;
     case FILEIRA_LINHA_TEMPO:
     case FILEIRA_FICHA:    return NV_CARD_H;
     case FILEIRA_PALCO:    return NV_CARD_H * NV_PALCO_ESC;
@@ -1354,6 +1383,23 @@ static float alturaDe(TipoFileira t) {
                            return escalaDoAjuste() * escalaPosterTelefone() *
                              (ajustes_posteres_deitados() ? NV_CARD_LAND_H
                                                           : NV_CARD_H);
+  }
+}
+// A ARTE DO CARD E DEITADA (backdrop) ou EM PE (cartaz)? Tem de seguir a FORMA
+// que larguraDe/alturaDe dao a fileira. "Posteres deitados" so muda a forma da
+// fileira comum (o `default` dali): Top 10, ranking numerado, linha do tempo,
+// ficha e palco sao sempre em pe. Antes so o Continuar ficava de fora, e o
+// Top 10 aberto mostrava um backdrop espremido num card 212x320, enquanto a
+// pilha fechada (desenhaPilha, sempre arte_por_formato(it, 0)) vinha certa.
+static int arteDeitada(TipoFileira t) {
+  if (editorial(t) || t == FILEIRA_LARGA) return 1;
+  switch (t) {
+    case FILEIRA_CONTINUE: case FILEIRA_TOP10: case FILEIRA_TOP10_NUM:
+    case FILEIRA_LINHA_TEMPO: case FILEIRA_FICHA: case FILEIRA_PALCO:
+    case FILEIRA_CARTAZ:
+      return 0;
+    default:
+      return ajustes_posteres_deitados();
   }
 }
 // O NOME DE EXIBICAO do addon que publicou a fileira, pela base da URL. A
@@ -1391,6 +1437,7 @@ static int rotuloDentro(TipoFileira t, int deitado) {
   return pos == 2 || (pos == 0 && deitado);
 }
 static int temRotulo(TipoFileira t) {
+  if (t == FILEIRA_CARTAZ) return ajustes_rotulos_poster() && !rotuloDentro(t, 0);
   return t == FILEIRA_NORMAL && ajustes_rotulos_poster()
       && !rotuloDentro(t, ajustes_posteres_deitados());
 }
@@ -1963,7 +2010,7 @@ static float homeScrollYPasso(float alvo, float dt, int reduzido) {
 // mede; fileiras.h nao pode incluir home.h sem fechar um ciclo de headers.
 static TipoFileira tipoDaEscolha(int t) {
   switch (t) {
-    case FIL_TIPO_CARTAZ:   return FILEIRA_NORMAL;
+    case FIL_TIPO_CARTAZ:   return FILEIRA_CARTAZ;
     case FIL_TIPO_DESTAQUE: return FILEIRA_DESTAQUE;
     // Os tres tamanhos sao a MESMA forma; o fator vem por fil_escala.
     case FIL_TIPO_DESTAQUE_QUADRADO:
@@ -3169,6 +3216,7 @@ static void sincronizarFileiras(void) {
         break;
       }
   expFileira = expColuna = -1; expAbre = 0.0f;
+  fechaFileira = fechaColuna = -1; fechaAbre = 0.0f;
   homeAtualizarReferenciasArte();
   if (nFileiras < 1) return;
   {
@@ -3530,9 +3578,13 @@ void home_atualizar(float dt, Uint32 agora) {
   // Relogio da expansao. Zera a cada movimento; conta so com o foco parado.
   if (ajustes_expandir_poster() && !homeRetratoTelefone()) {
     if (foco.fileira != expFileira || foco.coluna != expColuna) {
+      // O que estava aberto passa a fechar pela mola (sem animacao, na hora).
+      if (expAbre > 0.01f && !motionReduzido && expFileira >= 0) {
+        fechaFileira = expFileira; fechaColuna = expColuna; fechaAbre = expAbre;
+      }
       expFileira = foco.fileira; expColuna = foco.coluna;
       expDesde = agora;
-      expAbre = 0.0f;            // fecha na hora; abrir e que e gradual
+      expAbre = 0.0f;
     }
     // MENU DO CARTAZ ABERTO = O CARTAO NAO EXPANDE (dono, 03/10: "se esta com
     // o menu contextual aberto ele nao expande"). O relogio nao anda e a mola
@@ -3550,6 +3602,10 @@ void home_atualizar(float dt, Uint32 agora) {
                    : anim_mola(expAbre, 1.0f, dt, NV_MOLA_TELA); }
   } else {
     expAbre = 0.0f; expFileira = expColuna = -1;
+  }
+  if (fechaFileira >= 0) {
+    fechaAbre = motionReduzido ? 0.0f : anim_mola(fechaAbre, 0.0f, dt, NV_MOLA_TELA);
+    if (fechaAbre < 0.005f || fechaFileira >= nFileiras) { fechaAbre = 0.0f; fechaFileira = fechaColuna = -1; }
   }
 
   if (heroSai > 0.0f) {
@@ -5846,10 +5902,50 @@ static void desenhaArteCard(GfxRect card, TipoFileira tipo, const char *caminho,
   }
 }
 
+// LOGO DO TITULO DENTRO DO CARD (Ajustes > Logos nos cards, fork). So o cartao
+// deitado e a faixa larga: sao backdrop, quase sempre sem o nome na arte, e o
+// logo do TMDB e o que os identifica de longe. O cartaz em pe ja traz o nome
+// impresso — com o logo embaixo o titulo aparecia duas vezes (dono, 16/10).
+// Continuar, retorno e os editoriais ficam como estao (os editoriais ja tem o
+// logo deles).
+static int logoNoCard(const CatItem *ci, TipoFileira tipo, int deitado) {
+  if (!ajustes_logo_cards() || !ci || !ci->logo[0]) return 0;
+  return tipo == FILEIRA_LARGA || (tipo == FILEIRA_NORMAL && deitado);
+}
+// Quem pinta o card aberto (pintarCartao) apaga este logo enquanto o logo maior
+// do card aberto entra: os dois no mesmo canto se atravessavam.
+static float logoCardAlfa = 1.0f;
+// Desenha o logo com a base em `yBase`, dentro de maxW x maxH. Devolve a altura
+// desenhada, ou 0 sem logo pronto — e entao quem chamou escreve o nome.
+// O mesmo par de desenhaCartao aberto: largura manda, altura sai do aspecto
+// medido (sem chute, ou o modo recorta as pontas), e GFX_MARCA/GFX_TEXTO pelo
+// tom do logo (tex_marca_escura), nunca GFX_CARD.
+static float desenhaLogoCard(const CatItem *ci, float cardW, float x, float yBase,
+                             float maxW, float maxH, int centro) {
+  const char *u = artehero_logo_sessao_larg(ci, cardW * 0.65f);
+  GLuint t = u ? tex_obter_logo_larg(u, cardW * 0.65f) : 0;
+  float ap = t ? tex_aspecto(u) : 0.0f, wL, hL;
+  if (!t || ap <= 0.0f) return 0.0f;
+  if (logoCardAlfa <= 0.004f) return 1.0f;   // apagado, mas pronto: sem o nome
+  wL = maxW; hL = wL / ap;
+  if (hL > maxH) { hL = maxH; wL = hL * ap; }
+  { GfxRect r = { centro ? x + (maxW - wL) * 0.5f : x, yBase - hL, wL, hL };
+    GfxModo m = tex_marca_escura(u) ? GFX_MARCA : GFX_TEXTO;
+    gfx_tex_aspect_atual = 0.0f;
+    gfx_rect(r, t, m, 0, 0, 0, 0.0f, 1, 1, 1, logoCardAlfa); }
+  return hL;
+}
+
 // O veu da legenda do cartaz DEITADO: 1 e a fracao em `fVeu` se este card leva
 // (as mesmas condicoes de desenhaRotuloCard, que o desenha). Separado para o
 // laco da fileira saber o veu ANTES da arte (veusDoCard).
 static int veuRotulo(const CatItem *cItem, TipoFileira tipo, int deitado, float *fVeu) {
+  // Com logo o card leva veu mesmo com o rotulo fora ou desligado.
+  if (logoNoCard(cItem, tipo, deitado) && !(tipo != FILEIRA_LARGA && ajustes_rotulos_poster() &&
+                                           rotuloDentro(tipo, deitado))) {
+    *fVeu = tipo == FILEIRA_LARGA ? NV_DIN_LARGA_VEU : NV_LAND_VEU;
+    return 1;
+  }
   if (tipo == FILEIRA_CONTINUE || tipo == FILEIRA_RETORNO || editorial(tipo) ||
       !(ajustes_rotulos_poster() || tipo == FILEIRA_LARGA) || !cItem ||
       !rotuloDentro(tipo, deitado) || !cItem->titulo[0]) return 0;
@@ -5910,6 +6006,16 @@ static void legendaDeFora(const CatItem *ci, char *dst, size_t tam) {
 static void desenhaRotuloCard(const CatItem *cItem, TipoFileira tipo, int deitado,
                               int rotuloFora, float px, float py, float w, float h,
                               float raio) {
+  // SO O LOGO, sem o rotulo de dentro (rotulo abaixo ou desligado): o veu e o
+  // logo na base do card, e o rotulo de fora continua embaixo como sempre.
+  { float fVeu;
+    if (logoNoCard(cItem, tipo, deitado) && veuRotulo(cItem, tipo, deitado, &fVeu) &&
+        !(tipo != FILEIRA_LARGA && ajustes_rotulos_poster() && rotuloDentro(tipo, deitado)) &&
+        tipo != FILEIRA_LARGA) {
+      gfx_veu_base((GfxRect){ px, py, w, h }, raio, fVeu, NV_ROTULO_VEU_A);
+      (void)desenhaLogoCard(cItem, w, px + NV_LAND_COPY_PAD, py + h - NV_LAND_COPY_BASE - 2.0f,
+                            w * 0.5f, h * 0.34f, 0);
+    } }
   if (tipo != FILEIRA_CONTINUE && tipo != FILEIRA_RETORNO && !editorial(tipo) &&
       (ajustes_rotulos_poster() || tipo == FILEIRA_LARGA) && cItem) {
     const char *nome = cItem->titulo[0] ? cItem->titulo : NULL;
@@ -5936,13 +6042,16 @@ static void desenhaRotuloCard(const CatItem *cItem, TipoFileira tipo, int deitad
       // do cartaz deitado da Moderna, que vem do web.
       TxtLinha tn = txt_linha_corta(larga ? TXT_BODY : TXT_CAPTION, nome,
                                     245, 246, 250, 255, maxW);
+      // Com "Logos nos cards" o logo toma o lugar do NOME; o genero fica.
+      int comLogo = logoNoCard(cItem, tipo, deitado);
       if (sub) {
         TxtLinha ts = txt_linha_corta(larga ? TXT_CAPTION2 : TXT_MINI, sub,
                                       200, 202, 210, 255, maxW);
+        float yNome = py + h - base - ts.h - (larga ? 2.0f : 4.0f);
         txt_desenhar_alpha(ts, bx, py + h - base - ts.h, 0.85f);
-        txt_desenhar_alpha(tn, bx,
-                           py + h - base - ts.h - (larga ? 2.0f : 4.0f) - tn.h, 0.98f);
-      } else {
+        if (!comLogo || !desenhaLogoCard(cItem, w, bx, yNome - 2.0f, w * 0.5f, h * 0.30f, 0))
+          txt_desenhar_alpha(tn, bx, yNome - tn.h, 0.98f);
+      } else if (!comLogo || !desenhaLogoCard(cItem, w, bx, py + h - base, w * 0.5f, h * 0.34f, 0)) {
         txt_desenhar_alpha(tn, bx, py + h - base - tn.h, 0.98f);
       }
     } else if (rotuloFora && nome) {
@@ -6124,8 +6233,7 @@ int home_previa_fileira(const char *chave, int filTipo, int refTipo, GfxRect are
   if (nItens < 1) return 0;
   tipo = previaMedida(fl, chave, filTipo, &forma, &pilha, &lw, &lh);
   gap = gapDe(tipo); xoff = xOffTipo(tipo);
-  deitado = editorial(tipo) || tipo == FILEIRA_LARGA ||
-            ((tipo != FILEIRA_CONTINUE) && ajustes_posteres_deitados());
+  deitado = arteDeitada(tipo);
   rotuloFora = temRotulo(tipo);
   rotH = rotuloFora ? NV_POSTER_COPY_H : 0.0f;
   // A REDUCAO SAI DA FORMA DE REFERENCIA. Sozinha, cada forma era reduzida
@@ -6251,10 +6359,14 @@ typedef struct {
   int r, c; TipoFileira tipo; const CatItem *cItem; const char *caminho; GLuint t;
   float aArte; int deitado, rotuloFora; float abre, esc, f, px, py, w, h, varre;
   float trailer;   // 0..1: o trailer do modo No card entra por baixo da arte
+  // CARD ABRINDO/FECHANDO: a arte deitada por cima do cartaz, com `mistura`
+  // (0 so o cartaz, 1 so a deitada). NULL/0 fora da expansao.
+  const char *caminhoL; GLuint tL; float mistura;
 } CartaoFoco;
 static CartaoFoco cartaoFoco; static float cartaoFocoRaio; static int temCartaoFoco;
 // O caminho da arte mora num buffer que o proximo cartao sobrescreve: copia propria.
 static char cartaoFocoArte[NV_TEX_URL_MAX];
+static char cartaoFocoArteL[NV_TEX_URL_MAX];
 // CHIP DE AMIGOS no canto de cima A ESQUERDA do cartaz (amigostitulo.h): ate 2
 // rostos + "+N". Fica longe do titulo (embaixo) e do selo "Assistido" (a
 // direita): `limiteX` e a borda esquerda desse selo, e o chip encolhe para nao
@@ -6317,7 +6429,25 @@ static void pintarCartao(const CartaoFoco *k, float raio) {
           // Sem arte e com trailer, o "card sem arte" (superficie solida) nao
           // pode tapar o video: o mesmo desenho, com o alfa que sobra.
           arteSobreTrailer = k->trailer > 0.004f;
-          if (!arteSobreTrailer || (t && aArteCard > 0.004f))
+          // ABRINDO: o cartaz embaixo e a arte deitada por cima, misturando.
+          // Trocar de uma vez na metade era o "piscar": o retrato em cover
+          // numa moldura que alarga ja vinha com zoom, e a deitada podia
+          // entrar do zero (ainda sem textura).
+          // Sem ZOOM em nenhuma das duas: a deitada preenche a moldura que
+          // alarga (no cover ela e limitada pela ALTURA ate chegar a 16:9, entao
+          // a escala nao muda, so revela mais dos lados) e o cartaz fica no
+          // tamanho de antes, encostado a esquerda, apagando por cima dela.
+          // Esticar o cartaz em cover junto com a moldura era o "zoom" de
+          // ate 1,7x que se via antes da troca.
+          if (k->tL && abre > 0.001f) {
+            float ap = tex_aspecto(caminho);
+            float pw = ap > 0.0f ? h * ap : h * 2.0f / 3.0f;
+            if (pw > w) pw = w;
+            desenhaArteCard(card, tipo, k->caminhoL, k->tL, cItem, f, raio, aArteCard, varreFoco);
+            if (k->mistura < 0.999f && t)
+              desenhaArteCard((GfxRect){ px, py, pw, h }, tipo, caminho, t, cItem, f,
+                              raioDe(pw, h), aArteCard * (1.0f - k->mistura), varreFoco);
+          } else if (!arteSobreTrailer || (t && aArteCard > 0.004f))
             desenhaArteCard(card, tipo, caminho, t, cItem, f, raio, aArteCard,
                             varreFoco);
           arteSobreTrailer = 0;
@@ -6369,7 +6499,9 @@ static void pintarCartao(const CartaoFoco *k, float raio) {
           // bloco de 74 de altura com 8 de padding no topo (.home-poster-copy).
           // A faixa deitada da Dinamica SEMPRE leva o titulo dentro do cartao (a
           // Apple TV nao deixa cartao sem nome), com o rotulo ligado ou nao.
+          logoCardAlfa = 1.0f - abre;
           desenhaRotuloCard(cItem, tipo, deitado, rotuloFora, px, py, w, h, raio);
+          logoCardAlfa = 1.0f;
 
           if(tipo==FILEIRA_TOP10) desenhaRankPequeno(c+1, px, py, h);
 
@@ -6574,8 +6706,7 @@ void home_desenhar(Uint32 agora) {
     // sobre a arte da anterior quando a fileira tem cards altos.
     float cardY = y + NV_LEGACY_ROW_HEAD_H;
 
-    int deitado = editorial(tipo) || tipo == FILEIRA_LARGA ||
-                  ((tipo != FILEIRA_CONTINUE) && ajustes_posteres_deitados());
+    int deitado = arteDeitada(tipo);
     int rotuloFora = temRotulo(tipo);
     if (y < NV_TELA_H + 200 && y + NV_LEGACY_ROW_HEAD_H + lh > -200) {
       // `catalogTypeSuffixEnabled`. formatCatalogRowTitle (homeUtils.js:62) faz
@@ -6592,7 +6723,9 @@ void home_desenhar(Uint32 agora) {
       // Texto: " - Filme" no titulo; Icone (fork): pilula com claquete/TV.
       const int temTipo = ajustes_sufixo_tipo() && fileiras[r].catTipo[0];
       const int tipoIcone = temTipo && ajustes_sufixo_icone();
-      const int ehSerie = !strcmp(fileiras[r].catTipo, "series");
+      // "shows" e o "series" do AIOMetadata (descoberta.c, formatarTitulo).
+      const int ehSerie = !strcmp(fileiras[r].catTipo, "series") ||
+                          !strcmp(fileiras[r].catTipo, "shows") || !strcmp(fileiras[r].catTipo, "show");
       if (rotFil) {
         const char *corte = strstr(rotFil, " - ");
         const char *ultimo = NULL;
@@ -6719,7 +6852,7 @@ void home_desenhar(Uint32 agora) {
           //
           // A altura nao entra na conta: na referencia ela nao muda, e o card
           // cresce so para a direita a partir de uma borda esquerda parada.
-          float abre = (r == expFileira && c == expColuna) ? expAbre : 0.0f;
+          float abre = abertoEm(r, c);
           float larguraAberta = artH * esc * NV_EXP_ASPECTO;
           // Cascata: atraso pela coluna VISIVEL, nao pela absoluta — a
           // fileira rolada ate a coluna 20 entra pelo primeiro card da tela.
@@ -6742,6 +6875,11 @@ void home_desenhar(Uint32 agora) {
           if (r == expFileira && expAbre > 0.0f && c > expColuna) {
             float escF = 1.0f + escalaDe(tipo) * animFoco[r][expColuna];
             empurra = (artH * escF * NV_EXP_ASPECTO - lw * escF) * expAbre;
+          }
+          // O que fecha devolve os vizinhos pela mesma mola.
+          if (r == fechaFileira && fechaAbre > 0.0f && c > fechaColuna) {
+            float escF = 1.0f + escalaDe(tipo) * animFoco[r][fechaColuna];
+            empurra += (artH * escF * NV_EXP_ASPECTO - lw * escF) * fechaAbre;
           }
           if (abre > 0.0f) w = lw * esc + (larguraAberta - lw * esc) * abre;
           float cx = homeFileiraX(r, c) + lw * 0.5f
@@ -6873,7 +7011,24 @@ void home_desenhar(Uint32 agora) {
           // largura de 16:9 e o retrato comecaria a ser recortado feio.
           caminho = arte_por_identidade(idxCat,
                                         (tipo == FILEIRA_CONTINUE || tipo == FILEIRA_RETORNO) ? 3
-                                        : (abre > 0.5f || deitado));
+                                        : deitado);
+          // A DEITADA DO CARD QUE ABRE (ou fecha), pedida ja no foco para estar
+          // decodificada quando a expansao comecar, na largura do card aberto.
+          // O cartaz apaga por cima dela nos primeiros 60% da abertura; sem
+          // textura ainda, fica o cartaz (nada de piscar).
+          const char *caminhoL = NULL;
+          GLuint tL = 0;
+          float mistura = 0.0f;
+          if (!deitado && tipo != FILEIRA_CONTINUE && tipo != FILEIRA_RETORNO &&
+              (abre > 0.0f || (r == expFileira && c == expColuna && podeExpandir(r)))) {
+            caminhoL = arte_por_identidade(idxCat, 1);
+            tL = caminhoL ? tex_obter_larg(caminhoL, larguraAberta) : 0;
+            if (tL) {
+              float m = abre / 0.6f;
+              m = m < 0.0f ? 0.0f : m > 1.0f ? 1.0f : m;
+              mistura = m * m * (3.0f - 2.0f * m);
+            }
+          }
 
           // `!focoHero` E A CONDICAO QUE FALTAVA AQUI, e e o mesmo defeito que
           // o anel de foco ja tinha resolvido dez linhas acima (linha 1747).
@@ -6892,7 +7047,7 @@ void home_desenhar(Uint32 agora) {
             GfxRect aqui = { px, py, w, h };
             itemFoco.indice = idxCat;
             itemFoco.rect   = aqui;
-            itemFoco.arte   = caminho;
+            itemFoco.arte   = mistura > 0.5f ? caminhoL : caminho;
             itemFoco.titulo = cItem ? cItem->titulo : NULL;
             itemFoco.genero = cItem ? cItem->genero : NULL;
             itemFoco.meta   = cItem ? cItem->meta : NULL;
@@ -6941,7 +7096,7 @@ void home_desenhar(Uint32 agora) {
           }
           CartaoFoco ck = { r, c, tipo, cItem, caminho, t, aArte, deitado, rotuloFora, abre, esc, f,
                             px, py, w, h, (!focoHero && focus_indice(&foco, r, c)) ? varreFoco : 0.0f,
-                            trailerCard };
+                            trailerCard, caminhoL, tL, mistura };
           pintarCartao(&ck, raio);
           // MARCADOR "PRIMEIRA FILEIRA PINTADA" (#7 do handoff de desempenho,
           // 05/10). "primeira fileira da rede pronta" e "catalogo da rede
@@ -6961,7 +7116,9 @@ void home_desenhar(Uint32 agora) {
           }
           if (!focoHero && focus_indice(&foco, r, c)) { cartaoFoco = ck; cartaoFocoRaio = raio; temCartaoFoco = 1;
             snprintf(cartaoFocoArte, sizeof cartaoFocoArte, "%s", caminho ? caminho : "");
-            cartaoFoco.caminho = caminho ? cartaoFocoArte : NULL; }
+            cartaoFoco.caminho = caminho ? cartaoFocoArte : NULL;
+            snprintf(cartaoFocoArteL, sizeof cartaoFocoArteL, "%s", caminhoL ? caminhoL : "");
+            cartaoFoco.caminhoL = caminhoL ? cartaoFocoArteL : NULL; }
 
 
           // Feedback progressivo do gesto, sem duplicar o menu contextual. A

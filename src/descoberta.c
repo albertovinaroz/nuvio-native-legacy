@@ -1554,10 +1554,12 @@ static int desligada(const Decl *d) {
 // maiuscula e, se o nome ja NAO termina com o rotulo do tipo, " - <tipo>".
 // E por isso que a home mostra "For You - Filme" e nao "for you".
 static void formatarTitulo(const char *nome, const char *tipo, char *dst, size_t tam) {
-  const char *rotulo = i18n(ehCanal(tipo) ? "Canais"
-                            : strcmp(tipo, "series") ? "Filme" : "S\xc3\xa9rie");
-  const char *cru    = ehCanal(tipo) ? "Channels"
-                     : strcmp(tipo, "series") ? "Movie" : "Series";
+  // Fork: o AIOMetadata declara "shows"/"film" em vez de "series"/"movie"
+  // ("Top 10 TV Shows on Netflix - Filme"). So o ROTULO normaliza: o tipo cru
+  // continua indo no pedido do catalogo.
+  const int serie = !strcmp(tipo, "series") || !strcmp(tipo, "shows") || !strcmp(tipo, "show");
+  const char *rotulo = i18n(ehCanal(tipo) ? "Canais" : serie ? "S\xc3\xa9rie" : "Filme");
+  const char *cru    = ehCanal(tipo) ? "Channels" : serie ? "Series" : "Movie";
   size_t ln = strlen(nome), lr = strlen(rotulo), lc = strlen(cru);
   int jaTem = 0;
   if (!nome[0]) { snprintf(dst, tam, "%s", rotulo); return; }

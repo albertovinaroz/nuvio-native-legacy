@@ -23,7 +23,11 @@ typedef enum {
   // Escolhiveis em qualquer layout (06/10):
   FILEIRA_LINHA_TEMPO, // cartazes por ano sobre a linha animada dos anos
   FILEIRA_FICHA,       // cartaz com a ficha do titulo ao lado
-  FILEIRA_PALCO        // o foco grande no centro, vizinhos diminuindo
+  FILEIRA_PALCO,       // o foco grande no centro, vizinhos diminuindo
+  // Fork: "Pôster" escolhido a mao em Fileiras da Home. E a fileira comum
+  // sempre EM PE: a FILEIRA_NORMAL segue "Posteres deitados", e escolher
+  // pôster numa home deitada dava cartao deitado.
+  FILEIRA_CARTAZ
 } TipoFileira;
 
 // O item sob o foco, com o retangulo que ele ocupa na tela NESTE quadro. A
