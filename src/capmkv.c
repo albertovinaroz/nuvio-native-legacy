@@ -75,18 +75,16 @@ int capmkv_trechos(const MkvCap *caps, int n, IntroTrecho *out, int max) {
   double ini = 0, fim = 0, cred, previa;
   if (!caps || n < 1 || !out || max < 1) return 0;
   if (mkv_intro_nomeada(caps, n, &ini, &fim) && k < max) {
-    out[k].inicio = ini; out[k].fim = fim; out[k].tipo = INTRO_ABERTURA; k++;
+    out[k++] = (IntroTrecho){ini, fim, INTRO_ABERTURA, 0};
   }
   cred = mkv_creditos_nomeados(caps, n);
   previa = mkv_previa_nomeada(caps, n);
   if (cred > 1.0 && k < max) {
-    out[k].inicio = cred;
-    out[k].fim = previa > cred ? previa : 0.0;      // 0 = ate o fim
-    out[k].tipo = INTRO_CREDITOS; k++;
+    out[k++] = (IntroTrecho){cred, previa > cred ? previa : 0.0, INTRO_CREDITOS, 0}; // 0 = ate o fim
   }
   // A previa final nao e credito: so marca onde o cartao do proximo pode subir.
   if (previa > 1.0 && k < max) {
-    out[k].inicio = previa; out[k].fim = 0.0; out[k].tipo = INTRO_PREVIA; k++;
+    out[k++] = (IntroTrecho){previa, 0.0, INTRO_PREVIA, 0};
   }
   return k;
 }

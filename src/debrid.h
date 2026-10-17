@@ -78,6 +78,9 @@ const char *debrid_chave_mascarada(const char *servico, char *dst, unsigned n);
 // `msg` e sempre uma chave de i18n; premium com vencimento traz a data
 // dd/mm/aaaa em `data` (quem mostra usa "premium até %s").
 int  debrid_testar_alldebrid(char *msg, unsigned n, char *data, unsigned nd);
+// Mesmo contrato para RD/TB/PM; cache por chave de 5 min, inclusive falhas.
+// BLOQUEIA: usar num fio. Tambem alimenta os avisos de conta antes de resolver.
+int  debrid_testar_conta(int servico, char *msg, unsigned n, char *data, unsigned nd);
 
 // Episodio alvo da proxima resolucao (0,0 = filme). Serve para escolher o
 // arquivo certo dentro de um torrent de temporada inteira.

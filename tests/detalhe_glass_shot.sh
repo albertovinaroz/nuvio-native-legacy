@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # Capturas da pagina do titulo no Glass UI, para comparar com os mockups
 # (design/glass-ilha "Detalhe" e o "detalhe-retomar" do player). Nao entra na
 # suite (testa-tudo.sh pula *_shot.sh): precisa de janela GL e de olho.
@@ -10,9 +12,9 @@
 # recompilam quando o .c muda; detail.c entra pelo include do teste.
 set -eu
 cd "$(dirname "$0")/.."
-OBJ=${OBJ:-/tmp/nuvio-detglass-obj}
+OBJ=${OBJ:-${TMPDIR:-/tmp}/nuvio-detglass-obj}
 mkdir -p "$OBJ" "$1"
-NUVIO_DADOS=$(mktemp -d /tmp/nuvio-detglass-dados.XXXXXX)
+NUVIO_DADOS=$(mktemp -d ${TMPDIR:-/tmp}/nuvio-detglass-dados.XXXXXX)
 export NUVIO_DADOS
 trap 'rm -rf "$NUVIO_DADOS"' EXIT
 FL="-O1 -g -Isrc -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 -Wall -Wextra -Wno-deprecated-declarations -Wno-macro-redefined"

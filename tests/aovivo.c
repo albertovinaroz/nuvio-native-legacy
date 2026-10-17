@@ -4,6 +4,7 @@
 //   - agora / a seguir: cobertura, buraco, grade sobreposta, sem grade;
 //   - o mesmo, de ponta a ponta, sobre uma grade XMLTV de molde (epg.c).
 #include <assert.h>
+#include "nvtmp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,7 +27,7 @@ void  dados_fs_travar(void)           {}
 void  dados_fs_liberar(void)          {}
 char *dados_caminho(char *d, unsigned t, const char *n) { (void)d;(void)t;(void)n; return 0; }
 int   dados_apagar(const char *n)     { (void)n; return 0; }
-const char *dados_dir(void)           { return "/tmp"; }
+const char *dados_dir(void)           { return nvt(""); }
 int xtream_e_id(const char *id) { (void)id; return 0; }
 int xtepg_faixa(const char *id, time_t de, time_t ate, EpgProg *out, int cap) {
   (void)id; (void)de; (void)ate; (void)out; (void)cap; return 0;

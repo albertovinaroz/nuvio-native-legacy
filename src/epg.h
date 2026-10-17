@@ -42,6 +42,9 @@ int epg_estado(void);
 
 // Dispara o fio de carga se ainda nao rodou. Idempotente.
 void epg_iniciar(void);
+// Invalida a grade privada e o worker anterior. Os arquivos publicos de
+// epgshare01 continuam no disco, prontos para reaproveitar sem rede.
+void epg_abrir_sessao(int perfil);
 
 // Publica o resultado do fio no fio principal e pede re-carga quando a grade
 // envelheceu. Chamar por quadro enquanto o guia ou o overlay de canais

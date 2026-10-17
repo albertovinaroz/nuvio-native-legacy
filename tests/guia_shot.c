@@ -21,6 +21,7 @@
 // Inclui src/guia.c: desenharCard e a lista de canais sao estaticos, e semear
 // por dentro e o unico jeito de fotografar o cartao sem addon no ar.
 #include "badges.h"
+#include "nvtmp.h"
 #include "../src/guia.c"
 #include "guialembrete.h"
 #include "gfx.h"
@@ -238,7 +239,7 @@ static void semearGuia(void) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-guia";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-guia");
   char nome[600];
   SDL_Window *w;
   SDL_GLContext gl;

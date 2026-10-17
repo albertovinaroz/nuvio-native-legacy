@@ -379,9 +379,9 @@ int main(int argc, char **argv) {
   CONFERE(vistosDa(1) == 0, "episodio: Voltar nao marca nada");
 
   // --- B. O PAINEL DA TEMPORADA --------------------------------------------
-  focar(SEC_TEMPORADAS, 1);
+  focar(SEC_TEMPORADAS, 2);
   acordar(); quadros(2);
-  CONFERE(alvoDaPagina(SEC_TEMPORADAS, 1, &aba), "temporada: a aba em foco e alvo do ponteiro");
+  CONFERE(alvoDaPagina(SEC_TEMPORADAS, 2, &aba), "temporada: a aba em foco e alvo do ponteiro");
   tecla(SDL_KEYDOWN, SDLK_RIGHT); tecla(SDL_KEYUP, SDLK_RIGHT);
   tecla(SDL_KEYDOWN, SDLK_LEFT);  tecla(SDL_KEYUP, SDLK_LEFT);
   quadros(60);
@@ -425,7 +425,7 @@ int main(int argc, char **argv) {
     CONFERE(vistosDa(2) == TEMP_N[1], "temporada: clicar em \"Marcar temporada\" marca a temporada inteira");
     SDL_Delay(1000); quadros(4); gravar("3-temporada-fechando");
     quadros(60);
-    CONFERE(!episodios_menu_aberto() && nivel == 1 && foco.fileira == SEC_TEMPORADAS && foco.coluna == 1,
+    CONFERE(!episodios_menu_aberto() && nivel == 1 && foco.fileira == SEC_TEMPORADAS && foco.coluna == 2,
             "temporada: fecha depois da confirmacao e o foco continua na aba");
   }
   // Voltar fecha, o foco fica na aba.
@@ -435,7 +435,7 @@ int main(int argc, char **argv) {
   segurarOk(); quadros(60);
   CONFERE(episodios_menu_aberto(), "temporada: abre de novo pelo controle");
   voltar(); quadros(60);
-  CONFERE(!episodios_menu_aberto() && nivel == 1 && foco.fileira == SEC_TEMPORADAS && foco.coluna == 1,
+  CONFERE(!episodios_menu_aberto() && nivel == 1 && foco.fileira == SEC_TEMPORADAS && foco.coluna == 2,
           "temporada: Voltar fecha e o foco continua na aba");
   // Clicar fora fecha.
   segurarOk(); acordar(); quadros(60);

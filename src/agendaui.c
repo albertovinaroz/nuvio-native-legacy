@@ -155,6 +155,7 @@
 #include "agenda.h"
 #include "gfx.h"
 #include "text.h"
+#include "sinopse.h"
 #include "tex_cache.h"
 #include "anim.h"
 #include "layout.h"
@@ -1048,7 +1049,7 @@ void agendaui_evento(const SDL_Event *e) {
       int ordemListaN = vistaMes ? 5 : 2;
       int pos = 0, j;
       if (volta || k == SDLK_DOWN) { focoCabecalho = 0; return; }
-      if (k == SDLK_UP) return;
+      if (k == SDLK_UP) { if (ajustes_menu_topo()) sair = 1; return; }
       if (k == SDLK_LEFT || k == SDLK_RIGHT) {
         for (j = 0; j < ordemListaN; j++) {
           int id = vistaMes ? ordemLista[j] : (j == 0 ? AG_CAB_LISTA : AG_CAB_MES);
@@ -1094,7 +1095,10 @@ void agendaui_evento(const SDL_Event *e) {
         abrirModal(itens[calEvento]);
       return;
     }
-    if (k == SDLK_UP && calCelula < 7) { focoCabecalho = AG_CAB_HOJE; return; }
+    if (k == SDLK_UP && calCelula < 7) {
+      focoCabecalho = AG_CAB_HOJE;
+      return;
+    }
     // COLUNA 0 DA GRADE (domingo): a barra lateral por cima (dono, 03/10).
     // Antes a ESQUERDA ali pulava para o ultimo dia da semana de cima.
     if (k == SDLK_LEFT) {
@@ -1124,7 +1128,7 @@ void agendaui_evento(const SDL_Event *e) {
   }
   if (focoCabecalho) {
     if (volta || k == SDLK_DOWN) { focoCabecalho = 0; return; }
-    if (k == SDLK_UP) return;
+    if (k == SDLK_UP) { if (ajustes_menu_topo()) sair = 1; return; }
     if (k == SDLK_LEFT && focoCabecalho == AG_CAB_LISTA) { sair = 1; return; }
     if (k == SDLK_LEFT || k == SDLK_RIGHT) {
       focoCabecalho = focoCabecalho == AG_CAB_LISTA ? AG_CAB_MES : AG_CAB_LISTA;
@@ -1592,8 +1596,11 @@ static void desenhaEsquerda(const AgC1 *L, float a) {
     maxSin = temNot ? 2 : 3;
     if (aviso) maxSin--;
     if (it->sinopse[0]) {
-      int k = blocoC1(TXT_AJ_ESTADO, 18, it->sinopse, L->x0, y, 21.0f, w, 30.0f, maxSin, AG_INK2, a);
-      y += P(30) * (float)k + P(6);
+      float lead = sinopse_entrelinha(TXT_AJ_ESTADO, 30);
+      float px = sinopse_entrelinha(TXT_AJ_ESTADO, 21);
+      int max = sinopse_linhas(TXT_AJ_ESTADO, 30, maxSin);
+      int k = blocoC1(TXT_AJ_ESTADO, 18, it->sinopse, L->x0, y, px, w, lead, max, AG_INK2, a);
+      y += P(lead) * (float)k + P(6);
     }
     if (temNot) {
       const char *dica = i18n("OK para ler mais");
@@ -1685,7 +1692,7 @@ static void ilhaC1(GfxRect p) {
                  0, 0, 0, .38f, p, raio * p.h, vid ? 0.0f : .98f);
   if (vid) gfx_vidro_folha(p, raio, 1.0f);
   else gfx_cor(p, raio, .071f, .075f, .086f, .98f);
-  gfx_luz_canto(p, raio, p.w * .25f, -p.h * .25f, p.w * .9f, 1, 1, 1, vid ? .06f : .04f);
+  if (!vid) gfx_luz_canto(p, raio, p.w * .25f, -p.h * .25f, p.w * .9f, 1, 1, 1, .04f);
 }
 
 // O cabecalho da ilha: a contagem a esquerda e o seletor a direita.
@@ -1947,9 +1954,9 @@ static void painelFlutuante(GfxRect r, float ar, float ag, float ab, float a) {
   (void)ar; (void)ag; (void)ab;
   gfx_rect((GfxRect){ r.x - 18.0f, r.y - 8.0f, r.w + 36.0f, r.h + 40.0f }, 0, GFX_SOMBRA,
            1.0f, 0, 0, 0.5f, 0, 0, 0, .42f * a);
-  if (vid) { gfx_cor(r, raio, 0.05f, 0.052f, 0.06f, 0.94f * a); gfx_vidro_folha(r, raio, a); }
+  if (vid) { gfx_cor(r, raio, 0.05f, 0.052f, 0.06f, 0.94f * a); gfx_vidro_folha(r, raio, a); } // vidro-ok: opaque base under the glass sheet
   else gfx_cor(r, raio, .071f, .075f, .086f, .99f * a);
-  gfx_luz_canto(r, raio, r.w * .25f, -r.h * .25f, r.w * .9f, 1, 1, 1, (vid ? .06f : .04f) * a);
+  if (!vid) gfx_luz_canto(r, raio, r.w * .25f, -r.h * .25f, r.w * .9f, 1, 1, 1, .04f * a);
 }
 // A LINHA EM FOCO dos paineis (acoes do modal, manchete aberta): superficie
 // um degrau mais clara, como o menu e o Social — sem pilula no realce.
@@ -2672,7 +2679,8 @@ static void desenhaNoticia(const AgItem *it, float a) {
     // O raio e FRACAO DA ALTURA: 0,5 num trilho de 4 x 700 virava uma lente
     // afilada nas pontas (trilho sumido, barra em dois gomos). 2 px / h e o
     // meio da largura — a capsula de 4 px que se queria.
-    gfx_cor(tr, 2.0f / tr.h, 1.0f, 1.0f, 1.0f, 0.14f * a);
+    if (ajustes_vidro()) gfx_vidro_chip(tr, 2.0f / tr.h, 0.55f, a);
+    else gfx_cor(tr, 2.0f / tr.h, 1.0f, 1.0f, 1.0f, 0.14f * a);
     gfx_cor(ba, 2.0f / ba.h, 0.59f, 0.59f, 0.59f, a);
   }
 }

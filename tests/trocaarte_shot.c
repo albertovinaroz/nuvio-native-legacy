@@ -17,6 +17,7 @@
 //
 //   bash tests/trocaarte_shot.sh /tmp/nuvio-trocaarte
 #include <SDL2/SDL.h>
+#include "nvtmp.h"
 #include <SDL2/SDL_image.h>
 #include <assert.h>
 #include <limits.h>
@@ -159,7 +160,7 @@ static void injetar(void) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-trocaarte";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-trocaarte");
   char nome[600], abs[PATH_MAX];
   SDL_GLContext gl;
   const char *dd;

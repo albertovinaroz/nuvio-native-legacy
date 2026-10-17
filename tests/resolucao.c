@@ -4,6 +4,7 @@
 // Owner, 06/10/2026: Automatic by default, never 720p on its own; 4K only when
 // picked, falling back to 1080p when the GPU does not hold it.
 #include "../src/ajustes.c"
+#include "nvtmp.h"
 #include <assert.h>
 #include <unistd.h>
 
@@ -25,7 +26,7 @@ static int carregar(const char *dir, const char *texto) {
 }
 
 int main(void) {
-  char dir[] = "/tmp/nuvio-resolucao-XXXXXX";
+  char dir[NVT_MAX]; nvt_set(dir, sizeof dir, "/nuvio-resolucao-XXXXXX");
   ResVigia v;
   ResAuto a;
   int i;

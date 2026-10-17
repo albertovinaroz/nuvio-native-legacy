@@ -12,6 +12,7 @@
 #define main cedo_main
 #include "montagem_cedo.c"
 #include "jellyfin_stub.inc"
+#include "nvtmp.h"
 #undef main
 
 
@@ -23,7 +24,7 @@ static void esperarFim(void) { esperarQuieto(); }
 
 int main(void) {
   const char *tmp = getenv("TMPDIR");
-  snprintf(dirDados, sizeof dirDados, "%snuvio-homecarga-%d", tmp && *tmp ? tmp : "/tmp/", (int)getpid());
+  snprintf(dirDados, sizeof dirDados, "%snuvio-homecarga-%d", nvt("/"), (int)getpid());
   assert(mkdir(dirDados, 0700) == 0);
   desc_tmdb(dirDados);
   homeestado_iniciar();

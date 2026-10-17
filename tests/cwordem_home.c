@@ -22,6 +22,7 @@ GLuint tex_obter_larg(const char *c, float w) { (void)c; (void)w; return 0; }
 GLuint tex_obter_logo_larg_qualquer(const char *c, float w) { (void)c; (void)w; return 0; }
 void marco(const char *m) { (void)m; }
 void desc_sinopse_hero(const int *idx, int n) { (void)idx; (void)n; }
+void desc_ocultar_vistos_atualizar(void) {}
 #include "../src/cwordem.h"
 
 char *dados_ler(const char *nome) { (void)nome; return NULL; }

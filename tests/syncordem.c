@@ -20,6 +20,7 @@
 // dentro de um processo); o disco dublado e uma pasta de verdade, entao o
 // que uma sessao grava a seguinte le. Ver tests/syncordem.sh.
 #include "sync.h"
+#include "nvtmp.h"
 #include "addons.h"
 #include "catordem.h"
 #include "catordemcache.h"
@@ -35,7 +36,7 @@
 
 static const char *pasta(void) {
   const char *d = getenv("NV_T_DIR");
-  return d && *d ? d : "/tmp";
+  return d && *d ? d : nvt_dir();
 }
 static void caminho(char *dst, size_t tam, const char *nome) {
   snprintf(dst, tam, "%s/%s", pasta(), nome);

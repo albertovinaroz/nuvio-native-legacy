@@ -30,6 +30,12 @@ static int pendenteEntrar;
 
 int ilhasalvar_pergunta_aberta(void) { return perguntaAberta; }
 
+void ilhasalvar_abrir_sessao(void) {
+  perguntaAberta = pendenteEntrar = nOpcao = 0;
+  perguntaDesde = 0;
+  memset(opcao, 0, sizeof opcao); memset(&pendente, 0, sizeof pendente);
+}
+
 static int jaFoiPerguntado(void) {
   char *s = dados_ler(ARQ_PERGUNTADO);
   if (s) { free(s); return 1; }

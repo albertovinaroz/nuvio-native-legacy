@@ -19,6 +19,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
+
+static time_t contaAgora = 1800000000;
+time_t debrid_test_time(time_t *dst) {
+  if (dst) *dst = contaAgora;
+  return contaAgora;
+}
 
 #define K_RD "CHAVE-RD-SEGREDO-1"
 #define K_TB "CHAVE-TB-SEGREDO-2"
@@ -39,6 +46,27 @@ static int   bateuTB[4];        // checkcached, createtorrent, mylist, requestdl
 static int   bateuPM[2];        // cache/check, directdl
 static int   bateuRDUnrestrict;
 static int   pedidosServico[DEBRID_N];
+static int contaModo, contaPedidos[3]; // 0 active, 1 expired, 2 bad key, 3 malformed, 4 offline, 5 free
+static int contaTrocarChave;
+static char *contaResposta(int q, const char *const *cab, const char *corpo, int *st) {
+  static const char *ids[] = { "rd", "tb", "pm" };
+  static const char *modos[] = { "active", "expired", "badkey", "", "", "free" };
+  char caminho[160], b[1024]; size_t n; FILE *f;
+  contaPedidos[q]++;
+  if (contaTrocarChave) {
+    contaTrocarChave = 0;
+    debrid_definir_chave(debrid_servico_id(q), q == DEBRID_RD ? K_RD "2" : q == DEBRID_TB ? K_TB "2" : K_PM "2");
+  }
+  if (q == DEBRID_PM) assert(corpo && strstr(corpo, "apikey=" K_PM));
+  else assert(cab && cab[0] && strstr(cab[0], q == DEBRID_RD ? K_RD : K_TB));
+  if (contaModo == 4) { *st = 0; return NULL; }
+  if (contaModo == 3) return strdup("{}");
+  snprintf(caminho, sizeof caminho, "tests/fixtures/debrid-account/%s-%s.json", ids[q], modos[contaModo]);
+  f = fopen(caminho, "r"); assert(f);
+  n = fread(b, 1, sizeof b - 1, f); b[n] = 0; fclose(f);
+  *st = contaModo == 2 && q != DEBRID_PM ? 401 : 200;
+  return strdup(b);
+}
 static void registrarServico(const char *url) {
   if (strstr(url, "real-debrid.com")) pedidosServico[DEBRID_RD]++;
   else if (strstr(url, "api.torbox.app")) pedidosServico[DEBRID_TB]++;
@@ -140,6 +168,7 @@ char *rede_postar_st(const char *url, int s, const char *const *cab,
   int k;
   char ct[120] = "";
   (void)s;
+  if (strstr(url, "/account/info")) { *st = 200; return contaResposta(DEBRID_PM, cab, corpo, st); }
   registrarServico(url);
   for (k = 0; cab && cab[k]; k++)
     if (!strncmp(cab[k], "Content-Type:", 13)) snprintf(ct, sizeof ct, "%s", cab[k]);
@@ -216,6 +245,8 @@ char *rede_postar_st(const char *url, int s, const char *const *cab,
 
 char *rede_baixar_st(const char *url, int s, const char *const *cab, int *st) {
   (void)s; *st = 200;
+  if (strstr(url, "/rest/1.0/user")) return contaResposta(DEBRID_RD, cab, NULL, st);
+  if (strstr(url, "/user/me?settings=false")) return contaResposta(DEBRID_TB, cab, NULL, st);
   registrarServico(url);
 
   if (strstr(url, "api.alldebrid.com")) return adResp(url, cab, NULL, st);
@@ -901,12 +932,11 @@ static void parser(void) {
     "{\"name\":\"Y\",\"url\":\"magnet:?xt=urn:btih:ff\"},"
     "{\"name\":\"Z\",\"title\":\"cached\",\"clientResolve\":{\"type\":\"debrid\",\"service\":\"realdebrid\",\"infoHash\":\"0011\",\"isCached\":true}}]}",
     "Torrentio", &v);
-  assert(n == 3);
+  assert(n == 2);
   assert(!v[0].url[0] && !strcmp(v[0].infoHash, "abcdef0123") && v[0].fileIdx == 1);
-  assert(!strcmp(v[1].url, "https://cdn/x.mp4") && !v[1].infoHash[0]);
-  assert(!v[2].url[0] && !strcmp(v[2].infoHash, "0011"));
+  assert(!v[1].url[0] && !strcmp(v[1].infoHash, "0011"));
   free(v);
-  OK("parser: infoHash no topo e em clientResolve, externalUrl, magnet fora");
+  OK("parser: infoHash no topo e em clientResolve, externalUrl sozinho fora, magnet fora");
 
   // Marcas de "fora de cache" que os addons mandam de verdade (registros
   // 1136/2191/2501: "⏳ UHD" do AIOStreams; "[TB download]" do Torrentio).
@@ -923,14 +953,82 @@ static void parser(void) {
   OK("parser: marca fora de cache (⏳, [TB download], uncached) e nao a cacheada (⚡, [TB+])");
 }
 
+static void contas(void) {
+  static const char *ids[] = { "realdebrid", "torbox", "premiumize" };
+  static const char *keys[] = { K_RD, K_TB, K_PM };
+  char msg[64], data[16], url[4096], serv[32]; int pct, fora;
+  for (int q = 0; q < 3; q++) {
+    for (contaModo = 0; contaModo < 6; contaModo++) {
+      debrid_esquecer();
+      debrid_definir_chave(ids[q], keys[q]);
+      memset(contaPedidos, 0, sizeof contaPedidos);
+      memset(pedidosServico, 0, sizeof pedidosServico);
+      assert(debrid_testar_conta(q, msg, sizeof msg, data, sizeof data) == (contaModo == 0));
+      assert(!strcmp(msg, contaModo == 0 ? "premium" : contaModo == 1 ? "vencida" : contaModo == 5 ? "conta sem premium"
+                             : contaModo == 2 ? "chave recusada" : "sem resposta válida"));
+      assert((strlen(data) == 10) == (contaModo == 0));
+      debrid_testar_conta(q, msg, sizeof msg, data, sizeof data);
+      debrid_nova_busca();
+      assert(contaPedidos[q] == 1); // cache inclusive erro e nova busca
+      if (contaModo == 1 || contaModo == 2 || contaModo == 5) {
+        assert(debrid_sem_plano() == (1 << q));
+        assert(debrid_sem_plano_frase(1 << q));
+        if (contaModo == 1) assert(strstr(debrid_sem_plano_frase(1 << q), "expirou"));
+        assert(!debrid_resolver_servico_cache(q, "deadbeef", -1, url, sizeof url, &fora));
+        assert(!fora && !url[0]);
+        snprintf(url, sizeof url, "stale-link");
+        assert(!debrid_resolver_escolhido("deadbeef", -1, url, sizeof url, serv, sizeof serv, &pct));
+        assert(!url[0]);
+        assert(pedidosServico[q] == 0 && contaPedidos[q] == 1);
+        assert(debrid_sem_plano_novo() == (1 << q));
+        assert(!debrid_sem_plano_novo());
+      } else assert(!debrid_sem_plano());
+    }
+    // Play faz a consulta antes de criar torrent, sem depender de Ajustes.
+    debrid_esquecer(); debrid_definir_chave(ids[q], keys[q]);
+    contaModo = 1; memset(pedidosServico, 0, sizeof pedidosServico);
+    assert(!debrid_resolver("deadbeef", -1, url, sizeof url));
+    assert(!pedidosServico[q] && debrid_sem_plano() == (1 << q));
+    // O TTL reabre o caminho de play mesmo sem trocar a chave.
+    assert(!debrid_ativo() && !debrid_servico_disponivel(q));
+    contaAgora += 301;
+    assert(debrid_ativo() && debrid_servico_disponivel(q));
+    contaModo = 0;
+    assert(debrid_testar_conta(q, msg, sizeof msg, data, sizeof data));
+    assert(!debrid_sem_plano());
+    // Vencimento conhecido bloqueia mesmo antes do TTL acabar.
+    contaAgora = 4070908799; // um segundo antes de 01/01/2099 UTC
+    assert(debrid_testar_conta(q, msg, sizeof msg, data, sizeof data));
+    contaAgora += 2;
+    assert(!debrid_testar_conta(q, msg, sizeof msg, data, sizeof data));
+    assert(debrid_sem_plano() == (1 << q));
+    contaAgora = 1800000000;
+    // Nova credencial invalida o cache, inclusive a negativa anterior.
+    contaModo = 0;
+    debrid_definir_chave(ids[q], q == DEBRID_RD ? K_RD "2" : q == DEBRID_TB ? K_TB "2" : K_PM "2");
+    assert(debrid_testar_conta(q, msg, sizeof msg, data, sizeof data));
+    assert(!debrid_sem_plano());
+    // Uma resposta antiga nao contamina a chave trocada durante a rede.
+    debrid_esquecer(); debrid_definir_chave(ids[q], keys[q]);
+    contaModo = 1; contaTrocarChave = 1;
+    assert(!debrid_testar_conta(q, msg, sizeof msg, data, sizeof data));
+    assert(!debrid_sem_plano());
+    contaModo = 0;
+    assert(debrid_testar_conta(q, msg, sizeof msg, data, sizeof data));
+  }
+  contaModo = 0; debrid_esquecer();
+  OK("contas RD/TB/PM: fixtures active/expired/badkey, cache, offline, play e troca de chave");
+}
+
 int main(void) {
   static char capt[200000];
-  const char *arq = "/tmp/nuvio-debrid-saida.txt";
+  const char *arq = getenv("NUVIO_DEBRID_TEST_LOG");
   int velho, f; FILE *lido; size_t lidos;
 
   // Captura o stdout do APP. Tudo o que debrid.c imprime vai para o arquivo, e
   // no fim conferimos que nenhuma chave saiu por ali. As chamadas OK() escrevem
   // em stderr de proposito, para continuarem visiveis.
+  assert(arq);
   fflush(stdout);
   velho = dup(1);
   f = open(arq, O_RDWR | O_CREAT | O_TRUNC, 0600);
@@ -947,6 +1045,7 @@ int main(void) {
   alldebrid();
   alldebridLocal();
   alldebridTeste();
+  contas();
   ordem();
   negativaParcial();
   servicoEspecifico();

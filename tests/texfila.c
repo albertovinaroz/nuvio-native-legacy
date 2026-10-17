@@ -6,6 +6,7 @@
 // FIFO pura. A ordem de uma fila e o tipo de coisa que quebra em silencio — nao
 // ha tela que mostre "o hero furou" —, entao ela e exercitada aqui.
 #include "../src/sdlcompat.h"
+#include "nvtmp.h"
 #include <SDL2/SDL_image.h>
 #include <unistd.h>
 
@@ -222,7 +223,7 @@ int main(void) {
   // com PENDENTE, varios pedidos da UI devem observar o mesmo trabalho ativo,
   // e nao criar uma segunda entrada de decode.
   {
-    const char *path = "/tmp/nuvio-texfila-race.bmp";
+    const char *path = nvt("/nuvio-texfila-race.bmp");
     SDL_Surface *bmp = SDL_CreateRGBSurface(0, 8, 8, 32,
                                              0x00ff0000, 0x0000ff00,
                                              0x000000ff, 0xff000000);
@@ -293,7 +294,7 @@ int main(void) {
     raceMtx = SDL_CreateMutex(); raceCond = SDL_CreateCond();
     assert(raceMtx && raceCond);
     racePopped = raceRelease = lifecycleStarted = lifecycleClosed = 0;
-    snprintf(dirCache, sizeof dirCache, "/tmp/nuvio-texfila-cache");
+    snprintf(dirCache, sizeof dirCache, nvt("/nuvio-texfila-cache"));
     snprintf(itens[0].caminho, sizeof itens[0].caminho, "https://teste/em-uso.jpg");
     itens[0].estado = PENDENTE;
     nomeDeCache(itens[0].caminho, path, sizeof path);

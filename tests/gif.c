@@ -31,6 +31,7 @@
 //   bash tests/gif.sh
 //   SANITIZE=1 bash tests/gif.sh
 #include "../src/gif.h"
+#include "nvtmp.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +39,7 @@
 #include <string.h>
 #include <time.h>
 
-#define CAMINHO "/tmp/nuvio-gif-teste.gif"
+#define CAMINHO nvt("/nuvio-gif-teste.gif")
 
 // --- montador ---------------------------------------------------------------
 static unsigned char buf[8192];
@@ -663,7 +664,7 @@ int main(void) {
   //    de disco devolver, e ele devolve NULL enquanto o download nao chegou.
   assert(gif_animado(NULL) == 0);
   assert(gif_animado("") == 0);
-  assert(gif_animado("/tmp/nuvio-gif-que-nao-existe.gif") == 0);
+  assert(gif_animado(nvt("/nuvio-gif-que-nao-existe.gif")) == 0);
   puts("ok  NULL, vazio e caminho inexistente devolvem 0");
 
   // L) FORA DO TIZEN NAO HA ANIMACAO, e isso e contrato e nao acidente: o

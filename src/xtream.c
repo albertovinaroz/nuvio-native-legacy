@@ -4,6 +4,7 @@ int ajustes_livetv_formato(void);  // ajustes.h puxa SDL; o teste do xtream nao
 #include "js.h"
 #include "dados.h"
 #include "perfis.h"
+#include "perfisessao.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -36,6 +37,9 @@ static char usuario[96];
 static char senha[96];
 static int  perfilLido = -1;
 static int  lido;
+static NvPerfilSessao sessaoLida;
+static XtreamConta conta;
+static int formatoOk = -1;
 static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
 
 static const char *arquivo(void) {
@@ -69,9 +73,11 @@ static void normalizarServidor(const char *entrada, char *dst, unsigned tam) {
 static void carregarTravado(void) {
   int p = perfis_ativo();
   char *b, *linha, *fim;
-  if (lido && p == perfilLido) return;
-  perfilLido = p; lido = 1;
+  NvPerfilSessao sessao = nv_perfil_sessao_ler();
+  if (lido && p == perfilLido && sessao == sessaoLida) return;
+  perfilLido = p; sessaoLida = sessao; lido = 1;
   servidor[0] = usuario[0] = senha[0] = 0;
+  memset(&conta, 0, sizeof conta); formatoOk = -1;
   b = dados_ler(arquivo());
   if (!b) return;
   for (linha = b; *linha; linha = fim) {
@@ -218,16 +224,18 @@ static pthread_mutex_t travaRede = PTHREAD_MUTEX_INITIALIZER;
 // Retry-After do ultimo pedido ao painel (s; 0 = nao veio). xtepg.c le depois
 // de um 429.
 static int retryAfterUltimo;
-static char *chamarSt(const char *acao, int prazo, int *status) {
+static char *chamarSt(const char *acao, int prazo, int *status, NvPerfilSessao sessao) {
   char srv[256], u[300], s[300], url[1100];
   char *r;
   int st = 0;
   if (status) *status = 0;
   pthread_mutex_lock(&trava);
+  if (!nv_perfil_sessao_travar(sessao)) { pthread_mutex_unlock(&trava); return NULL; }
   carregarTravado();
   snprintf(srv, sizeof srv, "%s", servidor);
   urlenc(usuario, u, sizeof u);
   urlenc(senha, s, sizeof s);
+  nv_perfil_sessao_destravar();
   pthread_mutex_unlock(&trava);
   if (!srv[0] || !u[0] || !s[0]) return NULL;
   if (acao && acao[0])
@@ -236,6 +244,7 @@ static char *chamarSt(const char *acao, int prazo, int *status) {
   else
     snprintf(url, sizeof url, "%s/player_api.php?username=%s&password=%s", srv, u, s);
   pthread_mutex_lock(&travaRede);
+  if (!nv_perfil_sessao_atual(sessao)) { pthread_mutex_unlock(&travaRede); return NULL; }
 #if XT_PROXY
   // SAMSUNG (#112): o Chromium do Tizen barra TODO `http://` que sai do app
   // (log D1 1647, 1.4.1: a lista morria aqui com o painel respondendo CORS),
@@ -255,12 +264,14 @@ static char *chamarSt(const char *acao, int prazo, int *status) {
     snprintf(via, sizeof via, "%s/v1/xtream", NV_REC_URL);
     r = rede_postar_st(via, prazo, cab, url, &st);
     pthread_mutex_unlock(&travaRede);
+    if (!nv_perfil_sessao_atual(sessao)) { free(r); return NULL; }
     if (status) *status = st;
     return r;
   }
 #endif
   r = rede_baixar_st_retry(url, prazo, NULL, &st, &retryAfterUltimo);
   pthread_mutex_unlock(&travaRede);
+  if (!nv_perfil_sessao_atual(sessao)) { free(r); return NULL; }
   if (status) *status = st;
   return r;
 }
@@ -288,9 +299,9 @@ static const char *pulaBom(const char *c) {
 }
 
 // O contrato antigo (corpo so em 2xx), para quem nao precisa do codigo.
-static char *chamar(const char *acao) {
+static char *chamar(const char *acao, NvPerfilSessao sessao) {
   int st = 0;
-  char *r = chamarSt(acao, XT_PRAZO_S, &st);
+  char *r = chamarSt(acao, XT_PRAZO_S, &st, sessao);
   if (r && st >= 400) { free(r); r = NULL; }
   return r;
 }
@@ -310,8 +321,8 @@ static int campoTextoOuNumero(const char *ini, const char *fim, const char *chav
   return 1;
 }
 
-static int lerCategorias(XtCat *cats, int max) {
-  char *corpo = chamar("get_live_categories");
+static int lerCategorias(XtCat *cats, int max, NvPerfilSessao sessao) {
+  char *corpo = chamar("get_live_categories", sessao);
   const char *p;
   int n = 0;
   if (!corpo) return 0;
@@ -345,21 +356,23 @@ int xtream_ultimo_total(void) { return ultimoTotal; }
 int xtream_ultima_falha(void) { return ultimaFalha; }
 int xtream_ultimo_http(void) { return ultimoHttp; }
 
-int xtream_canais(XtreamCanal *saida, int max) {
+static int contaLerSessao(XtreamConta *out, NvPerfilSessao sessao);
+
+int xtream_canais_sessao(XtreamCanal *saida, int max, uint64_t sessao) {
   static XtCat cats[XT_MAX_CAT];
   int nCat, n = 0, total = 0, st = 0, classe;
   char *corpo;
   const char *p;
   ultimaFalha = XT_OK; ultimoHttp = 0; ultimoTotal = 0;
-  if (!xtream_configurado() || !saida || max < 1) return 0;
+  if (!nv_perfil_sessao_atual(sessao) || !xtream_configurado() || !saida || max < 1) return 0;
   // A conta ANTES da lista: e pequena, e o que ela diz (expirada, telas em
   // uso, formatos) e o que a tela precisa quando a lista falha. Sem resposta
   // aqui a lista ainda e tentada — o login pode ter caido por prazo.
-  { XtreamConta c; xtream_conta_ler(&c); }
-  nCat = lerCategorias(cats, XT_MAX_CAT);
+  { XtreamConta c; contaLerSessao(&c, sessao); }
+  nCat = lerCategorias(cats, XT_MAX_CAT, sessao);
   // PRAZO MAIOR SO PARA A LISTA. get_live_streams de um provedor europeu passa
   // de 7 MB (pesquisa do #158); 20 s num painel lento estoura antes do fim.
-  corpo = chamarSt("get_live_streams", XT_PRAZO_LISTA_S, &st);
+  corpo = chamarSt("get_live_streams", XT_PRAZO_LISTA_S, &st, sessao);
   ultimoHttp = st;
   classe = classificar(corpo);
   if (!corpo || st == 0) {
@@ -434,7 +447,11 @@ int xtream_canais(XtreamCanal *saida, int max) {
   { int comId = 0, i;
     for (i = 0; i < n; i++) if (saida[i].epgId[0]) comId++;
     printf("[xtream] %d de %d canais com epg_channel_id\n", comId, n); }
-  return n;
+  return nv_perfil_sessao_atual(sessao) ? n : 0;
+}
+
+int xtream_canais(XtreamCanal *saida, int max) {
+  return xtream_canais_sessao(saida, max, nv_perfil_sessao_ler());
 }
 
 // --- reproducao ---------------------------------------------------------
@@ -468,7 +485,7 @@ int xtream_url_xmltv(char *url, unsigned n) {
 // que deixa a tela dizer "conta expirada", "2 de 2 telas em uso" ou "este
 // servidor so entrega .ts" em vez de "o canal nao abriu". Os paineis mandam
 // quase tudo como TEXTO ("active_cons":"2"), alguns como numero: le os dois.
-static XtreamConta conta;             // a ultima lida; sob `trava`
+// `conta`, declarada com o cadastro, pertence a sessao que a produziu.
 
 static int intDe(const char *ini, const char *fim, const char *chave, int padrao) {
   char b[32];
@@ -512,10 +529,13 @@ int xtream_conta_parse(const char *json, XtreamConta *c) {
   return 1;
 }
 
-int xtream_conta_ler(XtreamConta *out) {
+static int contaLerSessao(XtreamConta *out, NvPerfilSessao sessao) {
   XtreamConta c;
   int st = 0, classe;
-  char *corpo = chamarSt("", XT_PRAZO_S, &st);
+  char *corpo = chamarSt("", XT_PRAZO_S, &st, sessao);
+  if (!nv_perfil_sessao_atual(sessao)) {
+    free(corpo); if (out) memset(out, 0, sizeof *out); return 0;
+  }
   classe = classificar(corpo);
   if (!xtream_conta_parse(corpo, &c)) {
     memset(&c, 0, sizeof c);
@@ -535,15 +555,22 @@ int xtream_conta_ler(XtreamConta *out) {
   fflush(stdout);
   free(corpo);
   pthread_mutex_lock(&trava);
-  conta = c;
+  int atual = nv_perfil_sessao_travar(sessao);
+  if (atual) { conta = c; nv_perfil_sessao_destravar(); }
   pthread_mutex_unlock(&trava);
+  if (!atual) { if (out) memset(out, 0, sizeof *out); return 0; }
   if (out) *out = c;
   return c.valido;
+}
+
+int xtream_conta_ler(XtreamConta *out) {
+  return contaLerSessao(out, nv_perfil_sessao_ler());
 }
 
 int xtream_conta(XtreamConta *out) {
   int v;
   pthread_mutex_lock(&trava);
+  carregarTravado();
   if (out) *out = conta;
   v = conta.valido;
   pthread_mutex_unlock(&trava);
@@ -570,7 +597,7 @@ int xtream_conta_aviso(const XtreamConta *c, long long agora) {
 // E o formato que tocou fica em memoria para os proximos canais da sessao: um
 // painel que so entrega .ts de verdade nao deve custar o prazo do .m3u8 a
 // cada troca de canal.
-static int formatoOk = -1;            // -1 nenhum, 0 m3u8, 1 ts
+// formatoOk tambem zera quando o cadastro muda de sessao.
 
 int xtream_formatos(const char *ext[2]) {
   XtreamConta c;
@@ -679,18 +706,19 @@ int xtream_epg_curto(const char *id, XtreamProg *out, int cap, int *status) {
   const char *d;
   char *corpo;
   int st = 0, n;
+  NvPerfilSessao sessao = nv_perfil_sessao_ler();
   if (status) *status = 0;
   if (!xtream_e_id(id) || !out || cap < 1) return -1;
   // So digitos: o id vai direto para a query.
   for (d = id + 7; *d; d++) if (*d < '0' || *d > '9') return -1;
   if (!id[7]) return -1;
   snprintf(acao, sizeof acao, "get_short_epg&stream_id=%s&limit=%d", id + 7, cap);
-  corpo = chamarSt(acao, XT_PRAZO_S, &st);
+  corpo = chamarSt(acao, XT_PRAZO_S, &st, sessao);
   if (status) *status = st;
   if (!corpo || st == 0 || st >= 400) { free(corpo); return -1; }
   n = xtream_epg_parse(corpo, out, cap);
   free(corpo);
-  return n;
+  return nv_perfil_sessao_atual(sessao) ? n : -1;
 }
 
 int xtream_url(const char *id, char *url, unsigned n) {

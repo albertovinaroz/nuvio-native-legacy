@@ -116,6 +116,14 @@ typedef enum {
   FIL_TIPO_LINHA_TEMPO,  // FILEIRA_LINHA_TEMPO — cartazes por ano sobre a linha animada
   FIL_TIPO_FICHA,        // FILEIRA_FICHA — cartaz com a ficha (ano, nota, sinopse) ao lado
   FIL_TIPO_PALCO,        // FILEIRA_PALCO — o foco grande no centro, vizinhos menores
+  FIL_TIPO_REDONDA,      // FILEIRA_REDONDA — avatar circular com o nome embaixo (fileiras de pessoas)
+  // "Herói" (#205): FILEIRA_HEROI — um cartão só do tamanho da fileira, com
+  // fundo, selo, título e duas linhas. No fim pelo mesmo motivo dos outros.
+  FIL_TIPO_HEROI,        // fonte: a própria fileira; curadoria do Nuvio Legacy; sorteio
+  // 14/10 (dono): "o pôster só que do tamanho do grande tipo o 3:4 grande",
+  // com mais informação na base e o véu na cor predominante. No fim, pelo
+  // mesmo motivo: o número gravado dos tipos acima não muda.
+  FIL_TIPO_POSTER_GRANDE, // FILEIRA_POSTER_GRANDE — pôster 3:4 grande com ficha na base
   FIL_TIPO_N
 } FilTipo;
 
@@ -408,6 +416,24 @@ const char *fil_estilo_tam_palavra(int k);
 // Rotulo do tipo `t` PARA ESTA CHAVE: numa colecao o numero quer dizer outra
 // palavra (FIL_TIPO_CARTAZ e "Pôster", nao "Cartaz em pé").
 const char *fil_estilo_rotulo(const char *chave, int t);
+// --- ORDEM DOS ITENS da fileira de colecao (2.0.5: "alem do estilo da
+// fileira, ordenar elas por ano, ordem alfabetica, ordem da lista ou
+// aleatorio") -------------------------------------------------------------
+// Vale para a fileira de um GRUPO de colecao: os itens dela sao as pastas. A
+// ordem escolhida e da FILEIRA (chave collection_<id>), gravada no mesmo
+// fileirasui-p<N>.txt das outras opcoes — e local como elas, nunca sobe para
+// a conta. Quem aplica e a montagem da home (col_ordenar_pastas, colecoes.c).
+typedef enum {
+  FIL_ORD_LISTA = 0,   // a ordem da propria colecao — a de sempre
+  FIL_ORD_ANO,         // pasta mais nova primeiro; sem ano no fim
+  FIL_ORD_AZ,          // ordem alfabetica do nome da pasta
+  FIL_ORD_ALEATORIA,   // embaralhada; a semente e da montagem, nao do quadro
+  FIL_ORD_N
+} FilOrdem;
+int         fil_ordem(const char *chave);                 // FIL_ORD_LISTA padrao
+int         fil_definir_ordem(const char *chave, int o);  // 0 fora de colecao
+const char *fil_ordem_rotulo(int o);                      // pt; i18n no desenho
+
 // Uma frase, em pt, que diz o que a forma `t` e NESTA chave (passa por i18n no
 // desenho). E a legenda da previa do modal de estilo (ctxmenu.c).
 const char *fil_estilo_ajuda(const char *chave, int t);

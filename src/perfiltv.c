@@ -157,7 +157,7 @@ int ptv_tex_teto_mb(PtvPlataforma p, long mem) {
   if (!mem) return 160;
   if (mem < 1200) return 64;
   if (mem < 2000) return 160;
-  if (mem < 3000) return 300;
+  if (mem < 3000) return p == PTV_ANDROID ? 192 : 300;
   return 512;
 }
 

@@ -67,6 +67,8 @@ void fontecache_engatilhar(const char *idAntes, const char *baseAntes,
 // addon respondeu com fonte) nos demais casos.
 int  addons_consultar(const char *id, const char *tipo, const char *base, int fios,
                       int (*cancelado)(void *), void *ctx, Stream **saida);
+int addons_consultar_sessao(const char *id, const char *tipo, const char *base, int fios,
+                      int (*cancelado)(void *), void *ctx, Stream **saida, uint64_t sessao);
 
 enum { FC_NADA = 0, FC_ACERTO, FC_EM_CURSO };
 
@@ -102,6 +104,9 @@ void fontecache_avancar(void);
 
 // Cancela e espera o fio de prefetch, e esvazia o cache. addons_encerrar chama.
 void fontecache_encerrar(void);
+// Invalida listas e pedidos antigos sem esperar a rede em curso.
+void fontecache_abrir_sessao(void);
+void fontecache_guardar_sessao(const char *id, const char *tipo, const Stream *lista, int n, uint64_t sessao);
 
 // Quantas entradas VALIDAS ha agora. Diagnostico e teste.
 int  fontecache_n(void);

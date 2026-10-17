@@ -101,7 +101,14 @@ int main(void) {
   strcpy(faixa.codec, "S_TEXT/ASS");
   assert(vaiOverlay(&faixa)); overlayAssumir(2, 7);
   assert(nativa == -1 && !legOverlayTV);
-  strcpy(faixa.codec, "S_HDMV/PGS"); assert(!vaiOverlay(&faixa));
+  strcpy(faixa.codec, "S_HDMV/PGS");
+#ifdef NV_TPK
+  // .tpk decodifica PGS em software: vai para o overlay, sem segurar a TV.
+  assert(vaiOverlay(&faixa)); overlayAssumir(2, 7);
+  assert(nativa == -1 && !legOverlayTV);
+#else
+  assert(!vaiOverlay(&faixa));
+#endif
 #ifndef NV_ANDROID
   // 1o cue da faixa de texto: nativa desligada (handoff), SEM toast.
   strcpy(faixa.codec, "S_TEXT/UTF8"); overlayAssumir(2, 7); toasts = 0;

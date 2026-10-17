@@ -6,6 +6,7 @@
 // com o Big Buck Bunny; o que nao tem resposta ("hash sem peers") e modelado
 // como o servidor real se comporta: nao responde nunca, e o prazo e nosso.
 #include "p2p.h"
+#include "nvtmp.h"
 #include "streams.h"
 #include "p2pmotor.h"
 #include "rede.h"
@@ -24,7 +25,7 @@ uint64_t badges_detectar(const char *m) { (void)m; return 0; }
 uint64_t badges_bit(const char *id) { (void)id; return 0; }
 // p2pmotor.c (motor embutido) entra no link; sem -DNV_P2P_MOTOR ele so diz
 // "sem motor" e nunca chama estes.
-const char *dados_dir(void) { return "/tmp"; }
+const char *dados_dir(void) { return nvt(""); }
 int rede_pedir(const RedePedido *p, RedeResposta *r) { (void)p; r->erro = REDE_INDISPONIVEL; return 0; }
 void rede_resposta_limpar(RedeResposta *r) { (void)r; }
 

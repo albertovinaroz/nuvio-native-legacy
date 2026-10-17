@@ -44,7 +44,19 @@ const char *faixasmkv_codec(const char *codecId);
 // lida do MKV pelo mkvass, em vez do player da TV? ASS/SSA sempre (#92).
 // Texto simples (S_TEXT/UTF8 = SRT, S_TEXT/WEBVTT) so quando `textoSimples`
 // — LG e .tpk (#421); Android recebe texto do Media3.
-// Imagem (PGS/VobSub) e desconhecido: nunca.
+// Imagem (PGS/VobSub) nao entra aqui: faixasmkv_imagem_overlay.
 int faixasmkv_overlay(const char *codecId, int textoSimples);
+
+// Legenda de imagem que o app decodifica e desenha (PGS) no lugar do player.
+int faixasmkv_imagem_overlay(const char *codecId);
+int faixasmkv_tem_imagem(const MkvFaixa *fx, int n);
+// Acrescenta ao fim de `leg` (de `nLeg` entradas, ate `max`) as faixas de imagem
+// do arquivo que o player nao lista, com numero -1 (sem faixa no player) e o
+// ordinalMkv do arquivo. Idempotente. Devolve o novo `nLeg`.
+int faixasmkv_acrescentar_imagem(VideoFaixa *leg, int nLeg, int max, const MkvFaixa *fx, int n);
+
+// Append omitted ASS/SSA/SRT/WebVTT tracks for the LG overlay. Native entries
+// stay unchanged; recovered entries have unique negative numbers. Idempotent.
+int faixasmkv_acrescentar_texto(VideoFaixa *leg, int nLeg, int max, const MkvFaixa *fx, int n);
 
 #endif

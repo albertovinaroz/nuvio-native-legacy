@@ -448,7 +448,7 @@ static void guiaPilulaIlha(float y, const char *ic, float cr, float cg, float cb
   if (forte) { txt_desenhar(f, x, y + (56 - f.h) * 0.5f); x += f.w + ep; }
   if (pos) { txt_desenhar(p, x, y + (56 - p.h) * 0.5f); x += p.w; }
   if (azul) {
-    TxtLinha k = ajTxt(TXT_AJ_KBD, "AZUL"), l = ajTxt(TXT_AJ_CHIP, "abre");
+    TxtLinha k = ajTxt(TXT_AJ_KBD, "CH+"), l = ajTxt(TXT_AJ_CHIP, "abre");
     float kw = k.w + 18;
     x += 6;
     ajNeutro((GfxRect){ x, y + 13, kw, 30 }, 15, 0.09f, AJ_CHIP_SOL, 1);

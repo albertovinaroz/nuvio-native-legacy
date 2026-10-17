@@ -285,13 +285,13 @@ check('hero e detalhe escolhem pela regra do ajuste "Fonte do trailer"',
   /trailerfonte_escolher_destaque\(trailerfonte_ajuste\(\), trailerfonte_tizen\(\), &c, &u, &qual\)/.test(home) &&
   /trailerfonte_escolher\(aj, tz, &c, &u, &q\)/.test(detail));
 
-// SAMSUNG SEMPRE MUDA (dono, 22/09/2026: "trailer fica mudo"). Tres travas:
-// o OK em tela cheia nao escolhe fonte por som, pede o som da plataforma, e
-// trailer_abrir zera o som antes de chegar ao elemento.
+// SAMSUNG SEMPRE MUDA (dono, 22/09/2026: "trailer fica mudo") e o som em
+// tela cheia segue o UNICO ajuste (#509); trailer_abrir zera o som antes de
+// chegar ao elemento.
 check('detalhe nao tem mais "com som -> YouTube primeiro"',
   !/if \(som && k < extras_n_trailers\(\)/.test(detail) && !/trailerFonte\(foco\.coluna, 1\)/.test(detail));
-check('tela cheia pede o som da plataforma, nao 1 cravado',
-  /trailer_abrir\(u, tela, trailerfonte_com_som\(trailerfonte_tizen\(\)\), 1\);/.test(detail));
+check('tela cheia segue o ajuste unico de som (#509)',
+  /trailer_abrir\(u, tela, ajustes_trailer_som\(\), 1\);/.test(detail));
 {
   const i = trailer.indexOf('void trailer_abrir(const char *fonte');
   const trava = trailer.indexOf('if (!trailerfonte_com_som(trailerfonte_tizen())) som = 0;', i);
@@ -362,7 +362,7 @@ check('hero e detalhe pedem o IMDb na Samsung quando ha servico',
   check('Samsung: extras_trailer_abrir nao chama window.open', i >= 0 && !/window\.open\(|emscripten_run_script/.test(tz));
 }
 check('detalhe: OK no cartao sem fonte toca o YouTube do cartao dentro do app na Samsung',
-  /trailer_abrir\(extras_trailer_yt\(foco\.coluna\), tela, 0, 1\);/.test(detail));
+  /trailer_abrir\(extras_trailer_yt\(k\), tela, ajustes_trailer_som\(\), 1\);/.test(detail));
 
 {
   // #228: a restored one-profile session never opened the chooser, so

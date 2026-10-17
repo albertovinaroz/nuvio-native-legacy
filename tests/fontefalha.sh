@@ -6,6 +6,6 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/nuvio-fontefalha.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 mkdir "$tmp/data"
 flags=(-std=c11 -O1 -g -Wall -Wextra -Werror -Isrc)
-if [ "${FONTEFALHA_SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
+if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
 "${CC:-cc}" "${flags[@]}" src/fontefalha.c tests/fontefalha.c -o "$tmp/test"
 "$tmp/test" "$tmp/data"

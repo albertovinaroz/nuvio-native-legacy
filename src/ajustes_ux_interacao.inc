@@ -49,10 +49,11 @@ static int uxRequisito(int op) {
     case AJ_HERO_CHEIO: return AJ_HOME_LAYOUT;
     case AJ_HERO_CATALOGOS: return AJ_HERO;
     case AJ_HERO_TRAILER_ESPERA: return AJ_HERO_TRAILER;
+    // #509: um ajuste de som para todo trailer; ativo sempre que algum trailer
+    // automatico pode tocar. Sem nenhum, o OK leva ao trailer do destaque.
     case AJ_HERO_TRAILER_SOM:
-      return !lig(AJ_HERO_TRAILER) ? AJ_HERO_TRAILER : -1;
-    case AJ_DET_TRAILER_SOM:
-      return !lig(AJ_DET_TRAILER_AUTO) ? AJ_DET_TRAILER_AUTO : -1;
+      return (lig(AJ_HERO_TRAILER) || valor[AJ_FOCO_TRAILER] != AJ_TRAILER_CARTAZ_DESLIGADO ||
+              lig(AJ_DET_TRAILER_AUTO)) ? -1 : AJ_HERO_TRAILER;
     case AJ_EXPANDIR_ATRASO: return AJ_EXPANDIR;
     case AJ_CW_OK: case AJ_CW_FONTE: case AJ_CW_PROXIMO: case AJ_CW_ESTILO: case AJ_CW_THUMB:
     case AJ_CW_FURTHEST: case AJ_CW_NAO_EXIBIDOS: case AJ_CW_ORDEM: case AJ_CW_RETIDO_TAMBEM:
@@ -312,6 +313,7 @@ static int uxEvento(SDL_Keycode k) {
       } else if (k == SDLK_UP) {
         if (t == AJ2_T_TOUR) uxTopo = AJ2_T_BUSCA;
         else if (t == AJ2_T_RESOLVER) uxTopo = AJ2_T_PERFIL;
+        else if (ajustes_menu_topo()) { sair = 1; return 1; }
       }
       return 1;
     }

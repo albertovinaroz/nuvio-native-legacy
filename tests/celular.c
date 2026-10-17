@@ -4,6 +4,7 @@
 // metodo, corpo grande, uso unico, expiracao, bloqueio por tentativas.
 // O texto de teste NAO e chave de ninguem.
 #include "celular.h"
+#include "nvtmp.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,12 +23,12 @@ static int curl(const char *args) {
   FILE *f;
   size_t n;
   int cod = 0;
-  snprintf(cmd, sizeof cmd, "curl -s -m 5 -o /tmp/nv-celular-corpo.txt -w '%%{http_code}' %s", args);
+  snprintf(cmd, sizeof cmd, "curl -s -m 5 -o '%s/nv-celular-corpo.txt' -w '%%{http_code}' %s", nvt_dir(), args);
   f = popen(cmd, "r");
   if (!f) return -1;
   if (fscanf(f, "%d", &cod) != 1) cod = 0;
   pclose(f);
-  f = fopen("/tmp/nv-celular-corpo.txt", "r");
+  f = fopen(nvt("/nv-celular-corpo.txt"), "r");
   saida[0] = 0;
   if (f) { n = fread(saida, 1, sizeof saida - 1, f); saida[n] = 0; fclose(f); }
   return cod;
@@ -86,8 +87,8 @@ int main(void) {
   snprintf(a, sizeof a, "-X PUT '%s'", local);
   assert(curl(a) == 405);
   // Corpo acima do teto: 413, e o token continua valido.
-  snprintf(a, sizeof a, "-H 'Content-Type: application/x-www-form-urlencoded' --data-binary @/tmp/nv-celular-grande.txt '%s'", local);
-  { FILE *g = fopen("/tmp/nv-celular-grande.txt", "w"); fputs("t=", g);
+  snprintf(a, sizeof a, "-H 'Content-Type: application/x-www-form-urlencoded' --data-binary @'%s/nv-celular-grande.txt' '%s'", nvt_dir(), local);
+  { FILE *g = fopen(nvt("/nv-celular-grande.txt"), "w"); fputs("t=", g);
     for (i = 0; i < CEL_CORPO_MAX * 3 + 10; i++) fputc('a', g); fclose(g); }
   assert(curl(a) == 413);
   assert(celular_estado() == CEL_ESPERANDO && !celular_pegar(txt, sizeof txt));

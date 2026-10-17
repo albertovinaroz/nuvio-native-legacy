@@ -112,6 +112,38 @@ int main(void) {
   ok(a[0].ordinalMkv == -1 && a[1].ordinalMkv == -1 && a[2].ordinalMkv == -1,
      "sem idioma ou duas TV disputando Arabic: nao casa", "");
 
+  // Segunda sonda: PGS ja anexada (numero < 0) nao entra na contagem do player.
+  // Duas legendas de texto no mesmo idioma: o ordinal so fecha sem as linhas de imagem.
+  {
+    VideoFaixa leg[4];
+    mkv(&fx[0], 17, "S_HDMV/PGS", "eng", "", 0);
+    mkv(&fx[1], 17, "S_TEXT/UTF8", "eng", "Full", 0);
+    mkv(&fx[2], 17, "S_TEXT/UTF8", "eng", "SDH", 0);
+    tv(&leg[0], 0, "eng"); tv(&leg[1], 1, "eng");
+    faixasmkv_aplicar(NULL, 0, leg, 2, fx, 3);
+    ok(leg[0].ordinalMkv == 1 && leg[1].ordinalMkv == 2 &&
+       !strcmp(leg[0].codec, "S_TEXT/UTF8") && !strcmp(leg[1].codec, "S_TEXT/UTF8"),
+       "1a sonda: duas eng de texto, ordinal pulando a PGS", leg[0].codec);
+    leg[2].numero = -1; leg[2].ordinalMkv = 0;
+    snprintf(leg[2].codec, sizeof leg[2].codec, "S_HDMV/PGS");
+    faixasmkv_aplicar(NULL, 0, leg, 3, fx, 3);
+    ok(leg[0].ordinalMkv == 1 && leg[1].ordinalMkv == 2 &&
+       !strcmp(leg[0].codec, "S_TEXT/UTF8") && !strcmp(leg[1].codec, "S_TEXT/UTF8"),
+       "2a sonda com PGS anexada: texto continua casado", leg[0].codec);
+    ok(leg[2].ordinalMkv == 0 && !strcmp(leg[2].codec, "S_HDMV/PGS"),
+       "2a sonda nao reescreve a linha de imagem", leg[2].codec);
+    // Idioma unico, com a PGS ja anexada e o mesmo idioma da faixa de texto.
+    mkv(&fx[0], 17, "S_HDMV/PGS", "por", "", 0);
+    mkv(&fx[1], 17, "S_TEXT/UTF8", "por", "", 0);
+    tv(&leg[0], 0, "por");
+    leg[1].numero = -1; leg[1].ordinalMkv = 0;
+    snprintf(leg[1].codec, sizeof leg[1].codec, "S_HDMV/PGS");
+    leg[1].idioma[0] = 0;
+    faixasmkv_aplicar(NULL, 0, leg, 2, fx, 2);
+    ok(leg[0].ordinalMkv == 1 && !strcmp(leg[0].codec, "S_TEXT/UTF8"),
+       "2a sonda: idioma unico nao conta a PGS anexada", leg[0].codec);
+  }
+
   printf(falhas ? "faixasmkv_casar: %d FALHA(S)\n" : "faixasmkv_casar: tudo ok\n", falhas);
   return falhas != 0;
 }

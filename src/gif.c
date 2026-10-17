@@ -1,6 +1,7 @@
 // GIF animado das capas de colecao (#29) e das fotos de perfil (#45).
 // Ver gif.h para onde anima e por que.
 #include "gif.h"
+#include "gfx.h"
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -1028,9 +1029,11 @@ static void subir(const GifFaixa *f) {
   }
   // SO AS LINHAS QUE MUDARAM. Linhas inteiras sao contiguas no buffer, entao
   // uma faixa e um glTexSubImage2D so (WebGL 1 nao tem UNPACK_ROW_LENGTH).
-  if (f->y1 > f->y0)
+  if (f->y1 > f->y0) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, f->y0, fioW, f->y1 - f->y0,
                     GL_RGBA, GL_UNSIGNED_BYTE, f->px);
+    gfx_vidro_sujar();   // mesmo nome, outra imagem: o hash do vidro nao ve
+  }
 }
 
 GLuint gif_textura(const char *caminho, int largAlvo) {

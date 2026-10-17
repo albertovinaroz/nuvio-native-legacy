@@ -48,6 +48,7 @@ const char *detmais_rotulo(int acao) {
     case DMAIS_EXPLORAR:   return "Explorar a partir daqui";
     case DMAIS_ARTE:       return "Trocar arte";
     case DMAIS_RECOMENDAR: return "Recomendar a um amigo";
+    case DMAIS_SINOPSE:    return "Ler sinopse";
   }
   return "";
 }
@@ -59,6 +60,7 @@ const char *detmais_icone(int acao) {
     case DMAIS_EXPLORAR:   return "aj_compass";
     case DMAIS_ARTE:       return "arte";
     case DMAIS_RECOMENDAR: return "recomendar";
+    case DMAIS_SINOPSE:    return "aj_file-text";
   }
   return "";
 }

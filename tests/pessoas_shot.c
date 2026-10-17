@@ -10,6 +10,7 @@
 // prefixo dos arquivos de PESSOAS_PREFIXO (padrao "after").
 #define NV_REC_URL "http://127.0.0.1:1"
 #include "../src/recomenda.c"
+#include "nvtmp.h"
 #include "../src/pessoas.c"
 #include "dados.h"
 #include <SDL2/SDL_image.h>
@@ -96,7 +97,7 @@ int main(int argc, char **argv) {
   const char *idi = getenv("PESSOAS_IDIOMA");
   SDL_GLContext gl;
   int k;
-  saida = argc > 1 ? argv[1] : "/tmp/nv-amigos-shots";
+  saida = argc > 1 ? argv[1] : nvt("/nv-amigos-shots");
   prefixo = getenv("PESSOAS_PREFIXO") ? getenv("PESSOAS_PREFIXO") : "after";
   assert(dir && *dir);
   { char cam[600]; FILE *f;

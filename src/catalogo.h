@@ -9,6 +9,7 @@
 #ifndef NV_CATALOGO_H
 #define NV_CATALOGO_H
 #include "addonurl.h"
+#include <stdint.h>
 
 // 40 titulos hoje (14 do historico do dono + 26 dos catalogos). A folga evita
 // o corte silencioso que ja aconteceu: com 32 os oito ultimos sumiam sem aviso.
@@ -108,6 +109,7 @@ typedef struct {
   // a nota sobre sizeof(CatItem) abaixo).
   int  temporadas[CAT_TEMP_MAX];
   int  nTemporadas;
+  int  epsParciais; // lista antecipada visivel; ainda falta concluir a mescla
   // Vem do Trakt: 1 se esta na watchlist do dono, 1 se esta na colecao dele.
   // Ficam no item e nao numa tabela a parte da biblioteca porque o catalogo e
   // reconstruido da rede — uma tabela por indice apontaria para outro titulo
@@ -151,6 +153,7 @@ typedef struct {
   // conheceu. Vazio = origem desconhecida (Trakt, Salvos, progresso, pacote).
   // Mudar o tamanho invalida o cache em disco sozinho (ver sizeof(CatItem)).
   char origem[96];
+  int ranking; // Posicao original no catalogo, antes dos filtros.
 } CatItem;
 
 // Um episodio de serie. Vem de art/episodios.txt, gerado a partir do campo
@@ -223,7 +226,11 @@ int  cat_carregar(const char *dirArte);
 // pedidos e os 14,5 s medidos acima. A escolha fica dentro de catalogo.c, e nao
 // nos chamadores, porque quem le (home.c) e quem grava (descoberta.c) sao
 // arquivos diferentes e tem de concordar. Ver a nota longa em caminhoCache.
+// App opt-in keeps one validated disk snapshot per account/profile.
+void cat_cache_perfis(int ligado);
 int  cat_gravar_cache(const char *dirArte);
+int  cat_gravar_cache_se_sessao(const char *dirArte, const char *donoEsperado,
+                                  int perfilEsperado, uint64_t sessaoEsperada);
 int  cat_gravar_cache_se_identidade(const char *dirArte, const char *donoEsperado,
                                     int perfilEsperado);
 // Devolve 1 se carregou. Chamar DEPOIS de cat_carregar: ele substitui o

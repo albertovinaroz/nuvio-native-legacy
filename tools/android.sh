@@ -2,6 +2,7 @@
 # Build do Nuvio para Android TV/Mobile (SDL2 + GLES2, nucleo C em libmain.so).
 #
 #   tools/android.sh            -> APK debug em build/android/Nuvio-<v>-android-debug.apk
+#   NUVIO_RUST_MKVCORE=0 tools/android.sh -> nucleo mkv em C (padrao: Rust, ligado em 14/10/2026)
 #   NUVIO_P2P_MOTOR=<raiz> tools/android.sh -> motor P2P (padrao: pasta achada por tools/p2p-motor/pasta.sh; =none desliga)
 #   NUVIO_KEYSTORE=... NUVIO_KEYSTORE_PASS=... NUVIO_KEY_ALIAS=... NUVIO_KEY_PASS=... tools/android.sh
 #                               -> tambem o release assinado, Nuvio-<v>-android.apk
@@ -17,6 +18,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 RAIZ="$PWD"
+# Offline validation must never fetch missing build inputs.
+if [ "${NUVIO_ANDROID_OFFLINE:-0}" = 1 ]; then
+  curl() { echo 'android.sh: network disabled for offline build' >&2; return 1; }
+  export -f curl
+  export CARGO_NET_OFFLINE=true
+fi
 RELEASE_ONLY=0
 case "${1:-}" in "") ;; --release-only) RELEASE_ONLY=1;; *) echo "opcao desconhecida: $1" >&2; exit 2;; esac
 CACHE="${NUVIO_ANDROID_CACHE:-$HOME/.cache/nuvio-android}"
@@ -85,11 +92,19 @@ export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/27.2.12479018}"
 FFMPEG_AAR="$EST/media3-ffmpeg-16kb.aar"
 bash tools/android/ffmpeg-android.sh "$FFMPEG_AAR" arm64-v8a armeabi-v7a
 GR=(android/gradlew -p android --console=plain -Pnuvio.sdlSrc="$CACHE/src" -Pnuvio.estagio="$EST" -Pnuvio.ffmpegAar="$FFMPEG_AAR")
+[ "${NUVIO_ANDROID_OFFLINE:-0}" != 1 ] || GR+=(--offline)
 # Motor P2P embutido: pasta achada por tools/p2p-motor/pasta.sh (NUVIO_P2P_MOTOR,
 # ou a pasta padrao); configurada e incompleta = erro, nunca pacote sem motor calado.
 . tools/p2p-motor/pasta.sh
 nv_p2p_resolver android
 [ -n "$NV_P2P_DIR" ] && GR+=(-Pnuvio.p2pMotor="$NV_P2P_DIR")
+# Nucleo EBML/NAL do mkv.c em Rust, ligado por padrao (dono aprovou em 14/10/2026);
+# NUVIO_RUST_MKVCORE=0 volta ao C para comparar.
+if [ "${NUVIO_RUST_MKVCORE:-1}" = 1 ]; then
+  NV_RUST_MKV_DIR="$EST/rust-mkvcore"
+  tools/rust-mkvcore.sh --android "$NV_RUST_MKV_DIR" >&2
+  GR+=(-Pnuvio.rustMkvcore="$NV_RUST_MKV_DIR")
+fi
 TAREFAS=()
 [ "$RELEASE_ONLY" = 1 ] || TAREFAS=(assembleDebug)
 # Chave de release FIXA (o Android so atualiza por cima com a mesma
@@ -119,7 +134,7 @@ else
 fi
 
 # Mesma lista de credenciais de pessoa do tools/release-samsung.sh.
-SEGREDO='(^|/)(trakt|addons|tmdb|mdblist|sessao|simkl[^/]*|fanart|diag-token)\.txt$|collections\.json$|catalogo-rede\.bin|local\.properties|\.env$|(^|/)(trakt|stalker|xtream|listas)-p[0-9]|(^|/)conta-[^/]*\.txt(\.tmp)?$'
+SEGREDO='(^|/)(debrid|provider-scope|fontefalha|fontesmortas|catalogo-|guia-(fav|modo|preview|cache|addons|lembretes)|epg-extra|recomendacoes|amigos-vistos)[^/]*\.(txt|json|bin|ts|id)(\.tmp[^/]*)?$|(^|/)(trakt|addons|tmdb|mdblist|sessao|simkl[^/]*|fanart|diag-token)\.txt$|collections\.json$|catalogo-rede\.bin|local\.properties|\.env$|(^|/)(trakt|stalker|xtream|listas)-p[0-9]|(^|/)conta-[^/]*\.txt(\.tmp)?$'
 for a in "${APKS[@]}"; do
   L=$(unzip -Z1 "$a")
   for need in lib/arm64-v8a/libmain.so lib/armeabi-v7a/libmain.so lib/arm64-v8a/libSDL2.so lib/armeabi-v7a/libSDL2.so; do

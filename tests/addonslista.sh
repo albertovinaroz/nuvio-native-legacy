@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # addons.txt lido vira addon USAVEL (ligado), nao so visivel. Ver o cabecalho
 # de tests/addonslista.c. NAO precisa de rede.
 #
@@ -18,8 +20,8 @@ if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit
 # parser, cache e i18n dublados no proprio teste — ver tests/addonslista.c.
 # js.c entra pelo caso do #112: o manifesto do addon de canal e lido de
 # verdade (capacidadesDoManifesto), porque e ele que decide o tipo pedido.
-cc "${flags[@]}" src/addons.c src/fontefalha.c src/js.c src/addonstats.c tests/addonslista.c -o /tmp/nuvio-addonslista-tests
-saida=$(/tmp/nuvio-addonslista-tests)
+cc "${flags[@]}" src/addons.c src/watchstate.c src/fontefalha.c src/js.c src/jsw.c src/addonstats.c tests/addonslista.c -o ${TMPDIR:-/tmp}/nuvio-addonslista-tests
+saida=$(${TMPDIR:-/tmp}/nuvio-addonslista-tests)
 echo "$saida" | grep -v '^\[addons\]' || true
 echo "$saida" | grep -q 'addonslista: ok'
 # resposta curta sem fonte vai para o log com o texto (os 75 bytes do id 1504)

@@ -156,6 +156,10 @@ void video_definir_mp4(int ehMp4);
 // (video_tocar consome). Quem nao pede — trailer, canal ao vivo, que tem o
 // watchdog proprio em app.c — segue caindo em video_falhou na hora.
 void video_definir_reconexao(int sim);
+// Reabre somente a fonte VOD corrente, sem resolver outra URL nem reiniciar
+// o limite de reconexao. Preserva o ponto informado pelo backend, faixas,
+// velocidade e pausa. 1 = pedido aceito; 0 = indisponivel neste estado/alvo.
+int  video_recarregar(void);
 // MODO DO LOAD para o PROXIMO video_tocar (#158, LG C4: dado chega, VDEC
 // concedido, decoder nunca anuncia). 0 = o de sempre; 1 = sem o selectTrack
 // de video logo depois do load; 2 = o 1 e mais o payload enxuto de live
@@ -266,6 +270,11 @@ void   video_tpk_zoom_roi_definir(int ligado);
 int    video_tpk_zoom_roi(void);
 // trailer.c marca que o que toca agora e um trailer (so ele pode ter ROI fora da tela).
 void   video_tpk_trailer_marcar(int sim);
+void   video_tpk_cartao_marcar(int sim);   // o destino e o furo do cartao da home
+int    video_tpk_cartao_cover(void);       // 1 = o cartao recebe cover (recorte de fonte), 0 = encaixe
+void   video_tpk_cartao_destino(float x, float y, float w, float h, float *ox, float *oy, float *ow, float *oh);
+void   video_tpk_cartao_furo(float x, float y, float w, float h, float *ox, float *oy, float *ow, float *oh);
+void   video_tpk_tizen_definir(const char *versao);   // gpunivel.c: platform.version
 int    video_recorte_fonte_trailer(void);   // so o trailer: o ajuste em execucao
 #else
 static inline int video_recorte_fonte_trailer(void) { return video_recorte_fonte(); }
@@ -329,6 +338,9 @@ typedef struct {
   int canais;        // original audio channels, 0 unknown
   int stream_index;  // source demux index for DTS sessions, -1 in native webOS
   int stream_id;     // original container track ID, -1 when unknown
+  // Nome ORIGINAL da legenda, quando o container/player informa. Separado do
+  // rotulo para a folha mostra-lo abaixo do idioma sem mudar a memoria da faixa.
+  char nome[128];
 } VideoFaixa;
 
 int  video_n_audio(void);
@@ -401,9 +413,17 @@ typedef struct {
   int opacidade;  // 0..3 = texto 100/75/50/25%
   int familia;    // TxtFamilia; aplicada ao overlay externo (OpenSubtitles)
   int negrito;    // 1 = peso negrito no overlay (so o que o app desenha)
+  int corBorda;   // -1 unset (legacy outline); 0 Black, 1 White, 2 Yellow, 3 Green, 4 Blue, 5 Red
 } VideoLegendaEstilo;
 
 #define VIDEO_LEG_NCORES 6
+// A borda tem preto puro como padrao; as demais amostras usam a paleta do texto.
+static inline unsigned video_legenda_borda_rgb(int indice) {
+  static const unsigned cores[VIDEO_LEG_NCORES] = {
+    0x000000u, 0xffffffu, 0xffde30u, 0x40e070u, 0x4e9cffu, 0xff5050u
+  };
+  return cores[indice >= 0 && indice < VIDEO_LEG_NCORES ? indice : 0];
+}
 // Nomes que o uMS aceita em charColor. Expostos porque a folha desenha os
 // rotulos e precisa da mesma ordem.
 extern const char *const VIDEO_LEG_CORES[VIDEO_LEG_NCORES];

@@ -25,6 +25,7 @@
 #include <unistd.h>
 #include "../src/catalogo.h"
 #include "../src/progresso.h"
+#include "nvtmp.h"
 
 // O cache grava o idioma no cabecalho (texto ja montado nao pode ser lido de
 // volta no idioma errado). 0 = portugues, que e o padrao.
@@ -99,7 +100,7 @@ int main(void) {
   char raiz[512], dirPacote[600];
   const char *tmp = getenv("TMPDIR");
   snprintf(raiz, sizeof raiz, "%snuvio-catcache-%d",
-           tmp && *tmp ? tmp : "/tmp/", (int)getpid());
+           nvt("/"), (int)getpid());
   snprintf(dirDados, sizeof dirDados, "%s/dados", raiz);
   snprintf(dirPacote, sizeof dirPacote, "%s/pacote", raiz);
   mkdir(raiz, 0755); mkdir(dirDados, 0755); mkdir(dirPacote, 0755);

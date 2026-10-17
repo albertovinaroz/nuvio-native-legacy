@@ -69,6 +69,9 @@ void teclado_abrir(const char *titulo, const char *dica, int max);
 // a nota no topo: a saida errada seria uma segunda modal.
 void teclado_abrir_com(const char *titulo, const char *dica, int max,
                        const char *alfabeto, const char *inicial);
+// Opt-in after opening an optional field: Concluir may submit empty text to
+// clear its saved value. Every new keyboard resets this to disabled.
+void teclado_permitir_vazio(int permitir);
 // Depois de teclado_abrir_com: que campo e este. SENHA mostra um ponto por
 // caractere; EMAIL e SENHA pedem o teclado certo ao sistema (Android). A
 // proxima abertura volta a TEXTO.

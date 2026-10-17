@@ -11,6 +11,8 @@
 //
 //   bash tests/intro.sh
 #include "../src/intro.h"
+#include "../src/capmkv.h"
+#include "../src/credfonte.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,7 +28,8 @@
 // (intro_definir_buscador) por um que serve as respostas GRAVADAS de
 // tests/fixtures. Os dois simbolos abaixo so existem para linkar.
 #include "../src/rede.h"
-static char dadosTeste[]="/tmp/nuvio-intro-XXXXXX";
+#include "nvtmp.h"
+static char dadosTeste[NVT_MAX];
 const char *dados_dir(void){return dadosTeste;}
 void dados_fs_travar(void){}
 void dados_fs_liberar(void){}
@@ -49,6 +52,17 @@ int rede_pedir(const RedePedido *p, RedeResposta *r) {
   free(j);return ok;
 }
 void rede_resposta_limpar(RedeResposta *r) { (void)r; }
+int mkvass_cabecalho(const char *url, unsigned char **buf, long *n) {
+  (void)url; (void)buf; (void)n; return 0;
+}
+char *rede_baixar_trecho_st(const char *url, int s, long long ini, long long fim,
+                           long *tam, int *status, int *erro, char *final, unsigned tamFinal) {
+  (void)url; (void)s; (void)ini; (void)fim; (void)status; (void)erro; (void)final; (void)tamFinal;
+  *tam = 0; return NULL;
+}
+char *rede_baixar_trecho(const char *url, int s, long ini, long fim, long *tam) {
+  (void)url; (void)s; (void)ini; (void)fim; *tam = 0; return NULL;
+}
 
 // Le uma resposta gravada de tests/fixtures/theintrodb (chamadas reais a
 // api.theintrodb.org/v3/media em 07/10/2026, sem chave). Estatico: cabe.
@@ -70,7 +84,7 @@ static double credFinal(const IntroTrecho *v, int n) {
 
 // O BUSCADOR FALSO: cada URL vira uma fixture ou um status. Guarda a ultima URL.
 static pthread_mutex_t fakeTrava = PTHREAD_MUTEX_INITIALIZER;
-static char ultimaUrl[400];
+static char ultimaUrl[400], ultimaAni[400];
 static int fakeStatus500;
 static int mapPedidos, aniPedidos, dbPedidos, mapFora;
 static int fakeBuscar(const char *url, char **corpo, int *status) {
@@ -81,7 +95,7 @@ static int fakeBuscar(const char *url, char **corpo, int *status) {
   *corpo = NULL;
   pthread_mutex_lock(&fakeTrava);
   if (strstr(url, "Fribb/anime-lists")) mapPedidos++;
-  if (strstr(url, "api.aniskip.com")) aniPedidos++;
+  if (strstr(url, "api.aniskip.com")) { aniPedidos++; snprintf(ultimaAni, sizeof ultimaAni, "%s", url); }
   if (strstr(url, "api.theintrodb.org")) dbPedidos++;
   pthread_mutex_unlock(&fakeTrava);
   if (strstr(url, "Fribb/anime-lists")) {
@@ -137,7 +151,7 @@ static int mesmoSeg(double a, double esperado) {
 int main(int argc,char **argv) {
   IntroTrecho v[8];
   int n;
-  assert(mkdtemp(dadosTeste));
+  nvt_set(dadosTeste, sizeof dadosTeste, "/nuvio-intro-XXXXXX"); assert(mkdtemp(dadosTeste));
   if(argc==2){ // Medicao reproduzivel com captura real, sem buffer da lista.
     fribbFonte=argv[1];intro_definir_buscador(fakeBuscar);
     intro_registrar_tmdb("tt5607616",65942,"{\"genres\":[{\"id\":16}],\"original_language\":\"ja\"}");
@@ -156,10 +170,30 @@ int main(int argc,char **argv) {
     intro_desligar();assert(!unlink(caminho));assert(!rmdir(dadosTeste));return 0;
   }
 
+  // Lixo no buffer MKV nao pode atribuir os creditos ao AniSkip.
+  { MkvCap caps[] = {{0, "Prologue"}, {60, "Opening"}, {150, "Part A"},
+                     {1380, "Ending"}, {1450, "Next Episode Preview"}};
+    for (int lixo = 0; lixo < 2; lixo++) {
+      CredEntrada e = {.dur = 1500}; int fonte;
+      intro_desligar(); intro_definir_duracao(e.dur, 0);
+      memset(v, lixo ? 0xa5 : 0, sizeof v);
+      n = capmkv_trechos(caps, 5, v, 8);
+      assert(n == 3);
+      intro_definir_capitulos(v, n);
+      double ic = intro_creditos_seg();
+      if (intro_creditos_aniskip()) e.aniskip = ic; else e.introdb = ic;
+      assert(cred_escolher(&e, &fonte) == 1380 && fonte == CRED_FONTE_INTRODB);
+      for (int i = 0; i < n; i++) assert(v[i].ani == 0);
+    }
+    intro_desligar();
+    puts("ok  lixo no buffer MKV nao muda a decisao dos creditos");
+  }
+
   // FILME: /v3/media?imdb_id=tt0111161 (Shawshank). So creditos, sem fim.
+  memset(v, 0xa5, sizeof v);
   n = intro_extrair("{\"tmdb_id\":278,\"type\":\"movie\","
                     "\"credits\":[{\"start_ms\":8300000,\"end_ms\":null}]}", v, 8);
-  assert(n == 1);
+  assert(n == 1 && v[0].ani == 0);
   { const IntroTrecho *c = achar(v, n, INTRO_CREDITOS);
     assert(c);
     assert(mesmoSeg(c->inicio, 8300.0));   // 8.300.000 ms, e nao 8.300.000 s
@@ -440,7 +474,7 @@ int main(int argc,char **argv) {
     intro_pedir_ids("tt5607616", 0, 2, 1, 0, 0);
     assert(esperar(2) == 2);
     pthread_mutex_lock(&fakeTrava);
-    assert(strstr(ultimaUrl, "skip-times/39587/1?"));
+    assert(strstr(ultimaAni, "skip-times/39587/1?"));
     assert(mapPedidos == 1);
     pthread_mutex_unlock(&fakeTrava);
     nt = intro_trechos(t, 8);
@@ -449,7 +483,7 @@ int main(int argc,char **argv) {
     intro_pedir_ids("tt5607616", 65942, 1, 39, 0, 0);
     assert(esperar(2) == 2);
     pthread_mutex_lock(&fakeTrava);
-    assert(strstr(ultimaUrl, "skip-times/42203/1?"));
+    assert(strstr(ultimaAni, "skip-times/42203/1?"));
     assert(mapPedidos == 1); // outro episodio/parte usa o mesmo cache do titulo
     pthread_mutex_unlock(&fakeTrava);
     char indice[256];struct stat st;
@@ -571,12 +605,11 @@ int main(int argc,char **argv) {
 #ifdef NV_SHOT_HOOKS
   // CAPITULOS DO ARQUIVO (203-capitulos): substituem, por tipo, o da rede, e
   // sobrevivem a quem chegou antes.
-  { double fim; int tipo; IntroTrecho cap[2], got[8]; int k;
+  { double fim; int tipo; IntroTrecho cap[2] = {{1380.0, 0.0, INTRO_CREDITOS, 0},
+                                              {60.0, 150.0, INTRO_ABERTURA, 0}}, got[8]; int k;
     n = intro_extrair(fixture("onepiece_s01e01.json"), v, 8);
     intro_shot_definir(v, n);
     intro_definir_duracao(1500.0, 0);
-    cap[0].inicio = 1380.0; cap[0].fim = 0.0; cap[0].tipo = INTRO_CREDITOS;
-    cap[1].inicio = 60.0; cap[1].fim = 150.0; cap[1].tipo = INTRO_ABERTURA;
     intro_definir_capitulos(cap, 2);
     k = intro_trechos(got, 8);
     assert(achar(got, k, INTRO_CREDITOS) && mesmoSeg(achar(got, k, INTRO_CREDITOS)->inicio, 1380.0));
@@ -587,8 +620,10 @@ int main(int argc,char **argv) {
   }
 #endif
   // ANISKIP: leitura e a regra dos 10% (outro corte).
+  memset(v, 0xa5, sizeof v);
   n = intro_extrair_aniskip(fixture("../aniskip/onepiece_mal21_ep1_len0.json"), 1500.0, v, 8);
   assert(n == 3);
+  for (int i = 0; i < n; i++) assert(v[i].ani == 1);
   { const IntroTrecho *a = achar(v, n, INTRO_ABERTURA), *c = achar(v, n, INTRO_CREDITOS);
     assert(a && mesmoSeg(a->inicio, 28.783) && mesmoSeg(a->fim, 118.783));
     assert(c && mesmoSeg(c->inicio, 1387.996) && c->fim == 0.0); }   // ED ate o fim
@@ -603,6 +638,14 @@ int main(int argc,char **argv) {
   assert(intro_kitsu_mal(fixture("../kitsu12_mappings.json")) == 21);
   assert(intro_extrair_aniskip("{\"found\":false,\"results\":[],\"statusCode\":404}", 0, v, 8) == 0);
   puts("ok  AniSkip: op/ed/recap, ED ate o fim, 10% de duracao, mapeamento kitsu -> MAL");
+  // COBERTURA POR TIPO: AniSkip so com OP nao bloqueia o ED do TheIntroDB.
+  { IntroTrecho a[8] = {{10.0, 100.0, INTRO_ABERTURA, 1}}, w[8] = {{20.0, 90.0, INTRO_ABERTURA, 0}, {1300.0, 0.0, INTRO_CREDITOS, 0}};
+    int na = 1;
+    assert(!intro_tipos_completos(a, na));
+    na = intro_completar(a, na, w, 2, 8);
+    assert(na == 2 && a[0].ani == 1 && a[0].inicio == 10.0);   // OP do AniSkip fica
+    assert(a[1].tipo == INTRO_CREDITOS && a[1].ani == 0);      // ED vem do TheIntroDB
+    puts("ok  fontes completam por tipo, com origem por trecho"); }
   assert(!rmdir(dadosTeste));
   puts("intro: tudo ok");
   // #329/#331: pular sozinho. Assinatura: (tipo, fim, dur, abertura, resumo, creditos).

@@ -60,6 +60,9 @@ void posplay_recuar(void);
 // Inicio de busca explicita: revoga Next pendente e suspende novo preparo
 // ate a confirmacao pelo player. Nao marca recuo nem altera o OK manual.
 void posplay_busca_usuario(void);
+// Troca explicita pela barra: descarta contagem/pedido antigo, conservando o
+// worker independente. O roteador adota Next do mesmo alvo ou cancela outro.
+void posplay_troca_manual(void);
 // Seek automatico em voo: suspende so a contagem/pedido automatico. OK segue
 // disponivel; o player libera quando o video progride ou termina de verdade.
 void posplay_aguardar_busca(int aguardar);
@@ -70,11 +73,8 @@ int  posplay_indice(void);
 // proximo episodio (temporada/episodio) ou titulo relacionado (indice).
 int  posplay_pediu_episodio(int *temporada, int *episodio);
 int  posplay_pediu_titulo(void);
-// A conta da contagem, sem estado (#331). Devolve o novo instante de disparo, 0 = sem contagem.
-Uint32 posplay_contagem(Uint32 agora, Uint32 abriuEm, Uint32 fecharEm, double restaReal, int autoplay, int marcadorReal, int contagemSeg);
-// O player diz, a cada quadro, se o inicio dos creditos vem de marcador real (capitulo do MKV ou
-// TheIntroDB deste episodio, aceito pela janela) e nao da estimativa. So assim a contagem adianta.
-void posplay_marcador_real(int real);
+// Contagem desde a abertura do cartao (#470). Instante de disparo, 0 = sem contagem.
+Uint32 posplay_contagem(Uint32 agora, Uint32 fecharEm, double restaReal, int autoplay, int contagemSeg);
 #ifdef NV_SHOT_HOOKS
 void posplay_shot(int idxCatalogo, int ehSerie, int t, int e, Uint32 fecha);
 #endif

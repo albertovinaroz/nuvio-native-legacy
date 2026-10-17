@@ -17,6 +17,7 @@
 #include "catalogo.h"
 #include "linguas.h"
 #include "streams.h"   /* stream_bandeira_desenhar */
+#include "audioescolha.h"
 #include "plrui.h"
 #include "plrilha.h"
 #include "legendasui.h"
@@ -136,6 +137,11 @@ static Uint32 legAutoDesde;
 // e a faixa ficava na TV — que corta metade das falas — ate o fim do episodio.
 static int legOverlayFalhas, legOverlayRecusas, legOverlayNoGoEstado;
 static int legOverlayTV, legOverlayColhidos;
+
+int faixas_legenda_overlay(void) {
+  return !legOverlayTV;
+}
+
 static Uint32 legOverlayRetomar;       // 0 = nada agendado
 
 static int ehAss(const VideoFaixa *f) {
@@ -149,8 +155,16 @@ static int ehAss(const VideoFaixa *f) {
 #else
 #define FX_TEXTO_OVERLAY 1
 #endif
+// PGS: so o .tpk decodifica e desenha (imgsub); as outras plataformas seguem.
+static int ehPgs(const VideoFaixa *f) {
+#ifdef NV_TPK
+  return f && faixasmkv_imagem_overlay(f->codec);
+#else
+  (void)f; return 0;
+#endif
+}
 static int vaiOverlay(const VideoFaixa *f) {
-  return f && faixasmkv_overlay(f->codec, FX_TEXTO_OVERLAY);
+  return f && (faixasmkv_overlay(f->codec, FX_TEXTO_OVERLAY) || ehPgs(f));
 }
 
 // O overlay do app assume a faixa embutida `i` (ordinal `ord` no arquivo): a
@@ -161,7 +175,7 @@ static int vaiOverlay(const VideoFaixa *f) {
 // outro bug (a resposta do uMS sai logo abaixo como "[video] {...}").
 static void overlayAssumir(int i, int ord) {
   const VideoFaixa *f = video_legenda(i);
-  int texto = f && !ehAss(f);
+  int texto = f && f->numero >= 0 && !ehAss(f) && !ehPgs(f);
   // Texto: a TV segura a legenda enquanto a rede ainda nao entregou cues.
   video_escolher_legenda(texto ? i : -1);
   mkvass_iniciar_ordinal(video_url_atual(), ord);
@@ -402,7 +416,7 @@ static void reiniciarFaixas(int preservarPrebusca) {
   legOverlayFalhas = legOverlayRecusas = legOverlayNoGoEstado = 0; legOverlayRetomar = 0;
   legOverlayTV = legOverlayColhidos = 0;
   if (!preservarPrebusca) mkvass_parar();
-  legenda_desligar();
+  legenda_desligar(); legenda_pre_reiniciar();
   legAuto = 1; legAutoDesde = 0; pilZerar(); pil.espera = 0;
   legendasui_reiniciar();   // F04: the second subtitle belongs to the session too
   // #202: speed is per playback: a new title starts at 1x.
@@ -415,7 +429,14 @@ void faixas_reiniciar_preparada(void) { reiniciarFaixas(1); }
 
 // Indice da legenda que a folha deve marcar como ATIVA.
 static int legendaAtiva(void) {
-  if (legExterna >= 0) return legExterna;
+  if (legExternaId[0]) {
+    char id[24];
+    for (int j = 0; j < addons_n_legendas(); j++) {
+      legendasui_id_addon(addons_legenda(j), id);
+      if (!strcmp(id, legExternaId)) return legExterna = video_n_legenda() + j;
+    }
+    return legExterna = -1;
+  }
   if (legOverlay >= 0) return legOverlay;
   return video_legenda_atual();
 }
@@ -430,7 +451,7 @@ static int legendaAtiva(void) {
 static int modo;
 // Coluna dentro da folha de LEGENDA: 0 = lista, 1 = estilo.
 #define FX_COL_ESTILO 2
-#define FX_N_ESTILO   10
+#define FX_N_ESTILO   11
 static int ctl = -1;       // ESTILO: item cujo controle esta aberto (-1 = a grade)
 
 static int nLinhas(int col);
@@ -556,23 +577,36 @@ static int nLinhas(int col) {
 // Oito linhas "rotulo: valor". OK cicla o valor e aplica NA HORA — as
 // personalizacoes abaixo usam somente metodos presentes no firmware. A ultima
 // linha restaura o conjunto inteiro sem exigir dezenas de toques no controle.
+enum { EST_FONTE = 1, EST_COR = 2, EST_RESTAURAR = 9, EST_COR_BORDA = 10 };
 static const char *const EST_ROT[FX_N_ESTILO] = {
   "Tamanho", "Fonte OpenSubtitles", "Cor", "Opacidade", "Fundo", "Posição", "Borda", "Atraso",
-  "Negrito", "Restaurar padrão"
+  "Negrito", "Restaurar padrão", "Cor da borda"
 };
 static const char *const EST_FUNDO[5] = { "Nenhum", "Escuro 25%", "Escuro 50%",
                                           "Escuro 75%", "Escuro 100%" };
 static const char *const EST_BORDA[3] = { "Nenhuma", "Contorno", "Sombra" };
 static const char *const EST_OPAC[4]  = { "100%", "75%", "50%", "25%" };
 
-/* Com o ASS desenhado pelo libass, fonte, cor, fundo, posicao e borda sao do
- * arquivo: mexer nelas desmontava karaoke e placas (ou nao fazia nada). A
- * linha continua na folha, esmaecida, dizendo por que nao muda — como o app
- * web faz desde o 1.2.0. Tamanho vira escala proporcional; opacidade e atraso
- * valem igual. */
+/* Com o ASS desenhado pelo libass, fonte, cor, fundo, posicao, borda, negrito
+ * e cor da borda sao do arquivo ate a pessoa mexer no campo (aqui ou nos
+ * Ajustes): so entao ela vence (ver player_leg_estilo_tocou em player.h). A
+ * linha intocada diz "Preservado pelo ASS", esmaecida, mas continua editavel.
+ * Tamanho vira escala proporcional; opacidade e atraso valem igual. */
+static int estCampoAss(int linha) {
+  switch (linha) {
+    case EST_FONTE: return PLR_LEG_FONTE;
+    case EST_COR: return PLR_LEG_COR;
+    case 4: return PLR_LEG_FUNDO;
+    case 5: return PLR_LEG_POSICAO;
+    case 6: return PLR_LEG_BORDA;
+    case 8: return PLR_LEG_NEGRITO;
+    case EST_COR_BORDA: return PLR_LEG_COR_BORDA;
+    default: return 0;
+  }
+}
 static int estiloPreservadoAss(int linha) {
-  return assrender_ativo() && !assrender_texto_simples() && (linha == 1 || linha == 2 || linha == 4 ||
-                               linha == 5 || linha == 6 || linha == 8);
+  int campo = estCampoAss(linha);
+  return campo && assrender_ativo() && !assrender_texto_simples() && !player_leg_estilo_tocado(campo);
 }
 
 static void valorEstilo(int linha, char *dst, size_t tam) {
@@ -604,6 +638,10 @@ static void valorEstilo(int linha, char *dst, size_t tam) {
     // Negrito vale para o que o app desenha (OpenSubtitles e legenda externa);
     // a faixa que o player da TV desenha segue o peso do aparelho.
     case 8: snprintf(dst, tam, "%s", i18n(e->negrito ? "Ligado" : "Desligado")); break;
+    case EST_COR_BORDA: {
+      int c = e->corBorda >= 0 && e->corBorda < VIDEO_LEG_NCORES ? e->corBorda : 0;
+      snprintf(dst, tam, "%s", VIDEO_LEG_CORES_PT[c ? c - 1 : VIDEO_LEG_NCORES - 1]);
+      break; }
     default: dst[0] = 0; break;   // "Restaurar padrao" e acao, nao valor
   }
 }
@@ -613,12 +651,11 @@ static void valorEstilo(int linha, char *dst, size_t tam) {
 // Atraso) abrem um controle dentro do painel (ver estiloTecla).
 static void ciclarEstilo(int linha) {
   VideoLegendaEstilo *e = player_leg_estilo();
-  if (estiloPreservadoAss(linha)) return;
   switch (linha) {
-    case 4: e->fundo   = (e->fundo + 1) % 5; break;
-    case 6: e->borda   = (e->borda + 1) % 3; break;
-    case 8: e->negrito = !e->negrito; break;
-    case 9:
+    case 4: e->fundo   = (e->fundo + 1) % 5; player_leg_estilo_tocou(PLR_LEG_FUNDO); break;
+    case 6: e->borda   = (e->borda + 1) % 3; player_leg_estilo_tocou(PLR_LEG_BORDA); break;
+    case 8: e->negrito = !e->negrito; player_leg_estilo_tocou(PLR_LEG_NEGRITO); break;
+    case EST_RESTAURAR:
       *e = (VideoLegendaEstilo){ 120, 0, 0, 3, 1, 0, 0, TXT_FAMILIA_INTER };
       // Restaurar e voltar ao normal do app, e o normal e respeitar o arquivo.
       player_leg_estilo_tocou(PLR_LEG_NADA);
@@ -631,10 +668,9 @@ static void ciclarEstilo(int linha) {
 // --- CONTROLES DA ABA ESTILO (dono, 11/10) ------------------------------------
 // OK em Tamanho, Opacidade, Posicao e Atraso abre um SLIDER logo abaixo do item;
 // Cor abre a paleta de amostras; Fonte, a lista com cada nome na propria fonte.
-// O painel NAO muda de altura (alturaEstilo): o controle ocupa o lugar da grade,
-// com a mola da tela. Tudo aplica ao vivo; OK/Voltar fecham o controle e so o
+// O controle ocupa o lugar da grade, com a mola da tela. No Mobile a lista de
+// fontes reserva as quatro fileiras inteiras. Tudo aplica ao vivo; OK/Voltar fecham o controle e so o
 // Voltar seguinte fecha o painel.
-enum { EST_FONTE = 1, EST_COR = 2 };
 typedef struct { int min, max, toque, segura, teto; } EstSlider;   // max == min: sem slider
 // toque = passo de um toque; segura = passo de cada repeticao da tecla segurada;
 // teto = quantas vezes o passo pode crescer segurando (aceleracao).
@@ -646,7 +682,7 @@ static const EstSlider EST_SL[FX_N_ESTILO] = {
 };
 static int estSlider(int i) { return i >= 0 && i < FX_N_ESTILO && EST_SL[i].max > EST_SL[i].min; }
 // 0 = sem controle, 1 = slider, 2 = paleta, 3 = lista de fontes.
-static int estTipo(int i) { return estSlider(i) ? 1 : i == EST_COR ? 2 : i == EST_FONTE ? 3 : 0; }
+static int estTipo(int i) { return estSlider(i) ? 1 : i == EST_COR || i == EST_COR_BORDA ? 2 : i == EST_FONTE ? 3 : 0; }
 
 static int ctlVis = -1;    // o ultimo aberto: o controle continua desenhado enquanto fecha
 static int ctlSub;         // amostra / fonte com o foco
@@ -671,7 +707,7 @@ static void estGravar(int i, int v) {
   switch (i) {
     case 0: e->tamanho = v; break;
     case 3: e->opacidade = 3 - v; break;
-    case 5: e->posicao = v; break;
+    case 5: if (e->posicao != v) player_leg_estilo_tocou(PLR_LEG_POSICAO); e->posicao = v; break;
     default: e->atrasoMs = v; break;
   }
   player_leg_estilo_mudou();
@@ -691,21 +727,33 @@ static void estDeFrac(int i, float f) {
 }
 static void estAbrir(int i) {
   ctl = ctlVis = i; ctlRep = 0;
-  ctlSub = i == EST_COR ? player_leg_estilo()->cor : i == EST_FONTE ? player_leg_estilo()->familia : 0;
+  ctlSub = i == EST_COR ? player_leg_estilo()->cor
+         : i == EST_FONTE ? player_leg_estilo()->familia : 0;
+  if (i == EST_COR_BORDA) {
+    unsigned rgb = ajustes_leg_borda_rgb(player_leg_estilo()->corBorda);
+    for (int c = 0; c < VIDEO_LEG_NCORES; c++)
+      if (video_legenda_borda_rgb(c) == rgb) { ctlSub = c; break; }
+  }
   if (estSlider(i)) ctlFrac = estFrac(i);
 }
 static void estEscolher(int i) {   // amostra / fonte `i`: aplica ao vivo
   VideoLegendaEstilo *e = player_leg_estilo();
+  int pres = estiloPreservadoAss(ctl);   // OK no valor atual tambem vence o ASS
   ctlSub = i;
   if (ctl == EST_COR) {
-    if (e->cor == i) return;
+    if (e->cor == i && !pres) return;
     e->cor = i;
     // COR: marca que a pessoa mexeu — dai em diante ela vence a cor que o
     // arquivo ASS pede (ver player_leg_estilo_tocou em player.h).
     player_leg_estilo_tocou(PLR_LEG_COR);
+  } else if (ctl == EST_COR_BORDA) {
+    if (e->corBorda == i && !pres) return;
+    e->corBorda = i;
+    player_leg_estilo_tocou(PLR_LEG_COR_BORDA);
   } else {
-    if (e->familia == i) return;
+    if (e->familia == i && !pres) return;
     e->familia = i;
+    player_leg_estilo_tocou(PLR_LEG_FONTE);
   }
   player_leg_estilo_mudou();
 }
@@ -884,6 +932,9 @@ static void aplicar(void) {
   if (coluna == 0) {
     // F06: outra faixa de audio = outras falas; a escuta em curso nao vale mais.
     if (video_audio_atual() != foco[0]) legsync_audio_trocou();
+    // A ordem automatica (audioescolha.h) volta a esta faixa nesta reproducao.
+    { const VideoFaixa *f = video_audio(foco[0]);
+      if (f && !player_id_canal()[0]) audioesc_lembrar(f->idioma, f->codec, f->rotulo, f->canais); }
     video_escolher_audio(foco[0]);
   } else {
     // A pessoa escolheu: a automatica nao mexe mais nesta sessao, nem se a
@@ -900,6 +951,39 @@ static void aplicar(void) {
 // cada addon com 25 s de teto. Vencido o prazo, decide-se com o que ha.
 #define FX_AUTO_EMB_MS  10000u   // espera pelos idiomas das embutidas (era 30 s: a legenda do addon ja estava na mao)
 #define FX_AUTO_FIM_MS  30000u   // desiste de vez: legenda ligada no minuto 5 assusta
+// A mesma decisao de faixa exata antes e depois do sourceInfo.
+static int legendaExata(const LegMem *mt, int nEmb, int nAdd) {
+  int nums[NV_FAIXA_MAX];
+  const char *emb[NV_FAIXA_MAX], *nomes[NV_FAIXA_MAX], *ids[LEG_MAX];
+  char idsBuf[LEG_MAX][24];
+  int i;
+  for (i = 0; i < nEmb; i++) {
+    const VideoFaixa *f = video_legenda(i);
+    nums[i] = f ? f->numero : -1;
+    emb[i] = f ? f->idioma : "";
+    nomes[i] = f ? f->rotulo : "";
+  }
+  for (i = 0; i < nAdd; i++) { legendasui_id_addon(addons_legenda(i), idsBuf[i]); ids[i] = idsBuf[i]; }
+  return legmem_exata(mt, nums, emb, nomes, nEmb, ids, nAdd);
+}
+static void legendaPreDownload(void) {
+  char tit[64]; int origem, r, n;
+  const LegMem *mt;
+  const CatItem *ci;
+  if (!legAuto || !player_aberto() || player_com_video() || player_id_canal()[0]) return;
+  ci = cat_item(player_indice());
+  if (!ci || !ci->imdb[0]) return;
+  tituloAtual(tit, sizeof tit);
+  mt = tit[0] ? legmem_do_titulo(tit) : NULL;
+  legmem_preferencia(ling_legenda(), mt, legmem_ultima(), &origem);
+  if (origem != LEGMEM_DE_TITULO || mt->tipo != 'a') return;
+  n = addons_n_legendas(); if (n > LEG_MAX) n = LEG_MAX;
+  r = legendaExata(mt, 0, n);
+  if (r >= 0) {
+    const Legenda *l = addons_legenda(r);
+    if (l) legenda_pre_baixar(l->url);
+  }
+}
 static void legendaAutomatica(Uint32 agora) {
   const char *emb[NV_FAIXA_MAX], *add[LEG_MAX], *audio, *pref;
   const VideoFaixa *fa;
@@ -964,16 +1048,7 @@ static void legendaAutomatica(Uint32 agora) {
   // vale mais que "a primeira do idioma" (o arquivo pode ter pt e pt-BR, ou a
   // completa e a SDH). Ainda nao apareceu e a lista dela nao fechou: espera.
   if (origem == LEGMEM_DE_TITULO && mt->tipo) {
-    int nums[NV_FAIXA_MAX];
-    const char *nomes[NV_FAIXA_MAX], *ids[LEG_MAX];
-    char idsBuf[LEG_MAX][24];
-    for (i = 0; i < nEmb; i++) {
-      const VideoFaixa *f = video_legenda(i);
-      nums[i] = f ? f->numero : -1;
-      nomes[i] = f ? f->rotulo : "";
-    }
-    for (i = 0; i < nAdd; i++) { legendasui_id_addon(addons_legenda(i), idsBuf[i]); ids[i] = idsBuf[i]; }
-    r = legmem_exata(mt, nums, emb, nomes, nEmb, ids, nAdd);
+    r = legendaExata(mt, nEmb, nAdd);
     if (r < 0 && !(mt->tipo == 'e' ? embFechado : addFechado)) return;
     if (r >= 0) {
       legAuto = 0;
@@ -1091,14 +1166,13 @@ static int estiloTecla(SDL_Keycode k, int rep) {
     return 1;
   }
   if (voltar) return 0;
-  // A GRADE de FX_BARRA_COLS x 2: as quatro setas andam nela; a esquerda da
+  // A grade de FX_BARRA_COLS colunas: as quatro setas andam nela; a esquerda da
   // primeira coluna volta para a lista de legendas.
   if (dx < 0) { if (*f % FX_BARRA_COLS) (*f)--; else coluna = 1; }
   else if (dx > 0) { if (*f % FX_BARRA_COLS < FX_BARRA_COLS - 1 && *f + 1 < FX_N_ESTILO) (*f)++; }
   else if (dy < 0) { if (*f >= FX_BARRA_COLS) *f -= FX_BARRA_COLS; }
   else if (dy > 0) { if (*f + FX_BARRA_COLS < FX_N_ESTILO) *f += FX_BARRA_COLS; }
   else if (ok) {
-    if (estiloPreservadoAss(*f)) return 1;
     if (estTipo(*f)) estAbrir(*f); else ciclarEstilo(*f);
   }
   return 1;
@@ -1216,7 +1290,9 @@ void faixas_atualizar(float dt, Uint32 agora) {
   // Fechando a partir da barra, ela sai como barra: sem isto a folha inteira
   // piscaria no caminho de volta.
   if (aberta || anim < .01f) animTopo = anim_mola(animTopo, faixas_estilo_topo() ? 1.0f : 0.0f, dt, NV_MOLA_TELA);
+  legendaPreDownload();
   legendaAutomatica(agora);
+  if (!legAuto) legenda_pre_descartar("automatica encerrada");
   pilAtualizar(agora);
   // Recuo vencido: a MESMA faixa de novo. O overlay nao foi desligado — o que
   // ja estava colhido continua na tela, e o fio novo retoma do sidecar parcial.
@@ -1372,7 +1448,23 @@ static int ilVisN(int extra) {
 // The audio sheet spends one line on the volume row (F07) and one more on the
 // speed row (#202) where the platform has speed.
 #define IL_VIS_COL(c) ilVisN((c) == 0 ? 1 + (velVisivel() ? 1 : 0) : 0)
-#define IL_EST_CEL_H 92.0f
+// O canvas Mobile normaliza a borda curta em 1080: 144 unidades sao
+// 48 dp num telefone de 360 dp, antes da escala escolhida para a interface.
+static float estiloToqueMin(void) {
+#ifdef NV_TOUCH_UI
+  if (telefoneui_ativo()) {
+    float s = gfx_escala_ui();
+    return s > 0 ? 144.0f / s : 0;
+  }
+#endif
+  return 0;
+}
+static float estiloCelulaH(void) {
+  float min = estiloToqueMin();
+  return min > 92.0f ? min : 92.0f;
+}
+static float estiloPadX(void) { return telefoneui_ativo() ? 12.0f : IL_PAD_X; }
+#define IL_EST_CEL_H estiloCelulaH()
 #define IL_EST_TOPO  56.0f
 
 static const char *tituloSessao(void) {
@@ -1741,7 +1833,7 @@ static void celulaEstiloTelefone(int i, GfxRect r, float a, int ativa) {
   float x = r.x + 20, w = r.w - 40;
   if (sel) plrui_linha_foco(r, 22, a);
   if (ativa) ponteiro_alvo(r.x, r.y, r.w, r.h, ponteiroEstilo, NULL, i, 0);
-  if (i == FX_N_ESTILO - 1) {
+  if (i == EST_RESTAURAR) {
     int compacto = r.w < 154;
     float tx = compacto ? r.x + 10 : r.x + 54, tw = compacto ? r.w - 20 : r.w - 74;
     float h = txt_bloco_corta(TXT_G20B, EST_ROT[i], 243, 242, 239, 0, 0, tw, 24, 0, compacto ? 2 : 3);
@@ -1753,7 +1845,7 @@ static void celulaEstiloTelefone(int i, GfxRect r, float a, int ativa) {
     return;
   }
   char v[48];
-  int cor = i == 2 && !pres, c = pres ? 120 : sel ? 255 : 217;
+  int cor = (i == EST_COR || i == EST_COR_BORDA) && !pres, c = pres ? 120 : sel ? 255 : 217;
   valorEstilo(i, v, sizeof v);
   float lh = txt_bloco_corta(TXT_G16B, EST_ROT[i], 243, 242, 239, 0, 0, w, 20, 0, 2);
   TxtLinha lv = txt_linha_corta(TXT_ILHA_SECAO, v, c, c, c - 2, 255, w - (cor ? 30 : 0));
@@ -1761,7 +1853,9 @@ static void celulaEstiloTelefone(int i, GfxRect r, float a, int ativa) {
   txt_bloco_corta(TXT_G16B, EST_ROT[i], 243, 242, 239, x, y, w, 20, a * .5f, 2);
   float yv = y + lh + 6;
   if (cor) {
-    int cr,cg,cb; corLegenda(player_leg_estilo()->cor, &cr,&cg,&cb);
+    int cr,cg,cb;
+    if (i == EST_COR_BORDA) { unsigned rgb = video_legenda_borda_rgb(player_leg_estilo()->corBorda); cr = (rgb >> 16) & 255; cg = (rgb >> 8) & 255; cb = rgb & 255; }
+    else corLegenda(player_leg_estilo()->cor, &cr,&cg,&cb);
     gfx_cor((GfxRect){x,yv+(vh-20)*.5f,20,20},.5f,cr/255.0f,cg/255.0f,cb/255.0f,a);
     x += 30;
   }
@@ -1778,7 +1872,7 @@ static void celulaEstilo(int i, GfxRect r, float a, int ativa) {
   int pres = estiloPreservadoAss(i);
   if (sel) plrui_linha_foco(r, 22.0f, a);
   if (ativa) ponteiro_alvo(r.x, r.y, r.w, r.h, ponteiroEstilo, NULL, i, 0);
-  if (i == FX_N_ESTILO - 1) {
+  if (i == EST_RESTAURAR) {
     TxtLinha l = txt_linha(TXT_G20B, EST_ROT[i], 243, 242, 239, sel ? 255 : 191);
     gfx_icone((GfxRect){ r.x + 20.0f, r.y + (r.h - 22.0f) * 0.5f, 22.0f, 22.0f }, "pl_rotate-ccw", 1, 1, 1, (sel ? 1.0f : 0.75f) * a);
     txt_desenhar_alpha(l, r.x + 20.0f + 22.0f + 12.0f, r.y + (r.h - (float)l.h) * 0.5f, a);
@@ -1793,16 +1887,27 @@ static void celulaEstilo(int i, GfxRect r, float a, int ativa) {
     yv = r.y + (r.h - ((float)lr.h + 6.0f + (float)lv.h)) * 0.5f;
     txt_desenhar_alpha(lr, x, yv, a);
     yv += (float)lr.h + 6.0f;
-    if (i == EST_COR && !pres) {
+    if ((i == EST_COR || i == EST_COR_BORDA) && !pres) {
       int cr, cg, cb;
-      corLegenda(player_leg_estilo()->cor, &cr, &cg, &cb);
+      if (i == EST_COR_BORDA) { unsigned rgb = video_legenda_borda_rgb(player_leg_estilo()->corBorda); cr = (rgb >> 16) & 255; cg = (rgb >> 8) & 255; cb = rgb & 255; }
+      else corLegenda(player_leg_estilo()->cor, &cr, &cg, &cb);
       gfx_cor((GfxRect){ x, yv + ((float)lv.h - 20.0f) * 0.5f, 20.0f, 20.0f }, 0.5f, cr / 255.0f, cg / 255.0f, cb / 255.0f, a);
       x += 20.0f + 10.0f;
     }
     txt_desenhar_alpha(lv, x, yv, a); }
 }
 
-#define IL_EST_GRADE_H (IL_EST_CEL_H * 2.0f + 6.0f)
+#define IL_EST_FILEIRAS ((FX_N_ESTILO + FX_BARRA_COLS - 1) / FX_BARRA_COLS)
+static float estiloGradeH(void) {
+  float h = IL_EST_CEL_H * IL_EST_FILEIRAS + 6.0f * (IL_EST_FILEIRAS - 1);
+  if (telefoneui_ativo() && (ctl == EST_FONTE || (ctlVis == EST_FONTE && ctlAnim > .005f))) {
+    int rows = (TXT_FAMILIA_N + 1) / 2;
+    float fontes = estiloToqueMin() * rows + 8.0f * (rows - 1);
+    if (fontes > h) h = fontes;
+  }
+  return h;
+}
+#define IL_EST_GRADE_H estiloGradeH()
 
 static void fundoCtl(GfxRect r, float a) {
   float raio = 22.0f / r.h;
@@ -1866,31 +1971,49 @@ static void sliderCtl(int i, GfxRect r, float a, int ativo) {
   }
 }
 
+static int paletaColunas(float largura) {
+  float min = estiloToqueMin();
+  return min > 0 && largura + .01f < VIDEO_LEG_NCORES * min ? 3 : VIDEO_LEG_NCORES;
+}
 static void paletaCtl(GfxRect r, float a, int ativo) {
   float d = 56.0f, vao = 34.0f, tot = d * VIDEO_LEG_NCORES + vao * (VIDEO_LEG_NCORES - 1);
   float x = r.x + (r.w - tot) * 0.5f, cy = r.y + r.h * 0.5f, ar, ag, ab;
-  int i;
+  int i, telefone = telefoneui_ativo(), cols = paletaColunas(r.w);
+  float cw = 0, ch = 0;
+  if (telefone) {
+    int rows = (VIDEO_LEG_NCORES + cols - 1) / cols;
+    cw = estiloToqueMin(); if (cw < d + vao) cw = d + vao;
+    ch = (r.h - 6.0f * (rows - 1)) / rows;
+    x = r.x + (r.w - cw * cols) * .5f;
+  }
   ajustes_acento_marca(&ar, &ag, &ab);
   fundoCtl(r, a);
   for (i = 0; i < VIDEO_LEG_NCORES; i++) {
     int cr, cg, cb;
     float s = ctlAmostra[i], dd = d * (1.0f + 0.16f * s);
     float ai = a * anim_clamp(ctlAnim * 1.7f - (float)i * 0.12f, 0.0f, 1.0f);
-    GfxRect c = { x + d * 0.5f - dd * 0.5f, cy - dd * 0.5f, dd, dd };
-    corLegenda(i, &cr, &cg, &cb);
+    float cx = telefone ? x + cw * (i % cols + .5f) : x + d * .5f;
+    float yc = telefone ? r.y + (ch + 6.0f) * (i / cols) + ch * .5f : cy;
+    GfxRect c = { cx - dd * .5f, yc - dd * .5f, dd, dd };
+    if (ctlVis == EST_COR_BORDA) { unsigned rgb = video_legenda_borda_rgb(i); cr = (rgb >> 16) & 255; cg = (rgb >> 8) & 255; cb = rgb & 255; }
+    else corLegenda(i, &cr, &cg, &cb);
     gfx_cor(c, 0.5f, cr / 255.0f, cg / 255.0f, cb / 255.0f, ai);
     gfx_anel(c, 0.5f, 1.0f, 1, 1, 1, 0.22f * ai);                 // a amostra escura nao some no fundo
-    if (i == player_leg_estilo()->cor) gfx_anel_fora(c, 0.5f, 5.0f, 3.0f, ar, ag, ab, ai);   // a em uso
+    if (i == (ctlVis == EST_COR_BORDA ? player_leg_estilo()->corBorda : player_leg_estilo()->cor)) gfx_anel_fora(c, 0.5f, 5.0f, 3.0f, ar, ag, ab, ai);   // a em uso
     else if (i == ctlSub) gfx_anel_fora(c, 0.5f, 5.0f, 2.0f, 1, 1, 1, 0.7f * ai);            // so o foco
-    if (ativo) ponteiro_alvo(x - 12.0f, r.y, d + 24.0f, r.h, ponteiroSub, ponteiroEscolher, i, 0);
-    x += d + vao;
+    if (ativo) {
+      if (telefone) ponteiro_alvo(x + cw * (i % cols), r.y + (ch + 6.0f) * (i / cols), cw, ch, ponteiroSub, ponteiroEscolher, i, 0);
+      else ponteiro_alvo(x - 12.0f, r.y, d + 24.0f, r.h, ponteiroSub, ponteiroEscolher, i, 0);
+    }
+    if (!telefone) x += d + vao;
   }
 }
 
 // A LISTA de fontes: cada nome escrito NA PROPRIA fonte, 2 colunas, no lugar da
 // grade (mesma altura). A em uso leva o check no acento; o foco, a superficie.
 static void fontesCtl(GfxRect r, float a, int ativo) {
-  float vao = 8.0f, cw = (r.w - vao) * 0.5f, ch = (r.h - vao * 2.0f) / 3.0f, ar, ag, ab;
+  int rows = (TXT_FAMILIA_N + 1) / 2;
+  float vao = 8.0f, cw = (r.w - vao) * 0.5f, ch = (r.h - vao * (rows - 1)) / rows, ar, ag, ab;
   int i;
   ajustes_acento_marca(&ar, &ag, &ab);
   for (i = 0; i < TXT_FAMILIA_N; i++) {
@@ -1909,6 +2032,8 @@ static void fontesCtl(GfxRect r, float a, int ativo) {
 static void controleEstilo(int i, GfxRect g, float a, int ativo) {
   if (estTipo(i) == 3) { fontesCtl(g, a, ativo); return; }
   { GfxRect ra = { g.x, g.y, g.w, IL_EST_CEL_H }, rb = { g.x, g.y + IL_EST_CEL_H + 6.0f, g.w, IL_EST_CEL_H };
+    if (telefoneui_ativo() && estTipo(i) == 2 && paletaColunas(g.w) < VIDEO_LEG_NCORES)
+      rb.h = g.h - (rb.y - g.y);
     celulaEstilo(i, ra, a, 0);                          // o item, com o valor ao vivo
     if (ativo) ponteiro_alvo(ra.x, ra.y, ra.w, ra.h, NULL, ponteiroFecharCtl, 0, 0);
     if (estTipo(i) == 1) sliderCtl(i, rb, a, ativo); else paletaCtl(rb, a, ativo); }
@@ -1917,7 +2042,7 @@ static void controleEstilo(int i, GfxRect g, float a, int ativo) {
 static float alturaEstilo(void) { return IL_PAD_Y + IL_EST_TOPO + 14.0f + IL_EST_GRADE_H + IL_PAD_Y; }
 
 static void corpoEstilo(GfxRect c, float a) {
-  float x0 = c.x + IL_PAD_X, w = c.w - IL_PAD_X * 2.0f, y = c.y + IL_PAD_Y;
+  float pad = estiloPadX(), x0 = c.x + pad, w = c.w - pad * 2.0f, y = c.y + IL_PAD_Y;
   float cw = (w - 4.0f * 6.0f) / FX_BARRA_COLS;
   int i, assentada = a > 0.99f && ponteiro_ativo();
   { TxtLinha t = txt_linha(TXT_G30B, "Legendas", 243, 242, 239, 255);

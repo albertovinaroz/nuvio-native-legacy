@@ -3,6 +3,7 @@
 #include "socialvis.h"
 #include "svdesenho.h"
 #include "catalogo.h"
+#include "artehero.h"
 #include "recomenda.h"
 #include "recenviar.h"
 #include "celbotao.h"
@@ -64,10 +65,12 @@ void amigosfil_focar(int coluna, int cartao) {
 }
 #endif
 
+static int afNum(void);
 int amigosfil_dentro(void) { return dentro; }
 int amigosfil_convite(void) { return socialvis_n_amigos() == 0; }
 int amigosfil_n_colunas(void) {
   int n = socialvis_n_amigos();
+  if (ajustes_amigos_estilo() != 5) return n > 0 ? afNum() + 2 : 1;
   return n > 0 ? n + 1 : 1;
 }
 
@@ -140,7 +143,14 @@ static void alvoToque(GfxRect r, float corte, int coluna, int cartao) {
 }
 #endif
 
+#include "amigosfil_estilos.inc"
+
 int amigosfil_indice_cat(int coluna) {
+  if (ajustes_amigos_estilo() != 5) {
+    afMontar();
+    const SvEvento *ev = afEvento(coluna);
+    return ev ? cat_indice_por_imdb(ev->imdb) : -1;
+  }
   const SvAmigo *a = socialvis_amigo(coluna);
   const SvEvento *e;
   int d;
@@ -158,6 +168,7 @@ int amigosfil_indice_cat(int coluna) {
 int amigosfil_tecla(SDL_Keycode k, int *coluna) {
   int n = socialvis_n_amigos();
   const SvAmigo *a;
+  if (ajustes_amigos_estilo() != 5) return 0;
   if (!coluna || n < 1) return 0;          // convite: a home cuida (borda/menu)
 #ifdef NV_TOUCH_UI
   if (k == SDLK_UP || k == SDLK_DOWN || k == SDLK_LEFT || k == SDLK_RIGHT)
@@ -181,7 +192,19 @@ int amigosfil_tecla(SDL_Keycode k, int *coluna) {
 
 void amigosfil_ok(int coluna) {
   const SvAmigo *a;
+  if (ajustes_amigos_estilo() != 5 && !amigosfil_convite()) {
+    afMontar();
+    const SvEvento *ev = afEvento(coluna);
+    const SvAmigo *am = afAmigo(coluna);
+    if (ev && ev->imdb[0]) { snprintf(pedTitulo, sizeof pedTitulo, "%s", ev->imdb); temTitulo = 1; }
+    else if (am) { snprintf(pedPerfil, sizeof pedPerfil, "%s", am->id); temPerfil = 1; }
+    else if (!recomenda_ativo() || !recenviar_abrir_amigos()) temAjustes = 1;
+    return;
+  }
   if (amigosfil_convite()) {
+    if (ajustes_amigos_estilo() == 0 && recomenda_ativo() && celb_disponivel()) {
+      celb_abrir_embutido(CELB_AMIGO, i18n("Código do amigo")); return;
+    }
     // O QR DO CELULAR quando o pacote tem o servidor dele; senao a tela de
     // amigos com o codigo; sem o servico de recomendacoes, Ajustes.
     if (recomenda_ativo() && celb_disponivel()) { celb_abrir(CELB_AMIGO, "Código do amigo"); return; }
@@ -236,6 +259,12 @@ void amigosfil_atualizar(float dt, int focada, int *colunaP) {
   int n, i, red = ajustes_animacoes_reduzidas(), coluna;
   const SvAmigo *a;
   socialvis_atualizar();
+  if (ajustes_amigos_estilo() != 5) {
+    char t[64];
+    if (celb_pegar(CELB_AMIGO, t, sizeof t)) recomenda_vincular(t);
+    afAtualizar(dt, focada, colunaP); return;
+  }
+  if (afEstilo != 5) afMontar();
   n = socialvis_n_amigos();
   coluna = colunaP ? *colunaP : 0;
   // O MODELO MUDOU (chegou atividade): o foco segue a PESSOA, e nao o indice —
@@ -342,6 +371,10 @@ static void desenhaConvite(float x0, float y, float alt, int focada, Uint32 agor
 void amigosfil_desenhar(float x0, float y, float alt, float corte, int focada,
                         int coluna, Uint32 agora) {
   int n = socialvis_n_amigos(), i;
+  if (ajustes_amigos_estilo() != 5) {
+    ultX0 = x0; ultAlt = alt;
+    afDesenhar(x0, y, corte, focada, coluna, agora); return;
+  }
   float fy = y + 24.0f;
   // A rolagem anda em _atualizar, com a margem e a altura do ultimo desenho
   // (a rail fixa muda x0).

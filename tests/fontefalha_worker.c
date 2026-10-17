@@ -14,6 +14,10 @@ static unsigned disponiveis = 15;
 static Stream substituta;
 static char ultimoCab[512];
 
+uint64_t perfis_sessao_geracao(void) { return 1; }
+int perfis_sessao_atual(uint64_t geracao) { return geracao == 1; }
+int perfis_sessao_travar(uint64_t geracao) { return geracao == 1; }
+void perfis_sessao_destravar(void) {}
 Uint32 SDL_GetTicks(void) { return 1000; }
 int debrid_ativo(void) { return 1; }
 int p2p_ativo(void) { return p2pHabilitado; }
@@ -89,6 +93,7 @@ int ajustes_fonte_usar_outros(void) { return 0; }
 int ajustes_fonte_prioridade(void) { return 1; }
 int ajustes_fonte_hdr(void) { return 1; }
 int ajustes_fonte_manual(void) { return 0; }
+int ajustes_fonte_idioma_audio(void) { return 0; }
 int ajustes_fonte_primeira(void) { return 0; }
 int ajustes_fonte_ordem_uso(void) { return 0; }
 int ajustes_dolby_vision(void) { return 0; }
@@ -410,6 +415,27 @@ static void resolvedorManual(const char *dir) {
   assert(stream_item(0)->debridServico == DEBRID_TB + 1 && !strcmp(stream_item(0)->url, url));
   assert(!strcmp(stream_item(0)->infoHash, "MANUAL-HASH") && stream_item(0)->fileIdx == 6);
   assert(stream_resolver_escolhida(0, ger, url, sizeof url, nome, sizeof nome, &pct) == 1 && nManual == 1);
+  // A downloading response overrides both addon and previous native cache hits.
+  for (int native = 0; native < 2; native++) {
+    Stream downloading = l;
+    downloading.emCache = 1; downloading.cacheNativo = native;
+    stream_definir_lista(&downloading, 1); ger = stream_lista_geracao();
+    assert(cacheConfirmado(stream_item(0)));
+    manualResultado = DEBRID_BAIXANDO;
+    assert(stream_resolver_escolhida(0, ger, url, sizeof url, nome, sizeof nome, &pct) == DEBRID_BAIXANDO);
+    assert(!cacheConfirmado(stream_item(0)));
+    assert(!stream_item(0)->emCache && !stream_item(0)->cacheNativo);
+    assert(stream_item(0)->cacheNegado && stream_item(0)->foraCache);
+    // A later ready result restores the author's native confirmation behavior.
+    manualResultado = 1;
+    assert(stream_resolver_escolhida(0, ger, url, sizeof url, nome, sizeof nome, &pct) == 1);
+    assert(cacheConfirmado(stream_item(0)));
+  }
+  nManual = 1;
+  // Integration #499 removes the addon lightning when the native icon is shown.
+  strcpy(l.rotulo, "⚡️  Addon 1080p"); l.emCache = 1;
+  tituloAddon(&l, url, sizeof url);
+  assert(!strcmp(url, "Addon 1080p"));
   // Feature off preserves the old cached-URL fast path.
   assert(fontefalha_definir_provedores(0));
   stream_definir_lista(&l, 1); ger = stream_lista_geracao();

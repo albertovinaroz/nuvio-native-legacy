@@ -5,12 +5,21 @@
 #define ajustes_home_layout teste_home_layout
 #define ajustes_hero_ligado teste_hero_ligado
 #define ajustes_espaco_titulos teste_espaco_titulos
+#define ajustes_hero_genero teste_hero_genero
+#define txt_desenhar teste_txt_desenhar
+static int testeGenero = 1, nTxtDesenhado = 0, nBadge = 0, testeImdb = 0;
+static int teste_hero_genero(void) { return testeGenero; }
 #define ajustes_espaco_fileiras teste_espaco_fileiras
+#define ajustes_ocultar_filmes_vistos teste_ocultar_vistos
+static int ocultarVistos;
+static int teste_ocultar_vistos(void) { return ocultarVistos; }
 static float espacoTit = 1.0f, espacoFil = 1.0f;
 static float teste_espaco_titulos(void) { return espacoTit; }
 static float teste_espaco_fileiras(void) { return espacoFil; }
+#define NV_TESTE_HOME 1
 #include "../src/home.c"
 void desc_sinopse_hero(const int *idx, int n) { (void)idx; (void)n; }
+void desc_ocultar_vistos_atualizar(void) {}
 
 void cachearte_marcar_grupo(int grupo, const char *url, int variante, int essencial, int emUso) {
   (void)grupo; (void)url; (void)variante; (void)essencial; (void)emUso;
@@ -48,9 +57,106 @@ const char *addons_nome_por_id(const char *id) { (void)id; return ""; }
 static int testeLayout = HOME_LAYOUT_MODERNA, testeHero = 1;
 int teste_home_layout(void) { return testeLayout; }
 int teste_hero_ligado(void) { return testeHero; }
+void teste_txt_desenhar(TxtLinha l, float x, float y) { (void)l; (void)x; (void)y; nTxtDesenhado++; }
+// Duble do desenho do card editorial: sem GL, so o que o teste do genero conta.
+float gfx_tex_aspect_atual;
+void gfx_veu_base(GfxRect c, float r, float f, float a) { (void)c; (void)r; (void)f; (void)a; }
+void gfx_rect(GfxRect r, GLuint t, GfxModo m, float f, float a, float b, float c, float d, float e, float g, float h) {
+  (void)r; (void)t; (void)m; (void)f; (void)a; (void)b; (void)c; (void)d; (void)e; (void)g; (void)h; }
+GLuint tex_obter_logo_larg(const char *c, float l) { (void)c; (void)l; return 0; }
+int  tex_marca_escura(const char *c) { (void)c; return 0; }
+TxtLinha txt_linha_corta(TxtEstilo e, const char *s, int r, int g, int b, int a, float w) {
+  (void)e; (void)s; (void)r; (void)g; (void)b; (void)a; (void)w; return (TxtLinha){ 1, 10, 10, 0, 0 }; }
+float badge_desenhar(float x, float y, const char *t, BadgeEstilo e, float a) { nBadge++; (void)x; (void)y; (void)t; (void)e; (void)a; return 0; }
+float badge_imdb(float x, float y, int n, int e, float a) { nBadge++; (void)x; (void)y; (void)n; (void)e; (void)a; return 0; }
+float badge_imdb_largura(int n) { (void)n; return 0; }
+int  imdbnota_obter(const char *i, int c, int s) { (void)i; (void)c; (void)s; return testeImdb; }
+const char *i18n(const char *s) { return s; }
 static void homeCom(int layout, int heroLigado) { testeLayout = layout; testeHero = heroLigado; }
 
 int main(void) {
+  // Palco percorre as mesmas vagas e usa a mesma borda das fileiras comuns.
+  // Igualar a largura isola a regra de ancoragem do tamanho de cada forma.
+  {
+    int cols[] = {12, 12};
+    fileiras[0] = (Fileira){.tipo = FILEIRA_NORMAL, .n = 12, .escala = 1.0f};
+    fileiras[1] = (Fileira){.tipo = FILEIRA_PALCO, .n = 12, .escala = 1.0f};
+    float lw = larguraFil(1), anterior = 0.0f, altura = alturaTotalFil(1), passo = passoFil(1);
+    focus_iniciar(&foco, 2, cols);
+    for (int c = 0; c < 12; c++) {
+      if (c) assert(focus_mover(&foco, 1, 0));
+      palcoPos[1] = (float)foco.coluna; // animacao em repouso
+      scrollX[1] = alvoScrollFil(1, c, scrollX[1], 0.0f);
+      float cx, s, vizX, vizS;
+      palcoGeo(1, c, lw, &cx, &s);
+      assert(fabsf(cx - (homeFileiraX(1, c) + lw * 0.5f)) < 0.01f);
+      assert(s == 1.0f);
+      // A altura reservada nao muda com o foco: as outras fileiras nao andam.
+      assert(alturaTotalFil(1) == altura);
+      // As vagas ficam paradas: so o foco e os dois vizinhos se movem quando
+      // o foco anda uma coluna; o resto da fileira nao se mexe (dono, 14/10).
+      if (c) {
+        float antes[12];
+        palcoPos[1] = (float)(c - 1);
+        for (int k = 0; k < 12; k++) { float sk; palcoGeo(1, k, lw, &antes[k], &sk); }
+        palcoPos[1] = (float)c;
+        for (int k = 0; k < 12; k++) {
+          float xk, sk;
+          palcoGeo(1, k, lw, &xk, &sk);
+          if (k < c - 1 || k > c) assert(fabsf(xk - antes[k]) < 0.01f);
+        }
+      }
+      if (c == 1) assert(cx > anterior && scrollX[1] == 0.0f);
+      if (c == 11) assert(scrollX[1] > 0.0f);
+      palcoGeo(1, c + 1, lw, &vizX, &vizS);
+      assert(fabsf(vizS - NV_PALCO_VIZ) < 0.01f);
+      assert(vizX - lw * vizS * 0.5f > cx + lw * s * 0.5f);
+      // #205: os vizinhos encolhem E se chegam. O passo entre vizinhos segue
+      // a largura escalada — o gap e o da fileira comum (±2 px) — e o foco so
+      // empurra o PRIMEIRO vizinho pelo que cresceu.
+      { float vizX2, vizS2, gap = gapDe(FILEIRA_PALCO);
+        palcoGeo(1, c + 2, lw, &vizX2, &vizS2);
+        assert(fabsf((vizX2 - vizX) - (lw * vizS + gap)) < 2.0f);
+        assert(fabsf((vizX - cx) - (lw * (1.0f + NV_PALCO_VIZ) * 0.5f + gap)) < 2.0f); }
+      anterior = cx;
+    }
+    focoHero = 1;
+    memset(scrollX, 0, sizeof scrollX);
+    // REVISAO #205: o alcance do toque na Palco e a extensao COMPRIMIDA do
+    // palcoGeo (o passo de vagas sobrava um vao morto no fim da rolagem); a
+    // coluna retomada inverte o palcoGeo (a conta de vagas caia num card ao
+    // lado do que a pessoa tinha centrado).
+    {
+      fileiras[1] = (Fileira){.tipo = FILEIRA_PALCO, .n = 12, .escala = 1.0f};
+      float lw = larguraFil(1), passo = passoFil(1);
+      float cx, s;
+      scrollX[1] = 0.0f;
+      // Foco na primeira coluna: o fim da fileira e a borda do ULTIMO card
+      // comprimido, bem atras da vaga dele — e o vao morto some do maxX.
+      palcoPos[1] = 0.0f;
+      palcoGeo(1, 11, lw, &cx, &s);
+      assert(fabsf(palcoExtent(1, 12) - (cx + lw * s * 0.5f - homeFileiraX(1, 0))) < 0.01f);
+      assert(palcoExtent(1, 12) < (12 - 1) * (lw + gapDe(FILEIRA_PALCO)) + lw - 100.0f);
+      // Foco na ultima: o card cresce NA vaga, a extensao volta a ser a de
+      // vagas — igual a fileira comum no fim da rolagem.
+      palcoPos[1] = 11.0f;
+      palcoGeo(1, 11, lw, &cx, &s);
+      assert(fabsf(palcoExtent(1, 12) - (cx + lw * s * 0.5f - homeFileiraX(1, 0))) < 0.01f);
+      assert(fabsf(palcoExtent(1, 12) - ((12 - 1) * passo + lw)) < 0.01f);
+      // A coluna retomada e a do card na ancora — inteira e em plena mola.
+      palcoPos[1] = 0.0f;
+      for (int k = 0; k < 12; k++) {
+        palcoGeo(1, k, lw, &cx, &s);
+        assert(palcoColunaEm(1, cx - homeFileiraX(1, 0)) == k);
+      }
+      palcoPos[1] = 3.5f;
+      for (int k = 2; k < 7; k++) {
+        palcoGeo(1, k, lw, &cx, &s);
+        assert(palcoColunaEm(1, cx - homeFileiraX(1, 0)) == k);
+      }
+      palcoPos[1] = 0.0f;
+    }
+  }
   // A composicao abaixo e a da home SEM o destaque no topo: e nela que a
   // primeira fileira de catalogo vira a vitrine (vitrineNaPrimeira). O #201
   // (com destaque) tem bloco proprio no fim.
@@ -96,6 +202,12 @@ int main(void) {
       }
     }
     espacoTit = 1.0f; espacoFil = 1.0f; homeCom(HOME_LAYOUT_MODERNA, 0); }
+  // #205 cardexp (dono, 14/10): espacamento da referencia da Apple TV — o
+  // titulo sai de cima dos cards e as fileiras respiram — e o card da ficha
+  // menor, para nao transbordar o cartaz/fileira (NV_FICHA_W).
+  assert(NV_LEGACY_ROW_HEAD_H >= 64.0f);
+  assert(NV_FILEIRA_GAP >= 80.0f);
+  assert(NV_FICHA_W <= 540.0f);
   assert(larguraDe(FILEIRA_COLECAO) > larguraDe(FILEIRA_SERVICO));
   assert(!temRotulo(FILEIRA_DESTAQUE));
   assert(!temRotulo(FILEIRA_CATALOGOS));
@@ -210,6 +322,37 @@ int main(void) {
         assert(fileiras[r].stackN==3 && fileiras[r].n==1);
       }
     assert(tops==2); }
+  // #366: o primeiro do Top 10 visto. desenhaPilha andava em ini+k.
+  { int r, k; Fileira *top = NULL;
+    for (int i = 0; i < 48; i++) {
+      snprintf(itensTeste[i].imdb, sizeof itensTeste[i].imdb, "tt%07d", i);
+      snprintf(itensTeste[i].tipo, sizeof itensTeste[i].tipo, "movie");
+    }
+    cat_historico_definir_id(itensTeste[fils[6].ini + 1].imdb, "movie", 1);
+    for (int i = 0; i < fils[8].n; i++)
+      cat_historico_definir_id(itensTeste[fils[8].ini + i].imdb, "movie", 1);
+    ocultarVistos = 1;
+    cat_definir_tudo(itensTeste, 48, fils, 16); filsAplicadas = -1; sincronizarFileiras();
+    for (r = 0; r < nFileiras; r++)
+      if (fileiras[r].tipo == FILEIRA_TOP10 && !strcmp(fileiras[r].chave, fils[6].chave)) top = &fileiras[r];
+    assert(top && top->stackN == 2 && top->usaItens);
+    assert(cat_visto(cat_item(top->ini + 1)));
+    { Fileira numerals = *top;
+      numerals.tipo = FILEIRA_TOP10_NUM; numerals.n = top->stackN;
+      assert(fileiraRank(&numerals, 0) == 1);
+      assert(fileiraRank(&numerals, 1) == 3);
+    }
+    for (k = 0; k < top->stackN && k < 6; k++) assert(!cat_visto(cat_item(pilhaIndice(top, k))));
+    for (r = 0; r < nFileiras; r++)
+      if (!strcmp(fileiras[r].chave, fils[8].chave))
+        assert(!fileiras[r].n && !fileiras[r].verTudo);
+    for (int i = 0; i < fils[6].n; i++)
+      cat_historico_definir_id(itensTeste[fils[6].ini + i].imdb, "movie", 1);
+    filsAplicadas = -1; sincronizarFileiras();
+    top = NULL;
+    for (r = 0; r < nFileiras; r++)
+      if (!strcmp(fileiras[r].chave, fils[6].chave)) top = &fileiras[r];
+    assert(top && !top->n && !top->stackN && !top->verTudo); }
   for (int i=8; i<16; i++) {
     int encontrado=0;
     for (int r=0; r<nFileiras; r++)
@@ -361,6 +504,49 @@ int main(void) {
                  - (lw * escalaDe(FILEIRA_NORMAL) * 0.5f
                     + (ajustes_borda_foco() ? NV_ANEL_FOCO : 0.0f))) < 0.01f);
   }
+
+  // "Mostrar genero no destaque": o card editorial sem logo desenha nome +
+  // genero; desligado, so o nome (a arte e o logo ficam, o genero sai).
+  { CatItem it = {0}; int ligado, desligado;
+    snprintf(it.titulo, sizeof it.titulo, "Titulo");
+    snprintf(it.genero, sizeof it.genero, "Terror");
+    snprintf(it.tipo, sizeof it.tipo, "movie");
+    nTxtDesenhado = 0; testeGenero = 1;
+    desenhaEditorialCard(&it, FILEIRA_DESTAQUE, 0, 0, 640, 360, 8);
+    ligado = nTxtDesenhado;
+    nTxtDesenhado = 0; testeGenero = 0;
+    desenhaEditorialCard(&it, FILEIRA_DESTAQUE, 0, 0, 640, 360, 8);
+    desligado = nTxtDesenhado;
+    assert(ligado == desligado + 1);
+    // Desligado tira a linha de baixo INTEIRA do destaque: classificacao
+    // (Moderna) e selo IMDb (Padrao/Dinamica) tambem saem.
+    snprintf(it.classificacao, sizeof it.classificacao, "16");
+    nBadge = 0; desenhaEditorialCard(&it, FILEIRA_DESTAQUE, 0, 0, 640, 360, 8);
+    assert(nBadge == 0);
+    testeImdb = 75;
+    for (int lay = HOME_LAYOUT_PADRAO; lay <= HOME_LAYOUT_DINAMICA; lay++) {
+      homeCom(lay, 1);
+      nBadge = 0; desenhaEditorialCard(&it, FILEIRA_DESTAQUE, 0, 0, 640, 360, 8);
+      assert(nBadge == 0);
+      testeGenero = 1;
+      nBadge = 0; desenhaEditorialCard(&it, FILEIRA_DESTAQUE, 0, 0, 640, 360, 8);
+      assert(nBadge == 1);
+      testeGenero = 0;
+    }
+    testeImdb = 0; homeCom(HOME_LAYOUT_MODERNA, 1);
+    // So o destaque: COLECAO/SERVICO/SOCIAL mantem genero e selo.
+    TipoFileira outras[] = { FILEIRA_COLECAO, FILEIRA_SERVICO, FILEIRA_SOCIAL };
+    for (int k = 0; k < 3; k++) {
+      int on, onB, off, offB;
+      testeGenero = 1; nTxtDesenhado = 0; nBadge = 0;
+      desenhaEditorialCard(&it, outras[k], 0, 0, 640, 360, 8);
+      on = nTxtDesenhado; onB = nBadge;
+      testeGenero = 0; nTxtDesenhado = 0; nBadge = 0;
+      desenhaEditorialCard(&it, outras[k], 0, 0, 640, 360, 8);
+      off = nTxtDesenhado; offB = nBadge;
+      assert(on == off && onB == offB && onB == 1);
+    }
+    testeGenero = 1; }
 
   free(itensTeste);
   puts("home layout: PASS (fallback, colecoes, ordem, ranks, foco, rolagem #103)");

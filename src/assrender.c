@@ -149,6 +149,13 @@ static int assWorkerCriado, assTrackAtivo, assWorkerParar, assPedidoPendente;
 static int assTextoSimples;
 static PlainAssStyle plainPed, plainApl;
 static int plainPedValido, plainAplValido;
+static ASS_Style *authoredStyles;
+static int authoredStyleCount;
+
+static void ass_authored_styles_free(void) {
+  for (int i = 0; i < authoredStyleCount; i++) free(authoredStyles[i].FontName);
+  free(authoredStyles); authoredStyles = NULL; authoredStyleCount = 0;
+}
 /* Protected by assTrava. Re-evaluate active cues only at a timing boundary
  * or after seeking, not on every video frame. */
 static int plainTimingValid;
@@ -521,8 +528,48 @@ static void ass_trilha_tailandes(ASS_Track *t) {
 
 static void ass_plain_style_locked(const PlainAssStyle *p) {
   ASS_Style *s;
-  if (!assTextoSimples || !assTrack || !assTrack->n_styles) return;
+  if (!assTrack || !assTrack->n_styles) return;
   if (plainAplValido && !memcmp(p, &plainApl, sizeof *p)) return;
+  if (!assTextoSimples) {
+    if (!authoredStyles) {
+      authoredStyles = calloc(assTrack->n_styles, sizeof *authoredStyles);
+      if (!authoredStyles) return;
+      for (int i = 0; i < assTrack->n_styles; i++) {
+        authoredStyles[i] = assTrack->styles[i];
+        authoredStyles[i].FontName = strdup(assTrack->styles[i].FontName);
+        if (!authoredStyles[i].FontName) { ass_authored_styles_free(); return; }
+        authoredStyleCount++;
+      }
+    }
+    for (int i = 0; i < authoredStyleCount; i++) {
+      ASS_Style *original = &authoredStyles[i];
+      char *font = strdup(p->overrides & PLAIN_ASS_FONT ? p->font : original->FontName);
+      if (!font) return;
+      s = &assTrack->styles[i];
+      free(s->FontName); *s = *original; s->FontName = font;
+      if (p->overrides & PLAIN_ASS_COLOR) s->PrimaryColour = (uint32_t)p->rgb << 8;
+      if (p->overrides & PLAIN_ASS_OUTLINE) s->OutlineColour = (uint32_t)p->outlineRgb << 8;
+      if (p->overrides & PLAIN_ASS_BORDER) {
+        s->BorderStyle = 1;
+        s->Outline = p->border == 1 ? 2 : 0;
+        s->Shadow = p->border == 2 ? 4 : 0;
+      }
+      if (p->overrides & PLAIN_ASS_BG) {
+        s->BorderStyle = p->background ? 4 : 1;
+        s->BackColour = p->background ? (unsigned)(255 - p->background * 255 * 16 / 100) : 46u;
+      }
+      // BackColour carries shadow RGB unless it is a background box.
+      if ((p->overrides & PLAIN_ASS_OUTLINE) && s->BorderStyle == 1)
+        s->BackColour = ((uint32_t)p->outlineRgb << 8) | (s->BackColour & 255u);
+      if (p->overrides & PLAIN_ASS_POS) s->MarginV = p->marginV * assTrack->PlayResY / 1080;
+      if (p->overrides & PLAIN_ASS_BOLD) s->Bold = p->bold && !assArabe;
+    }
+    /* Flush cached event layout after an explicit style change or reset. */
+    ass_set_selective_style_override_enabled(assRenderer, ASS_OVERRIDE_BIT_MARGINS);
+    ass_set_selective_style_override_enabled(assRenderer, 0);
+    plainApl = *p; plainAplValido = 1;
+    return;
+  }
   s = &assTrack->styles[assTrack->default_style];
   if (!s->FontName || strcmp(s->FontName, p->font)) {
     char *name = strdup(p->font);
@@ -531,8 +578,11 @@ static void ass_plain_style_locked(const PlainAssStyle *p) {
   }
   s->FontSize = p->size;
   s->PrimaryColour = s->SecondaryColour = ((uint32_t)p->rgb << 8);
-  s->OutlineColour = 0x00000000u;
-  s->BackColour = p->background ? (unsigned)(255 - (p->background * 255 * 16 / 100)) : 46u;
+  s->OutlineColour = (uint32_t)p->outlineRgb << 8;
+  // BorderStyle=4 uses BackColour for the existing black background box.
+  // Without that box, BackColour is the shadow, at its original opacity.
+  s->BackColour = p->background ? (unsigned)(255 - (p->background * 255 * 16 / 100))
+                   : (p->border == 2 ? (uint32_t)p->outlineRgb << 8 : 0u) | 46u;
   s->Bold = (p->bold && !assArabe) ? 1 : 0;
   s->BorderStyle = p->background ? 4 : 1;
   s->Outline = p->border == 1 ? 2 : 0;
@@ -787,6 +837,7 @@ static int ass_carregar(const char *corpo, size_t tamanho, unsigned geracao, int
     ass_free_track(track);
     pthread_mutex_unlock(&assTrava); return 0;
   }
+  ass_authored_styles_free();
   if (assTrack) ass_free_track(assTrack);
   assTrack = track;
   ass_trilha_arabe_sem_negrito(track);
@@ -812,7 +863,7 @@ static int ass_carregar(const char *corpo, size_t tamanho, unsigned geracao, int
   pthread_mutex_unlock(&assTrava);
   if (!ass_worker_iniciar()) {
     pthread_mutex_lock(&assTrava);
-    if (assTrack == track) { ass_free_track(assTrack); assTrack = NULL; }
+    if (assTrack == track) { ass_authored_styles_free(); ass_free_track(assTrack); assTrack = NULL; }
     assEventos = 0;
     __atomic_store_n(&assTrackAtivo, 0, __ATOMIC_RELEASE);
     ass_diag("libass: worker de render indisponivel");
@@ -942,6 +993,7 @@ int assrender_atualizar(const char *corpo, size_t tamanho, unsigned geracao) {
 
 void assrender_limpar(void) {
   pthread_mutex_lock(&assTrava);
+  ass_authored_styles_free();
   if (assTrack) { ass_free_track(assTrack); assTrack = NULL; }
   assEventos = 0;
   assCoberturaIni = assCoberturaFim = 0;
@@ -960,6 +1012,7 @@ void assrender_limpar(void) {
 
 void assrender_limpar_fontes(void) {
   pthread_mutex_lock(&assTrava);
+  ass_authored_styles_free();
   if (assTrack) { ass_free_track(assTrack); assTrack = NULL; }
   assEventos = 0; assFontes = 0; assResolucaoFonte = 0;
   assCoberturaIni = assCoberturaFim = 0;

@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "nvtmp.h"
 
 static int falhas;
 static void confere(const char *o_que, int obtido, int esperado) {

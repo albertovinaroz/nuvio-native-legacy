@@ -15,6 +15,8 @@
 #include <time.h>
 #include <unistd.h>
 
+const char *i18n(const char *s) { return s; }
+
 static int falhas;
 static void ok(int c, const char *o) {
   printf("  %-60s %s\n", o, c ? "ok" : "FALHOU");

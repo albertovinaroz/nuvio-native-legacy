@@ -13,7 +13,7 @@
 #else
 #define NV_PERFIL_OPCIONAL
 #endif
-#if defined(__GNUC__) || defined(__clang__)
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(NV_PERFIL_SESSAO_FORTE)
 extern uint64_t perfis_sessao_geracao(void) NV_PERFIL_OPCIONAL;
 extern int perfis_sessao_atual(uint64_t) NV_PERFIL_OPCIONAL;
 extern int perfis_sessao_travar(uint64_t) NV_PERFIL_OPCIONAL;

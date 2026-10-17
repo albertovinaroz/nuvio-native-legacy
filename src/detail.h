@@ -16,13 +16,15 @@ void detail_abrir(const HomeItem *item);
 // nao faz nada; Voltar fecha o painel e deixa a pagina do titulo.
 void detail_mostrar_pessoa(long tmdb, const char *nome, const char *foto);
 int  detail_aberto(void);
+// Ano solto do campo `meta` ("2025 · 1 h 54 min" -> "2025" e "1 h 54 min").
+void partirMeta(const char *meta, char *ano, size_t na, char *resto, size_t nr);
 // Fecha a pagina pela mesma saida animada do Voltar (Spotlight: uma colecao ou
 // um catalogo escolhido com a pagina aberta abriria POR TRAS dela).
 void detail_fechar(void);
 // Fecha sem a mola de saida (o player saiu para a home: ilha_minimizar).
 void detail_fechar_seco(void);
 int  detail_relogio_oculto(void);  // 1 no carrossel de titulos (cartao com vizinhos), ainda sem esticar: a ilha do relogio some
-int  detail_pediu_social(void);   // 1 uma vez: CIMA no alto da pagina pediu o painel de Salvos/Avisos
+int  detail_pediu_social(void);   // sempre 0 desde #407 (CIMA no topo nao abre Salvos/Avisos; AZUL/CH+ abre)
 int  detail_pediu_menu(void);   // 1 uma vez: ESQUERDA na borda pediu o menu lateral (a pagina NAO fecha; Voltar e quem sai)
 // app.c, a cada quadro: 1 enquanto a barra lateral esta aberta POR CIMA da
 // pagina. O trailer do fundo fica mudo (sem fechar) e recupera o som depois.
@@ -64,7 +66,13 @@ void detail_volta_notar(int novo);
 int  detail_pediu_assistido(void);
 int  detail_pediu_amigos(char *imdb, size_t tam); // OK na ilha de amigos: o imdb do titulo, uma vez
 int  detail_pediu_marcar(void);       // botao "+"
+int  detail_pediu_fontes_ep(int *temporada, int *episodio);
 int  detail_pediu_fontes(void);       // OK segurado, ou o botao "..."
+// O episodio travado junto com o pedido de fontes (toque no card com
+// "Escolher a fonte ao reproduzir", ou "Fontes deste episodio" no menu).
+// A folha rouba o foco da fileira: ler detail_ep_foco depois apontava o
+// episodio em andamento, nao o escolhido (#513). 0 = folha do titulo.
+int  detail_pediu_fontes_ep(int *temporada, int *episodio);
 int  detail_pediu_explorar(void);     // circular "Explorar": abrir a toca (explorar.h) neste titulo, uma vez
 // Botao secundario "Reproduzir desde o inicio", que so existe quando ha
 // progresso. Hoje ele tambem marca `detail_pediu_reproduzir`, porque o roteador
@@ -139,7 +147,18 @@ int  detail_pediu_do_inicio(void);
 // seja caixa 96..735 x 247..660 — 640x414. O card seguinte comeca em x=767.
 #define NV_DETP_EP_W         640.0f
 #define NV_DETP_EP_H         414.0f   // a caixa E a miniatura: o texto fica dentro
-#define NV_DETP_EP_PASSO     672.0f   // 767 - 96 = 671, arredondado para 640+32
+// MARGEM entre os cards da fileira (#205, dono: "dar uma margem entre as
+// listas de episodios"): o passo e o card MAIS este vao. Entrar no passo e nao
+// no card mantem a caixa medida intacta e faz o vao acompanhar a escala dos
+// tres tamanhos da Moderna (e vale tambem para o layout Apple, de card fixo).
+#define NV_DETP_EP_GAP       48.0f
+#define NV_DETP_EP_PASSO     (NV_DETP_EP_W + NV_DETP_EP_GAP)
+// PRATO DE FOCO estilo Apple TV (#205): placa cinza-claro translucida atras
+// do card inteiro, que nasce com a mola do foco (alpha ate ~14% de branco) e
+// cresce 3% a partir do centro. FORA das medidas do card: sobra na fileira.
+#define NV_DETP_EP_PLACA_PAD 18.0f    // a placa respira alem da caixa do card
+#define NV_DETP_EP_PLACA_INSET 16.0f  // a placa fica mais estreita que a miniatura, de cada lado
+#define NV_DETP_EP_PLACA_A   0.14f    // teto do branco translucido (12%~16%)
 #define NV_DETP_EP_THUMB_H   414.0f
 #define NV_DETP_EP_RAIO       32.0f
 #define NV_DETP_EP_PAD        32.0f   // margem do texto dentro da miniatura
@@ -166,6 +185,33 @@ int  detail_pediu_do_inicio(void);
 #define NV_DETP_EP_ICONE      28.0f
 #define NV_DETP_EP_BARRA_Y   390.0f   // barra 576x8, raio 999
 #define NV_DETP_EP_BARRA_H     8.0f
+// MODERNA: titulo e sinopse ficam ABAIXO da miniatura (16:9), nao sobre ela. Na
+// miniatura sobram o selo, o rodape de duracao/notas/data, a barra e o visto.
+//
+// #205 (dono): TRES TAMANHOS de card (Pequeno / Medio / Grande, no Ajustes)
+// e a sinopse passa a ter 4 linhas. Nenhuma destas medidas e mais fixa: as que
+// sao GEOMETRIA do card (largura, passo e miniatura) saem multiplicadas pela
+// escala de epEscala() em detail.c — o texto nao escala, as fontes sao as de
+// sempre. Por isso nao ha mais NV_DETP_EPM_H: epCardH() monta miniatura +
+// bloco de texto (titulo + 4 linhas de sinopse).
+#define NV_DETP_EPM_THUMB_H  360.0f   // do tamanho Medio: a base da escala
+// Selo "EPISODIO n": a BASE na mesma altura da base do selo Assistido
+// (dono, #205: "a base do episodio na mesma altura do watched"). O selo
+// Assistido e fixo no canto da miniatura (NV_DETP_EP_VISTO_*), entao o do
+// numero desce 2 px para as duas bases cairem juntas — e nao escala com o
+// tamanho do card, senao a base andava junto com a miniatura e nao com o
+// Assistido.
+#define NV_DETP_EPM_SELO_Y    26.0f   // 26+38 = 18+46: bases alinhadas
+#define NV_DETP_EPM_META_DY   70.0f   // da base da miniatura ao rodape de duracao
+#define NV_DETP_EPM_BARRA_DY  24.0f   // da base da miniatura a barra de progresso
+#define NV_DETP_EPM_TIT_DY    16.0f   // base da miniatura ao topo do titulo
+#define NV_DETP_EPM_SIN_DY    62.0f   // base da miniatura ao topo da sinopse
+#define NV_DETP_EPM_SIN_LINHAS 4      // #205: eram 2; o dono pediu 4
+// Selo "Assistido": disco de check no canto superior direito da miniatura.
+// Medido no card de sempre; fixo nos tres tamanhos (nao escala), porque e
+// ele quem ancora a base do selo do numero.
+#define NV_DETP_EP_VISTO_Y    18.0f
+#define NV_DETP_EP_VISTO_H    46.0f
 #define NV_DETP_EP_STATUS     48.0f   // circulo tracejado de "nao assistido"
 // Anel de foco. O web usa 2px na miniatura do episodio e 4px nos botoes do
 // hero; aqui fica 4 nos dois, porque a folha declara pixels de CSS e a tela
@@ -272,7 +318,7 @@ int  detail_pediu_do_inicio(void);
 // y=999) e a sinopse cresce PARA CIMA — 5 linhas na serie, 4 no filme, e a
 // ULTIMA linha cai no mesmo y nas duas. Por isso a pilha e montada de baixo
 // para cima, e nao do logo para baixo.
-#define NV_DETW2_LD_SIN       40.0f   // passo entre linhas da sinopse (medido)
+#define NV_DETW2_LD_SIN       42.0f   // passo entre linhas da sinopse (medido)
 #define NV_DETW2_SIN_LINHAS       3   // dono, 12/10/2026: 5 linhas pesavam; o resto vira "..."
 #define NV_DETW2_TEXTO_W    1040.0f   // sinopse e linha de apoio (96..1136)
 // Distancia entre TOPOS DE CAIXA de linhas vizinhas, ja descontada a metrica da

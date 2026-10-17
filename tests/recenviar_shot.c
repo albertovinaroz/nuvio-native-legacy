@@ -15,6 +15,7 @@
 #define RE_FONTE "../src/recenviar.c"
 #endif
 #include RE_FONTE
+#include "nvtmp.h"
 #include "vidro_fundo.h"
 #include "shot_arte.h"
 #include <SDL2/SDL_image.h>
@@ -106,7 +107,7 @@ static void abrir(void) {
 }
 
 int main(int argc,char **argv) {
-  const char *dir=getenv("NUVIO_DADOS"), *out=argc>1?argv[1]:"/tmp/nuvio-send";
+  const char *dir=getenv("NUVIO_DADOS"), *out=argc>1?argv[1]:nvt("/nuvio-send");
   const char *idi=getenv("NUVIO_SHOT_IDIOMA");
   char path[700]; FILE *f; SDL_Window *win; SDL_GLContext gl;
   int i;

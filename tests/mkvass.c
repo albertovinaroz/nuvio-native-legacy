@@ -29,6 +29,9 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+const char *i18n(const char *s) { return s; }
+const char *ajustes_idioma(void) { return "pt"; }
+
 static int falhas;
 static void ok(int cond, const char *o) {
   printf("  %-58s %s\n", o, cond ? "ok" : "FALHOU");

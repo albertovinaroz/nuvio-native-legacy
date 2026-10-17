@@ -18,6 +18,7 @@
 //
 // Cada sessao e um processo (as estaticas de sync.c nao voltam a zero).
 #include "sync.h"
+#include "nvtmp.h"
 #include "addons.h"
 #include "catordem.h"
 #include "contacache.h"
@@ -33,7 +34,7 @@
 
 static const char *pasta(void) {
   const char *d = getenv("NV_T_DIR");
-  return d && *d ? d : "/tmp";
+  return d && *d ? d : nvt_dir();
 }
 static void caminho(char *dst, size_t tam, const char *nome) {
   snprintf(dst, tam, "%s/%s", pasta(), nome);

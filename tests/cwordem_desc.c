@@ -23,6 +23,7 @@ int ajustes_social(void) { return 1; }
 int ajustes_hist_conta(void) { return 1; }
 int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
+int ajustes_ocultar_filmes_vistos(void) { return 0; }    // #366: descoberta.c le o ajuste
 #include "../src/descoberta.c"
 Uint32 SDL_GetTicks(void) { return 0; }
 #include <assert.h>
@@ -115,6 +116,8 @@ int   trakt_lista_cresc(const char *q, CatItem **s, int m) { (void)q; (void)s; (
 int   recomenda_social_mesclar(CatItem *i, int nTrakt, int max) { (void)i; (void)max; return nTrakt; }
 int   trakt_social(CatItem *s, int m)      { (void)s; (void)m; return 0; }
 const char *nuvem_trakt_cliente(void)      { return ""; }
+void addons_lista_travar(void) {}
+void addons_lista_destravar(void) {}
 int   addons_n(void)                       { return 0; }
 const char *addons_base(int i)             { (void)i; return ""; }
 const char *addons_id_manifesto(int i)     { (void)i; return ""; }

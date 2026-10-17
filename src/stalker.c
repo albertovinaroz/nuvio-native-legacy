@@ -3,6 +3,7 @@
 #include "js.h"
 #include "dados.h"
 #include "perfis.h"
+#include "perfisessao.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -31,6 +32,7 @@ static char baseEf[256];      // base que respondeu (portal, ou o host puro no f
 static time_t tokenEm;
 static int   perfilLido = -1;
 static int   lido;
+static NvPerfilSessao sessaoLida;
 
 static StCmd tabela[ST_MAX_CANAL];
 static int   nTabela;
@@ -41,6 +43,7 @@ static int   nTabela;
 // create_link esperar o fim de uma listagem de 1200 canais.
 static pthread_mutex_t travaSessao = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t travaTabela = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t travaHandshake = PTHREAD_MUTEX_INITIALIZER;
 
 // ---------------------------------------------------------------- utilidades
 
@@ -123,8 +126,9 @@ static void limparSessao(void) {
 static void carregarTravado(void) {
   int p = perfis_ativo();
   char *b, *linha, *fim;
-  if (lido && p == perfilLido) return;
-  perfilLido = p; lido = 1;
+  NvPerfilSessao sessao = nv_perfil_sessao_ler();
+  if (lido && p == perfilLido && sessao == sessaoLida) return;
+  perfilLido = p; sessaoLida = sessao; lido = 1;
   portal[0] = mac[0] = deviceId[0] = serial[0] = 0;
   limparSessao();
   pthread_mutex_lock(&travaTabela); nTabela = 0; pthread_mutex_unlock(&travaTabela);
@@ -279,12 +283,16 @@ static void cabecalhos(const char *portalLocal, const char *macLocal,
 // proposito: o HTTP dura segundos e roda FORA da trava, entao ler `token` ou
 // `caminho` globais aqui seria le-los enquanto outro fio os reescreve.
 static char *pedir(const char *portalLocal, const char *macLocal,
-                   const char *rota, const char *tok, const char *consulta) {
+                   const char *rota, const char *tok, const char *consulta,
+                   NvPerfilSessao sessao) {
   const char *cab[7];
   char url[2048], c1[128], c2[192], c3[320];
   cabecalhos(portalLocal, macLocal, cab, tok, c1, sizeof c1, c2, sizeof c2, c3, sizeof c3);
   snprintf(url, sizeof url, "%s%s?%s&JsHttpRequest=1-xml", portalLocal, rota, consulta);
-  return rede_baixar_com(url, ST_PRAZO_S, cab);
+  if (!nv_perfil_sessao_atual(sessao)) return NULL;
+  char *corpo = rede_baixar_com(url, ST_PRAZO_S, cab);
+  if (!nv_perfil_sessao_atual(sessao)) { free(corpo); return NULL; }
+  return corpo;
 }
 
 // Resposta util e a que traz o objeto `js`. Portal que recusou o token devolve
@@ -312,61 +320,99 @@ static size_t tamHost(const char *base) {
 // ("/stalker_portal/..." so se o prefixo nao o traz). Se NENHUM responder, as
 // rotas da raiz contra o host puro: quem colou "host/qualquer/c/" com o portal
 // na raiz continua funcionando. Devolve 0 quando acabou; `rota` NULL = pular.
-static int candidato(int k, char *base, unsigned tam, const char **rota) {
-  size_t h = tamHost(portal);
-  int prefixo = portal[h] != 0;
+static int candidato(int k, const char *portalBase, char *base, unsigned tam, const char **rota) {
+  size_t h = tamHost(portalBase);
+  int prefixo = portalBase[h] != 0;
   if (k < 3) {
-    snprintf(base, tam, "%s", portal);
-    *rota = (k == 2 && prefixoTemStalkerPortal(portal)) ? NULL : ROTAS[k];
+    snprintf(base, tam, "%s", portalBase);
+    *rota = (k == 2 && prefixoTemStalkerPortal(portalBase)) ? NULL : ROTAS[k];
     return 1;
   }
   if (k < 6 && prefixo) {
-    snprintf(base, tam, "%.*s", (int)h, portal);
+    snprintf(base, tam, "%.*s", (int)h, portalBase);
     *rota = ROTAS[k - 3];
     return 1;
   }
   return 0;
 }
 
-// Refaz o handshake e guarda o token. Chamada SEMPRE com travaSessao presa.
-static int handshakeTravado(void) {
-  int k, lembrada = caminho[0] != 0;
-  token[0] = 0;
-  for (k = 0; ; k++) {
+typedef struct {
+  char portal[256], mac[32], token[128], rota[96], efetiva[256];
+  time_t tokenEm;
+} StConexao;
+
+static int conexaoLer(StConexao *c, NvPerfilSessao sessao) {
+  pthread_mutex_lock(&travaSessao);
+  if (!nv_perfil_sessao_travar(sessao)) { pthread_mutex_unlock(&travaSessao); return 0; }
+  carregarTravado();
+  snprintf(c->portal, sizeof c->portal, "%s", portal);
+  snprintf(c->mac, sizeof c->mac, "%s", mac);
+  snprintf(c->token, sizeof c->token, "%s", token);
+  snprintf(c->rota, sizeof c->rota, "%s", caminho);
+  snprintf(c->efetiva, sizeof c->efetiva, "%s", baseEf);
+  c->tokenEm = tokenEm;
+  nv_perfil_sessao_destravar();
+  pthread_mutex_unlock(&travaSessao);
+  return c->portal[0] && c->mac[0];
+}
+
+// Serializa so as renovacoes, nunca os getters do desenho. O HTTP usa uma
+// copia do cadastro; trocar perfil/editar cadastro nao espera o portal.
+static int renovarToken(NvPerfilSessao sessao, const char *usado, int renovarAntes) {
+  StConexao c;
+  int k, lembrada, ok = 0;
+  pthread_mutex_lock(&travaHandshake);
+  if (!conexaoLer(&c, sessao)) goto fim;
+  if (c.token[0] &&
+      (usado ? strcmp(usado, c.token) != 0
+             : !(renovarAntes && c.tokenEm && time(NULL) - c.tokenEm > ST_TOKEN_VALIDO_S))) {
+    ok = 1; goto fim;
+  }
+  lembrada = c.rota[0] != 0;
+  for (k = 0; nv_perfil_sessao_atual(sessao); k++) {
     char *corpo, base[256];
     const char *rota;
     // Rota que ja provou funcionar entra primeiro nas vezes seguintes; na
     // primeira, `caminho` esta vazio e a varredura e a ordem acima.
     if (lembrada) {
-      snprintf(base, sizeof base, "%s", baseEf[0] ? baseEf : portal);
-      rota = caminho;
-    } else if (!candidato(k, base, sizeof base, &rota)) {
+      snprintf(base, sizeof base, "%s", c.efetiva[0] ? c.efetiva : c.portal);
+      rota = c.rota;
+    } else if (!candidato(k, c.portal, base, sizeof base, &rota)) {
       break;
     }
     if (!rota) continue;
-    corpo = pedir(base, mac, rota, "", "type=stb&action=handshake&token=&prehash=0");
+    corpo = pedir(base, c.mac, rota, "", "type=stb&action=handshake&token=&prehash=0", sessao);
     if (temJs(corpo)) {
       char t[128];
       if (js_texto_raiz(corpo, "token", t, sizeof t) && t[0]) {
-        snprintf(token, sizeof token, "%s", t);
-        snprintf(caminho, sizeof caminho, "%s", rota);
-        snprintf(baseEf, sizeof baseEf, "%s", base);
-        tokenEm = time(NULL);
         free(corpo);
         // get_profile confirma o MAC. Portal que recusa a assinatura responde
         // aqui, e nao no handshake — sem esta chamada o app so descobriria no
         // create_link, com a pessoa ja olhando a tela de carregar.
-        corpo = pedir(baseEf, mac, caminho, token, "type=stb&action=get_profile&hd=1&num_banks=2"
-                                           "&stb_type=MAG250&image_version=218&auth_second_step=0");
+        corpo = pedir(base, c.mac, rota, t, "type=stb&action=get_profile&hd=1&num_banks=2"
+                                           "&stb_type=MAG250&image_version=218&auth_second_step=0", sessao);
         if (corpo) free(corpo);
-        return 1;
+        pthread_mutex_lock(&travaSessao);
+        if (nv_perfil_sessao_travar(sessao)) {
+          if (!strcmp(portal, c.portal) && !strcmp(mac, c.mac)) {
+            snprintf(token, sizeof token, "%s", t);
+            snprintf(caminho, sizeof caminho, "%s", rota);
+            snprintf(baseEf, sizeof baseEf, "%s", base);
+            tokenEm = time(NULL); ok = 1;
+          }
+          nv_perfil_sessao_destravar();
+        }
+        pthread_mutex_unlock(&travaSessao);
+        goto fim;
       }
     }
     if (corpo) free(corpo);
     // A rota lembrada falhou: esquecer e varrer de novo a partir do inicio.
-    if (lembrada) { lembrada = 0; caminho[0] = 0; baseEf[0] = 0; k = -1; }
+    if (lembrada) { lembrada = 0; c.rota[0] = c.efetiva[0] = 0; k = -1; }
   }
-  return 0;
+fim:
+  pthread_mutex_unlock(&travaHandshake);
+  return ok;
 }
 
 // A UNICA porta de saida para o portal. Tudo passa por aqui, e e por isso que
@@ -376,32 +422,11 @@ static int handshakeTravado(void) {
 // (create_link) chamam concorrente. Dois handshakes em paralelo geram dois
 // tokens e o segundo invalida o primeiro — o sintoma seria uma lista que
 // carrega e um canal que nao abre, alternando, sem erro nenhum no log.
-static char *chamar(const char *consulta, int renovarAntes) {
-  char tok[128], rota[96];
-  char portalLocal[256], macLocal[32];
+static char *chamar(const char *consulta, int renovarAntes, NvPerfilSessao sessao) {
+  StConexao c;
   char *corpo;
-
-  // A TRAVA COBRE O TOKEN, NAO A REQUISICAO. Esta foi a correcao mais
-  // importante deste modulo: com o `pedir` dentro da trava, um create_link
-  // disparado pelo zap ficava esperando a LISTAGEM INTEIRA do guia terminar —
-  // ate 64 paginas de 15 s — e a tela congelava com "carregando". O que precisa
-  // ser serializado e a renovacao do token, que dura milissegundos, e nao o
-  // HTTP, que dura segundos.
-  pthread_mutex_lock(&travaSessao);
-  if (!portal[0] || !mac[0]) { pthread_mutex_unlock(&travaSessao); return NULL; }
-  // O pedido conserva o cadastro que encontrou sob a trava. Nao usa copias
-  // globais: o guia pode iniciar outra requisicao enquanto este HTTP espera.
-  snprintf(macLocal, sizeof macLocal, "%s", mac);
-  if (!token[0] ||
-      (renovarAntes && tokenEm && time(NULL) - tokenEm > ST_TOKEN_VALIDO_S)) {
-    if (!handshakeTravado()) { pthread_mutex_unlock(&travaSessao); return NULL; }
-  }
-  snprintf(tok, sizeof tok, "%s", token);
-  snprintf(rota, sizeof rota, "%s", caminho);
-  snprintf(portalLocal, sizeof portalLocal, "%s", baseEf[0] ? baseEf : portal);
-  pthread_mutex_unlock(&travaSessao);
-
-  corpo = pedir(portalLocal, macLocal, rota, tok, consulta);
+  if (!renovarToken(sessao, NULL, renovarAntes) || !conexaoLer(&c, sessao) || !c.token[0]) return NULL;
+  corpo = pedir(c.efetiva[0] ? c.efetiva : c.portal, c.mac, c.rota, c.token, consulta, sessao);
   if (temJs(corpo)) return corpo;
   if (corpo) free(corpo);
 
@@ -413,17 +438,8 @@ static char *chamar(const char *consulta, int renovarAntes) {
   // comparacao com `tok`, o token que esta requisicao usou. Sem ela, dois
   // handshakes seguidos gerariam dois tokens e o segundo invalidaria o
   // primeiro.
-  pthread_mutex_lock(&travaSessao);
-  if (!strcmp(tok, token) && !handshakeTravado()) {
-    pthread_mutex_unlock(&travaSessao);
-    return NULL;
-  }
-  snprintf(tok, sizeof tok, "%s", token);
-  snprintf(rota, sizeof rota, "%s", caminho);
-  snprintf(portalLocal, sizeof portalLocal, "%s", baseEf[0] ? baseEf : portal);
-  pthread_mutex_unlock(&travaSessao);
-
-  corpo = pedir(portalLocal, macLocal, rota, tok, consulta);
+  if (!renovarToken(sessao, c.token, 0) || !conexaoLer(&c, sessao) || !c.token[0]) return NULL;
+  corpo = pedir(c.efetiva[0] ? c.efetiva : c.portal, c.mac, c.rota, c.token, consulta, sessao);
   if (temJs(corpo)) return corpo;
   if (corpo) free(corpo);
   return NULL;
@@ -431,8 +447,9 @@ static char *chamar(const char *consulta, int renovarAntes) {
 
 // ------------------------------------------------------------------ canais
 
-static void tabelaPor(const char *id, const char *cmd) {
+static void tabelaPor(const char *id, const char *cmd, NvPerfilSessao sessao) {
   int i;
+  if (!nv_perfil_sessao_travar(sessao)) return;
   pthread_mutex_lock(&travaTabela);
   for (i = 0; i < nTabela; i++)
     if (!strcmp(tabela[i].id, id)) break;
@@ -442,13 +459,14 @@ static void tabelaPor(const char *id, const char *cmd) {
     snprintf(tabela[i].cmd, sizeof tabela[i].cmd, "%s", cmd);
   }
   pthread_mutex_unlock(&travaTabela);
+  nv_perfil_sessao_destravar();
 }
 
 #define ST_MAX_GEN 64
 typedef struct { char id[24], titulo[64]; } StGen;
 
-static int lerGeneros(StGen *gen, int max) {
-  char *corpo = chamar("type=itv&action=get_genres", 0);
+static int lerGeneros(StGen *gen, int max, NvPerfilSessao sessao) {
+  char *corpo = chamar("type=itv&action=get_genres", 0, sessao);
   const char *p;
   int n = 0;
   if (!corpo) return 0;
@@ -475,16 +493,16 @@ static const char *tituloDoGenero(const StGen *gen, int nGen, const char *id) {
   return "Outros";
 }
 
-int stalker_canais(StalkerCanal *saida, int max) {
+int stalker_canais_sessao(StalkerCanal *saida, int max, uint64_t sessao) {
   StGen gen[ST_MAX_GEN];
   int nGen, pagina, n = 0;
-  if (!stalker_configurado() || !saida || max < 1) return 0;
-  nGen = lerGeneros(gen, ST_MAX_GEN);
+  if (!nv_perfil_sessao_atual(sessao) || !stalker_configurado() || !saida || max < 1) return 0;
+  nGen = lerGeneros(gen, ST_MAX_GEN, sessao);
 
   // genre=* traz TODOS os canais numa varredura paginada, com o genero de cada
   // um no proprio item. Pedir genero a genero seria uma requisicao por
   // categoria — em portal com 40 generos, 40 idas so para montar a mesma lista.
-  for (pagina = 1; pagina <= ST_PAGINA_MAX && n < max; pagina++) {
+  for (pagina = 1; nv_perfil_sessao_atual(sessao) && pagina <= ST_PAGINA_MAX && n < max; pagina++) {
     char consulta[128];
     char *corpo;
     const char *p;
@@ -492,7 +510,7 @@ int stalker_canais(StalkerCanal *saida, int max) {
     snprintf(consulta, sizeof consulta,
              "type=itv&action=get_ordered_list&genre=*&force_ch_link_check="
              "&fav=0&sortby=number&hd=0&p=%d", pagina);
-    corpo = chamar(consulta, 0);
+    corpo = chamar(consulta, 0, sessao);
     if (!corpo) break;
     p = strstr(corpo, "\"data\"");
     p = p ? strchr(p, '[') : NULL;
@@ -511,7 +529,7 @@ int stalker_canais(StalkerCanal *saida, int max) {
         snprintf(c.categoria, sizeof c.categoria, "%s",
                  tituloDoGenero(gen, nGen, genId));
         if (js_texto(p, fim, "cmd", cmd, sizeof cmd) && cmd[0])
-          tabelaPor(c.id, cmd);
+          tabelaPor(c.id, cmd, sessao);
         saida[n++] = c;
         noCiclo++;
       }
@@ -523,7 +541,11 @@ int stalker_canais(StalkerCanal *saida, int max) {
   // CONTAGEM, e so contagem. Portal, MAC e token nao entram em log: registro.c
   // le o stdout do app e o desenha NA TELA (ver a nota no topo do header).
   printf("[stalker] portal ok, %d canal(is) em %d categoria(s)\n", n, nGen);
-  return n;
+  return nv_perfil_sessao_atual(sessao) ? n : 0;
+}
+
+int stalker_canais(StalkerCanal *saida, int max) {
+  return stalker_canais_sessao(saida, max, nv_perfil_sessao_ler());
 }
 
 // ------------------------------------------------------------- reproducao
@@ -545,12 +567,12 @@ static int cmdDe(const char *id, char *dst, unsigned tam) {
   return achou;
 }
 
-int stalker_resolver(const char *id, char *url, unsigned n) {
+int stalker_resolver_sessao(const char *id, char *url, unsigned n, uint64_t sessao) {
   char cmd[192], enc[640], consulta[768];
   char *corpo;
   char bruto[1024];
   const char *p;
-  if (!stalker_e_id(id) || !url || n < 2) return 0;
+  if (!nv_perfil_sessao_atual(sessao) || !stalker_e_id(id) || !url || n < 2) return 0;
   if (!stalker_configurado()) return 0;
   if (!cmdDe(id, cmd, sizeof cmd)) return 0;
   urlenc(cmd, enc, sizeof enc);
@@ -560,7 +582,7 @@ int stalker_resolver(const char *id, char *url, unsigned n) {
   // 1 no segundo argumento: ESTE e o caminho que nao pode falhar por token
   // velho. A lista pode ser refeita sem ninguem notar; um zap que morre e a
   // pessoa olhando a tela.
-  corpo = chamar(consulta, 1);
+  corpo = chamar(consulta, 1, sessao);
   if (!corpo) return 0;
   if (!js_texto_raiz(corpo, "cmd", bruto, sizeof bruto)) {
     free(corpo);
@@ -577,5 +599,10 @@ int stalker_resolver(const char *id, char *url, unsigned n) {
   // Um espaco depois da URL (alguns portais anexam parametros de STB) termina
   // o endereco: o pipeline nao os entende e eles nao fazem falta.
   { char *esp = strchr(url, ' '); if (esp) *esp = 0; }
+  if (!nv_perfil_sessao_atual(sessao)) { url[0] = 0; return 0; }
   return url[0] != 0;
+}
+
+int stalker_resolver(const char *id, char *url, unsigned n) {
+  return stalker_resolver_sessao(id, url, n, nv_perfil_sessao_ler());
 }

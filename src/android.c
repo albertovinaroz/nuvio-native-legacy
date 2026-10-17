@@ -35,6 +35,33 @@ static void interfaceBool(const char *nome, int ativa) {
 
 void android_interface_modo(int mobile) { interfaceBool("interfaceModo", mobile); }
 
+void android_baixar_registro(const char *arquivo, const char *sucesso, const char *falha) {
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act;
+  jclass cls;
+  jstring ja = NULL, js = NULL, jf = NULL;
+  if (!env) return;
+  act = (jobject)SDL_AndroidGetActivity();
+  if (!act) return;
+  cls = (*env)->GetObjectClass(env, act);
+  if (cls) {
+    jmethodID m = (*env)->GetMethodID(env, cls, "baixarRegistro",
+                                    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+    if (m) {
+      ja = (*env)->NewStringUTF(env, arquivo ? arquivo : "");
+      if (ja && !(*env)->ExceptionCheck(env)) js = (*env)->NewStringUTF(env, sucesso);
+      if (js && !(*env)->ExceptionCheck(env)) jf = (*env)->NewStringUTF(env, falha);
+      if (jf && !(*env)->ExceptionCheck(env)) (*env)->CallVoidMethod(env, act, m, ja, js, jf);
+    }
+  }
+  if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+  if (ja) (*env)->DeleteLocalRef(env, ja);
+  if (js) (*env)->DeleteLocalRef(env, js);
+  if (jf) (*env)->DeleteLocalRef(env, jf);
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
+}
+
 #ifdef NV_TOUCH_UI
 static SDL_atomic_t toqueCancelEvento;
 

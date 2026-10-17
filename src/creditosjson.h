@@ -107,7 +107,7 @@ static inline int creditosjson_extrair(const char *j, IntroTrecho *out, int max)
     if (*p == '{' && cj_campo(p, v, "start_ms", &ini, &iniFim) &&
         cj_campo(p, v, "end_ms", &end, &endFim) &&
         cj_ms(ini, iniFim, &inicio) && cj_ms(end, endFim, &final) && final > inicio) {
-      out[n++] = (IntroTrecho){ inicio, final, INTRO_CREDITOS };
+      out[n++] = (IntroTrecho){ inicio, final, INTRO_CREDITOS, 0 };
     }
     p = cj_espaco(v, b); if (p < b && *p == ',') p = cj_espaco(p + 1, b); else break;
   }

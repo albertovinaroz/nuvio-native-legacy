@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 set -eu
 cd "$(dirname "$0")/.."
 cc -O1 -g -Wall -Wextra -DNUVIO_TRAILER_TEST -Isrc \
@@ -6,5 +8,5 @@ cc -O1 -g -Wall -Wextra -DNUVIO_TRAILER_TEST -Isrc \
   -ffunction-sections -fdata-sections \
   src/extras.c src/js.c src/rede.c src/redeurl.c tests/extras-hero.c \
   -L/opt/homebrew/lib -lSDL2 -lcurl -lpthread -Wl,-dead_strip \
-  -o /tmp/nuvio-extras-hero-tests
-/tmp/nuvio-extras-hero-tests
+  -o ${TMPDIR:-/tmp}/nuvio-extras-hero-tests
+${TMPDIR:-/tmp}/nuvio-extras-hero-tests

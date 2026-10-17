@@ -30,6 +30,22 @@ static float ajcLargura(const char *t, float px, int forte) {
   TxtEstilo e = ajEstiloPxS(ajc_px(px), forte);
   return (int)e >= 0 ? (float)txt_largura(e, t) / ajc_px(1.0f) : (float)strlen(t) * px * 0.6f;
 }
+// Os VIVOS: glifo a glifo (ajTextoVivo), para o texto que muda com o relogio da
+// cena. A largura tambem glifo a glifo, para medir do mesmo jeito que desenha.
+static void ajcTextoVivoRGB(const char *t, float px, int forte, float x, float y, int r, int g, int b, float a) {
+  ajTextoVivo(t, ajc_px(px), forte, ajc_x(x), ajc_y(y), r, g, b, a);
+}
+static void ajcTextoVivo(const char *t, float px, int forte, float x, float y, float a) {
+  ajcTextoVivoRGB(t, px, forte, x, y, 243, 242, 239, a);
+}
+static void ajcTextoVivoTinta(const char *t, float px, int forte, float x, float y, float a) {
+  int ti = ajTinta();
+  ajcTextoVivoRGB(t, px, forte, x, y, ti, ti, ti, a);
+}
+static float ajcLarguraViva(const char *t, float px, int forte) {
+  TxtEstilo e = ajEstiloPxS(ajc_px(px), forte);
+  return (int)e >= 0 ? txt_glifos_largura(e, t) / ajc_px(1.0f) : (float)strlen(t) * px * 0.6f;
+}
 // Selo (pilula com texto): no acento quando `ativo`.
 static float ajcSelo(const char *t, float x, float y, float px, float ativo, float a) {
   float w = ajcLargura(t, px, 1) + px * 1.4f, h = px * 1.9f;
@@ -37,6 +53,16 @@ static float ajcSelo(const char *t, float x, float y, float px, float ativo, flo
   if (ativo > 0.01f) ajc_acento_ret(x, y, w, h, h * 0.5f, ativo * a);
   if (ativo > 0.5f) ajcTextoTinta(t, px, 1, x + px * 0.7f, y + (h - px * 1.25f) * 0.5f, a);
   else ajcTexto(t, px, 1, x + px * 0.7f, y + (h - px * 1.25f) * 0.5f, 0.9f * a);
+  return w;
+}
+// O selo do texto VIVO (percentual que conta, lingua que circula): a pilula
+// acompanha a largura glifo a glifo do que o ajcTextoVivo desenha dentro.
+static float ajcSeloVivo(const char *t, float x, float y, float px, float ativo, float a) {
+  float w = ajcLarguraViva(t, px, 1) + px * 1.4f, h = px * 1.9f;
+  ajc_neutro(x, y, w, h, h * 0.5f, a);
+  if (ativo > 0.01f) ajc_acento_ret(x, y, w, h, h * 0.5f, ativo * a);
+  if (ativo > 0.5f) ajcTextoVivoTinta(t, px, 1, x + px * 0.7f, y + (h - px * 1.25f) * 0.5f, a);
+  else ajcTextoVivo(t, px, 1, x + px * 0.7f, y + (h - px * 1.25f) * 0.5f, 0.9f * a);
   return w;
 }
 // O que o interruptor faz, no canto de baixo: a chave sincronizada com o efeito.
@@ -177,11 +203,12 @@ static void ajcCenaHome(int op) {
     case AJ_HERO_CATALOGOS: case AJ_HERO_TRANSICAO: o.marca = AJC_M_HERO; break;
     case AJ_LANDSCAPE: o.paisagem = ajcLig(op); break;
     case AJ_FIL_ORDEM: case AJ_FIL_LIMITE: case AJ_ITENS_FILEIRA: case AJ_OCULTAR_NLANC:
+    case AJ_OCULTAR_FILMES_VISTOS:
       o.hero = 0.0f; o.marca = AJC_M_FILEIRAS; break;
     case AJ_ROTULOS: case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: case AJ_SUFIXO_ESTILO: case AJ_ROTULO_POS: case AJ_LOGO_CARDS:
       o.hero = 0; o.marca = AJC_M_TITULOS; break;
     case AJ_NOTAS_HOME: case AJ_SELO_VISTO: o.hero = 0; break;
-    case AJ_RAIL_MODERNA: case AJ_RAIL: case AJ_MENU_EXPLORAR: case AJ_MENU_GUIA: case AJ_MENU_AGENDA:
+    case AJ_MENU_TOPO: case AJ_RAIL_MODERNA: case AJ_RAIL: case AJ_MENU_EXPLORAR: case AJ_MENU_GUIA: case AJ_MENU_AGENDA:
     case AJ_MENU_PERFIL: case AJ_RAIL_BLUR: case AJ_DESCOBRIR:
       o.marca = AJC_M_RAIL; break;
     default:
@@ -383,7 +410,7 @@ static void ajcCenaTrailer(int op) {
   if (op == AJ_TRAILER_QUAL) {
     static const char *R[3] = { "480p", "720p", "1080p" };
     int i, a = ajc_passo(1.6f, 3);
-    for (i = 0; i < 3; i++) ajcSelo(R[i], 400 + i * 74, 300, 13, i == a ? 1.0f : 0.0f, 1);
+    for (i = 0; i < 3; i++) ajcSeloVivo(R[i], 400 + i * 74, 300, 13, i == a ? 1.0f : 0.0f, 1);
   }
   if (op == AJ_TRAILER_FONTE) ajc_ladrilho("aj_film", 586, 56, 52, 1, 1);
   if (op == AJ_HERO_TRAILER || op == AJ_DET_TRAILER_AUTO || op == AJ_DET_TRAILER || op == AJ_LOGO_TRAILER
@@ -741,12 +768,12 @@ static void ajcCenaLegenda(int op) {
       ajc_foco(320 - lw * 0.5f, yb - 32 * tam * 0.9f, lw, 32 * tam * 0.9f, 6, 0.4f + 0.6f * ajc_onda(2.0f));
     }
   }
-  if (op == AJ_LEG_LINGUA || op == AJ_AUD_LINGUA || op == AJ_LEG_SYNC_AUTO || op == AJ_LEG_SYNC_AUDIO) {
+  if (op == AJ_LEG_LINGUA || op == AJ_AUD_LINGUA || op == AJ_AUD_LINGUA2 || op == AJ_LEG_SYNC_AUTO || op == AJ_LEG_SYNC_AUDIO) {
     static const char *L[3] = { "PT", "EN", "ES" };
     int i, a = ajc_passo(1.6f, 3);
     ajc_vidro(430, 30, 180, 60, 16, 1);
-    ajc_icone(op == AJ_AUD_LINGUA ? "aj_audio-lines" : "aj_captions", 458, 60, 22, 0.9f);
-    for (i = 0; i < 3; i++) ajcSelo(L[i], 482 + i * 42, 46, 12, i == a ? 1.0f : 0, 1);
+    ajc_icone(op == AJ_AUD_LINGUA || op == AJ_AUD_LINGUA2 ? "aj_audio-lines" : "aj_captions", 458, 60, 22, 0.9f);
+    for (i = 0; i < 3; i++) ajcSeloVivo(L[i], 482 + i * 42, 46, 12, i == a ? 1.0f : 0, 1);
   }
 }
 // Idioma do app / metadados: o mesmo menu trocando de lingua (barras que
@@ -763,7 +790,7 @@ static void ajcCenaIdioma(int op) {
     ajc_barra(100, 84 + i * 40, w1 + (w0 - w1) * t, i == 1 ? 0.9f : 0.45f);
     if (i == 1) ajc_foco(88, 72 + i * 40, 134, 30, 10, 1);
   }
-  for (i = 0; i < 4; i++) ajcSelo(L[i], 270 + i * 70, 70, 16, i == a ? t : 0, 1);
+  for (i = 0; i < 4; i++) ajcSeloVivo(L[i], 270 + i * 70, 70, 16, i == a ? t : 0, 1);
   ajc_cartaz(270, 130, 140, 170, 2, 1);
   ajc_barras(424, 140, 130, 5, 1);
   (void)op;
@@ -884,9 +911,10 @@ static void ajcCenaOpcao(int sec, int op) {
     case AJ_ADDONS: case AJ_PLUGINS: case AJ_ADDONS_PRINCIPAL: case AJ_BUSCA_CINEMETA: case AJ_BUSCA_NUVIO: case AJ_BUSCA_ORIGEM: ajcCenaAddons(op); return;
     case AJ_IDIOMA: case AJ_TMDB_IDIOMA: ajcCenaIdioma(op); return;
     case AJ_DEBRID_RD: case AJ_DEBRID_TB: case AJ_DEBRID_PM: case AJ_DEBRID_AD: case AJ_DEBRID_AD_TESTAR:
+    case AJ_DEBRID_RD_TESTAR: case AJ_DEBRID_TB_TESTAR: case AJ_DEBRID_PM_TESTAR:
       ajcCenaServico(op, "aj_zap"); return;
 #ifndef __EMSCRIPTEN__
-    case AJ_P2P_LIGADO: case AJ_P2P_URL: case AJ_P2P_TESTAR: case AJ_P2P_LIMITE: ajcCenaServico(op, "aj_link"); return;
+    case AJ_P2P_LIGADO: case AJ_P2P_URL: case AJ_P2P_TESTAR: case AJ_P2P_LIMITE: case AJ_P2P_DESTINO: ajcCenaServico(op, "aj_link"); return;
 #endif
     case AJ_JF_LIGADO: case AJ_JF_SERVIDOR: case AJ_JF_ENTRAR: case AJ_JF_SAIR: case AJ_EM_SERVIDOR: case AJ_EM_ENTRAR:
     case AJ_EM_SAIR: case AJ_PX_ENTRAR: case AJ_PX_SERVIDOR: case AJ_PX_SAIR:

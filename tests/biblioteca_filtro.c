@@ -10,6 +10,7 @@
 static CatItem catalogoTeste[127];
 static int ocultar;
 int cat_n(void) { return 127; }
+int cat_visto(const CatItem *item) { (void)item; return 0; }
 const CatItem *cat_item(int i) { return i >= 0 && i < 127 ? &catalogoTeste[i] : NULL; }
 int cat_indice_por_imdb(const char *id) {
   for (int i = 0; i < 127; i++)

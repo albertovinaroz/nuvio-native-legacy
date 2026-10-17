@@ -2,6 +2,7 @@
 #include <time.h>
 int teste_clock_gettime(clockid_t c, struct timespec *t);
 #define clock_gettime teste_clock_gettime
+#include "stub_perfisessao.h"
 #include "../src/addons.c"
 #undef clock_gettime
 #include <assert.h>

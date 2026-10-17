@@ -6,6 +6,7 @@
 // idiomas e, com a fonte da TV (NUVIO_SHOT_FONTE=3), nenhuma frase precisa de
 // reticencias.
 #include "novidades_cartao.h"
+#include "nvtmp.h"
 #include "apoio.h"
 #include "dados.h"
 #include "ajustes.h"
@@ -153,7 +154,7 @@ static void cabeEmTodos(void) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-novcartao";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-novcartao");
   const char *dir = getenv("NUVIO_DADOS");
   const char *so = getenv("NUVIO_SHOT_SO");   // "medir": so a medida, sem capturas
   SDL_Window *w;

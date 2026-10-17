@@ -1,6 +1,7 @@
 // Ver xtepg.h.
 #include "xtepg.h"
 #include "xtream.h"
+#include "perfisessao.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -41,7 +42,7 @@ static unsigned relogio;
 // Entre os fios: a fila de pedidos (pilha: o ultimo pedido e o primeiro
 // atendido — quem rola o guia quer os canais que estao na tela AGORA, nao os
 // que passaram por ela) e os resultados prontos.
-typedef struct { char id[24]; XtreamProg p[XE_PROG]; int n, st; } XeResp;
+typedef struct { char id[24]; XtreamProg p[XE_PROG]; int n, st; NvPerfilSessao sessao; } XeResp;
 static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  sinal = PTHREAD_COND_INITIALIZER;
 static char   fila[XE_FILA][24];
@@ -50,6 +51,20 @@ static XeResp prontos[8];
 static int    nProntos;
 static int    fioVivo;
 static unsigned geracao;              // xtepg_limpar invalida o que esta em voo
+static NvPerfilSessao sessaoFila;
+
+// O recuo de um painel antigo nao segura os canais do perfil novo por um
+// minuto. A mesma condicao da fila acorda imediatamente ao limpar a sessao.
+static void pausar(unsigned ms, unsigned g, NvPerfilSessao sessao) {
+  struct timespec ate;
+  clock_gettime(CLOCK_REALTIME, &ate);
+  ate.tv_sec += ms / 1000; ate.tv_nsec += (long)(ms % 1000) * 1000000L;
+  if (ate.tv_nsec >= 1000000000L) { ate.tv_sec++; ate.tv_nsec -= 1000000000L; }
+  pthread_mutex_lock(&trava);
+  while (g == geracao && nv_perfil_sessao_atual(sessao))
+    if (pthread_cond_timedwait(&sinal, &trava, &ate) != 0) break;
+  pthread_mutex_unlock(&trava);
+}
 
 // Resumo no log a cada tanto, sem nada da pessoa (so contagens e HTTP).
 static int logPedidos, logComGrade, logSem, logFalhas, logUltimoHttp;
@@ -57,6 +72,7 @@ static int log429;   // so o fio escreve; o passo le para o resumo
 
 static void *fio(void *u) {
   int gap = XE_GAP_MS, seguidos429 = 0, bons = 0;
+  unsigned ultimaGeracao = 0;
   (void)u;
   for (;;) {
     char id[24];
@@ -78,8 +94,12 @@ static void *fio(void *u) {
     }
     snprintf(id, sizeof id, "%s", fila[--nFila]);
     g = geracao;
+    NvPerfilSessao sessao = sessaoFila;
     pthread_mutex_unlock(&trava);
+    if (!nv_perfil_sessao_atual(sessao)) continue;
+    if (ultimaGeracao != g) { gap = XE_GAP_MS; seguidos429 = bons = 0; ultimaGeracao = g; }
     memset(&r, 0, sizeof r);
+    r.sessao = sessao;
     snprintf(r.id, sizeof r.id, "%s", id);
     r.n = xtream_epg_curto(id, r.p, XE_PROG, &r.st);
     if (r.st == 429) {
@@ -92,7 +112,7 @@ static void *fio(void *u) {
       if (espera > XE_RECUO_MAX_S && ra <= 0) espera = XE_RECUO_MAX_S;
       gap = gap * 2 > XE_GAP_MAX_MS ? XE_GAP_MAX_MS : gap * 2;
       pthread_mutex_lock(&trava);
-      if (g == geracao && nFila < XE_FILA) {
+      if (g == geracao && nv_perfil_sessao_atual(sessao) && nFila < XE_FILA) {
         memmove(fila[1], fila[0], sizeof fila[0] * (size_t)nFila);
         snprintf(fila[0], sizeof fila[0], "%s", id);
         nFila++;
@@ -101,16 +121,16 @@ static void *fio(void *u) {
       printf("[xtepg] HTTP 429 do painel: pausa de %d s%s, intervalo %d ms\n", espera,
              ra > 0 ? " (Retry-After)" : "", gap);
       fflush(stdout);
-      sleep((unsigned)espera);
+      pausar((unsigned)espera * 1000, g, sessao);
       continue;
     }
     seguidos429 = 0;
     if (++bons >= XE_CALMA && gap > XE_GAP_MS) { gap = gap / 2 < XE_GAP_MS ? XE_GAP_MS : gap / 2; bons = 0; }
     pthread_mutex_lock(&trava);
-    if (g == geracao && nProntos < (int)(sizeof prontos / sizeof prontos[0]))
+    if (g == geracao && nv_perfil_sessao_atual(sessao) && nProntos < (int)(sizeof prontos / sizeof prontos[0]))
       prontos[nProntos++] = r;
     pthread_mutex_unlock(&trava);
-    usleep((useconds_t)gap * 1000);
+    pausar((unsigned)gap, g, sessao);
   }
   return NULL;
 }
@@ -150,6 +170,7 @@ void xtepg_querer(const char *id) {
   e->estado = XE_PEDIDO;
   e->quando = agora;
   pthread_mutex_lock(&trava);
+  sessaoFila = nv_perfil_sessao_ler();
   if (nFila == XE_FILA) {                     // cheia: o mais antigo sai
     memmove(fila[0], fila[1], sizeof fila[0] * (XE_FILA - 1));
     nFila--;
@@ -182,6 +203,7 @@ void xtepg_passo(void) {
   nProntos = 0;
   pthread_mutex_unlock(&trava);
   for (i = 0; i < n; i++) {
+    if (!nv_perfil_sessao_atual(r[i].sessao)) continue;
     XeEnt *e = achar(r[i].id);
     logPedidos++;
     if (r[i].n < 0) { logFalhas++; logUltimoHttp = r[i].st; }
@@ -200,6 +222,11 @@ void xtepg_passo(void) {
     if (logFalhas) printf(" (ultimo HTTP %d)\n", logUltimoHttp);
     fflush(stdout);
   }
+}
+
+int xtepg_carregando(const char *id) {
+  XeEnt *e = id ? achar(id) : NULL;
+  return e && e->estado == XE_PEDIDO;
 }
 
 int xtepg_tem(const char *id) {
@@ -260,7 +287,9 @@ int xtepg_faixa(const char *id, time_t de, time_t ate, EpgProg *out, int cap) {
 
 void xtepg_limpar(void) {
   memset(ent, 0, sizeof ent);
+  relogio = 0;
   pthread_mutex_lock(&trava);
   nFila = 0; nProntos = 0; geracao++;
+  pthread_cond_broadcast(&sinal);
   pthread_mutex_unlock(&trava);
 }

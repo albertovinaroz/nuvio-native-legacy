@@ -61,6 +61,7 @@ typedef struct {
 // Le as fixadas do perfil ATIVO (perfis_ativo()) e reaplica as que vao para a
 // Home. Idempotente; chamar ao abrir a Biblioteca.
 void lst_iniciar(void);
+void lst_abrir_sessao(void); // cancela resultados antigos e recarrega fixadas sem apagar arquivos
 // Solta o que esta em MEMORIA, sem tocar em arquivo. A proxima leitura recarrega
 // do disco — e o par lst_esquecer/lst_iniciar e exatamente o que um reinicio do
 // app faz, que e como o teste o usa.

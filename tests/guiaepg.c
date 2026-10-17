@@ -13,6 +13,7 @@
 //     vence "record", e a mesma chave em dois canais nao e ambiguidade;
 //   - canal "24h" sem grade nenhuma (nao casa, nunca).
 #include <assert.h>
+#include "nvtmp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -85,7 +86,7 @@ void  dados_fs_travar(void)           {}
 void  dados_fs_liberar(void)          {}
 char *dados_caminho(char *d, unsigned t, const char *n) { (void)d;(void)t;(void)n; return 0; }
 int   dados_apagar(const char *n)     { (void)n; return 0; }
-const char *dados_dir(void)           { return "/tmp"; }
+const char *dados_dir(void)           { return nvt(""); }
 
 static int falhas;
 static void confere(const char *o_que, int ok) {

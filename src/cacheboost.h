@@ -77,6 +77,11 @@ double cacheboost_volume_db(int pct);
 // cacheboost.c. `pct` 0..200; `mb` = cache limit for the NEXT open (0 = off).
 void cacheboost_backend_ganho(int pct);
 void cacheboost_backend_cache(int mb);
+// Warm resume (#492): the title of the NEXT open (arms with the cache; empty =
+// none), and the order to drop the cache kept from the last title (profile
+// switch). Android only: webOS/Tizen have no disk cache, so these are no-ops.
+void cacheboost_backend_titulo(const char *id);
+void cacheboost_backend_descartar(void);
 // #338: buffer preset (0 Auto, 1 Low, 2 Medium, 3 High) for the NEXT open.
 void cacheboost_backend_buffer(int preset);
 

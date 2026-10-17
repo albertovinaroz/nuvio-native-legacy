@@ -1,6 +1,7 @@
 // Exercise the production asynchronous lookup/refresh path with deterministic
 // HTTP responses. The ledger uses real atomic files/fsync; no external API.
 #include "dados.h"
+#include "nvtmp.h"
 #include "rede.h"
 #include <SDL2/SDL.h>
 #include <assert.h>
@@ -101,7 +102,7 @@ static void recorte(void) {
 }
 int main(void) {
   assert(SDL_Init(SDL_INIT_TIMER) == 0);
-  dados_iniciar("/tmp");
+  dados_iniciar(nvt(""));
   // Sem chave: nem a validacao nem a miniatura chegam a rede.
   assert(seekr_validar("") == 0);
   seekr_pedir("tt0133093", 0, 0, 7200000);

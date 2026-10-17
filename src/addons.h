@@ -11,7 +11,9 @@
 // stream_definir_lista, e a tela so precisa olhar addons_estado().
 #ifndef NV_ADDONS_H
 #define NV_ADDONS_H
+#include "watchstate.h"
 #include "addonurl.h"
+#include <stdint.h>
 
 typedef enum { ADD_PARADO = 0, ADD_BUSCANDO, ADD_PRONTO, ADD_VAZIO } AddEstado;
 
@@ -62,6 +64,8 @@ void addons_diferenca(const AddonRemoto *antes, int na, const AddonRemoto *depoi
 // primeiro sync terminar. Ficar sem fonte por alguns segundos e o
 // comportamento correto de "ninguem logado".
 void addons_esquecer(void);
+// Abre uma sessao de perfil limpa; nao espera nem refaz pedidos anteriores.
+void addons_abrir_sessao(void);
 int  addons_n(void);
 // Numero que sobe a cada mudanca na lista de addons (conta, liga/desliga,
 // adicao). app.c refaz a busca de fontes do titulo aberto quando ele muda —
@@ -82,6 +86,22 @@ const char *addons_base(int i);   // URL base, sem /manifest.json
 const char *addons_id_manifesto(int i);   // "id" do manifesto; "" ate a sonda ler
 const char *addons_nome_por_id(const char *id);   // nome de exibicao; "" se nao ha
 const char *addons_base_por_id(const char *idManifesto);   // "" ate a sonda conhecer o id
+int addons_base_por_id_copiar(const char *idManifesto, char *base, unsigned tam);
+typedef enum {
+  ADD_IDENTIDADE_AUSENTE = 0, ADD_IDENTIDADE_PENDENTE,
+  ADD_IDENTIDADE_FALHOU, ADD_IDENTIDADE_PRONTA
+} AddonIdentidadeEstado;
+// Ausencia so e confirmada depois de identificar toda a lista instalada.
+// Uma tentativa sem resposta/id e falha de identificacao, nao addon removido.
+AddonIdentidadeEstado addons_identidade_estado(const char *idManifesto);
+// Publica SOMENTE o id, sem esperar a montagem da Home/CW. O pedido pertence
+// a esta base, versao de lista e sessao; resposta velha nao altera a lista.
+// NULL/manifesto sem id encerra a tentativa com falha, preservando id conhecido.
+int addons_identidade_recebida(const char *base, unsigned versao, uint64_t sessao,
+                               const char *corpo);
+// Final capability publication keeps the same request ownership as identity.
+int addons_manifesto_recebido(const char *base, unsigned versao, uint64_t sessao,
+                              const char *corpo);
 int  addons_tem_catalogo(int i);  // 1 quando o addon fornece catalogo
 
 // Dispara a busca das fontes de `imdb` ("tt1234567", ou "tt1234567:1:2" para
@@ -260,6 +280,14 @@ int  addons_sondado(int i);
 //  -1 = nao da para saber (manifesto nao lido, ou sem idPrefixes).
 // `tipo` vazio nao filtra por tipo.
 int  addons_aceita_id(int i, const char *tipo, const char *id);
+// O addon `i` (ligado, manifesto lido) declara push watch_state v2? Copia a
+// declaracao para `out` e devolve 1; 0 = nao participa. Quem empurra e
+// watchstate.c, que cruza isto com tipo/ids/evento (ws_decl_aceita).
+int  addons_watchstate(int i, WsDecl *out);
+// Protege snapshots de base/identidade/declaracao com a mesma trava dos
+// escritores da lista e do manifesto. Soltar antes de rede ou wsenvio_podar.
+void addons_lista_travar(void);
+void addons_lista_destravar(void);
 // Le o manifesto de cada addon num fio proprio, uma vez por lista.
 //
 // SO SERVE COMO RESERVA hoje, e a distincao importa: ela era chamada de um
@@ -286,6 +314,15 @@ void addons_sondar_manifestos(void);
 // dele (vertudo.c) reconfere por quadro. `base`, que e o campo que os fios de
 // busca usam, nao e tocado aqui.
 void addons_manifesto_lido(int i, const char *corpo);
+
+// O MESMO, com recheck da base/configuracao, destino (conta/perfil) e versao
+// copiados sob a trava ANTES do download: so grava se o slot ainda e o mesmo.
+// E o caminho da descoberta, que baixa com a lista de um instante e pode receber a resposta
+// depois de a conta ter trocado/reordenado a lista — o manifesto atrasado de
+// um addon nao pode instalar capacidades nem declaracao watch_state no slot
+// de outro (ver addons_manifesto_lido_base em addons.c).
+void addons_manifesto_lido_base(int i, const char *base, const char *destino,
+                                unsigned versao, const char *corpo);
 
 // OS CATALOGOS DE CANAL QUE O MANIFESTO DECLARA (type tv/channel/channels/
 // live/iptv), lidos pela mesma passagem de addons_manifesto_lido. Existe para

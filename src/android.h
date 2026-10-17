@@ -10,6 +10,9 @@
 void android_iniciar(void);
 // Saved device mode: changes the existing Activity, without recreating native state.
 void android_interface_modo(int mobile);
+// Salva uma copia local do registro pelo seletor de arquivos do Android.
+// As mensagens ja vem traduzidas; nao envia nem altera o registro original.
+void android_baixar_registro(const char *arquivo, const char *sucesso, const char *falha);
 #ifdef NV_TOUCH_UI
 #include <SDL2/SDL.h>
 // Sinal do host enfileirado antes do finger UP sintetizado pelo SDL.

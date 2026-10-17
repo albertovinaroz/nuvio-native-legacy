@@ -1364,7 +1364,10 @@ void perfilsel_desenhar(Uint32 agora) {
   ponteiro_camada();
   ponteiro_alvo(0, 0, NV_TELA_W, NV_TELA_H, NULL, NULL, 0, 0);
 
-  desenhaFundo();
+  // Filmes/Luz/Projetor (psestilos) abrem pintando a tela inteira opaca: o
+  // preto daqui seria um glClear coberto por outro, sem mudar um pixel.
+  { int m0 = modoFundo();
+    if (m0 != PS_FUNDO_FILMES && m0 != PS_FUNDO_LUZ && m0 != PS_FUNDO_PROJETOR) desenhaFundo(); }
 
   // A tela inteira SOBE alguns pixels ao aparecer. E o mesmo gesto do resto do
   // app (mola NV_MOLA_TELA) e o que impede a troca de login/home para esta tela

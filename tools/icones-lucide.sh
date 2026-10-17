@@ -47,7 +47,7 @@ SVG="$DIR/lucide"
 NOMES="
 circle-play file-text folders house
 images info layout-dashboard monitor-cog palette panel-top plug puzzle
-rotate-ccw-clock rows-3 star user-round mic keyboard smartphone
+rotate-ccw-clock rows-3 star user-round mic keyboard smartphone shuffle
 rotate-cw x library eye eye-off users
 clock triangle-alert tv-minimal-play calendar download wifi-off wifi link-2-off
 cloud megaphone bookmark

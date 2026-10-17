@@ -4,6 +4,7 @@
 #include "socialvis.h"
 #include "catalogo.h"
 #include "recomenda.h"
+#include "perfis.h"
 #include "dados.h"
 #include "idioma.h"
 #include <SDL2/SDL.h>
@@ -49,7 +50,13 @@ static int temGeracao;
 // sem hora (ver socialvis.h). A assinatura e o titulo + acao + episodio do
 // evento mais novo da pessoa; mudou, e novidade. Fica em amigos-vistos.txt
 // (uma linha "id\tassinatura"), gravado so quando muda.
-#define SV_ARQ_VISTOS "amigos-vistos.txt"
+static const char *arquivoVistos(void) {
+  static char nome[48];
+  if (perfis_ativo() == 1) return "amigos-vistos.txt";
+  snprintf(nome, sizeof nome, "amigos-vistos-p%d.txt", perfis_ativo());
+  return nome;
+}
+#define SV_ARQ_VISTOS arquivoVistos()
 typedef struct { char id[96]; unsigned ass; } SvVisto;
 static SvVisto vistos[SV_AMIGOS_MAX * 2];
 static int nVistos, vistosLidos;
@@ -620,11 +627,10 @@ static void refazer(void) {
 static void conferirIdentidade(void) {
   unsigned g = recomenda_geracao();
   if (temGeracao && g != geracaoVista) {
-    dados_apagar(SV_ARQ_VISTOS); // Also close any race with the final old-account UI frame.
     free(externo); externo = NULL; nExterno = temExterno = 0;
     free(extras); extras = NULL; nExtras = 0;
     nBrutos = nFeed = nAmigos = nCtts = nVistos = 0;
-    memset(vistos, 0, sizeof vistos); vistosLidos = 1;
+    memset(vistos, 0, sizeof vistos); vistosLidos = 0;
     perfilPedido[0] = 0;
     catRevUlt = ~0u; recNUlt = -1; hashUlt = 0; refeitoEm = 0;
     rev++;

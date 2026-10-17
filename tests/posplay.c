@@ -5,6 +5,7 @@
 // tela depois do OK. Este teste cobre o caminho inteiro que o app.c consome:
 // posplay_evento -> posplay_pediu_episodio.
 #include "posplay.h"
+#include "nvtmp.h"
 #include "catalogo.h"
 #include "player.h"
 #include "ajustes.h"
@@ -43,7 +44,7 @@ static int quadroFilmeDecide(float dt, double pos, double dur) {
   int decidiu = 0, salvo, arq;
   fflush(stdout);
   salvo = dup(fileno(stdout));
-  arq = open("/tmp/nuvio-posplay-log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  arq = open(nvt("/nuvio-posplay-log.txt"), O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (arq >= 0) {
     dup2(arq, fileno(stdout));
     close(arq);
@@ -52,13 +53,13 @@ static int quadroFilmeDecide(float dt, double pos, double dur) {
     dup2(salvo, fileno(stdout));
   }
   close(salvo);
-  f = fopen("/tmp/nuvio-posplay-log.txt", "r");
+  f = fopen(nvt("/nuvio-posplay-log.txt"), "r");
   if (f) {
     while (fgets(linha, sizeof linha, f))
       if (strstr(linha, "[posplay] relacionados em")) decidiu = 1;
     fclose(f);
   }
-  remove("/tmp/nuvio-posplay-log.txt");
+  remove(nvt("/nuvio-posplay-log.txt"));
   return decidiu;
 }
 
@@ -288,7 +289,7 @@ int main(void) {
       // saida do resto do arquivo, e foi o que aconteceu na primeira versao.
       fflush(stdout);
       salvo = dup(fileno(stdout));
-      arq = open("/tmp/nuvio-posplay-log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+      arq = open(nvt("/nuvio-posplay-log.txt"), O_WRONLY | O_CREAT | O_TRUNC, 0600);
       if (arq >= 0) {
         dup2(arq, fileno(stdout));
         close(arq);
@@ -297,7 +298,7 @@ int main(void) {
         dup2(salvo, fileno(stdout));
       }
       close(salvo);
-      f = fopen("/tmp/nuvio-posplay-log.txt", "r");
+      f = fopen(nvt("/nuvio-posplay-log.txt"), "r");
       if (f) {
         while (fgets(linha, sizeof linha, f))
           if (strstr(linha, "[posplay] relacionados em")) decidiu = 1;
@@ -309,7 +310,7 @@ int main(void) {
         assert(0);
       }
     }
-    remove("/tmp/nuvio-posplay-log.txt");
+    remove(nvt("/nuvio-posplay-log.txt"));
     posplay_fechar(); }
   puts("ok  o painel de filme nao sobe no comeco, e ainda sobe no fim");
 
@@ -381,6 +382,53 @@ int main(void) {
     posplay_fechar();
   }
   puts("ok  filme com cena pos-creditos oferece continuar; sem sinal abre relacionado");
+
+  // OK num relacionado FORA do catalogo abre o titulo (semente, como o detalhe):
+  // antes ia por desc_pedir_titulo, um fio de rede, e nada abria no quadro.
+  { CatItem filme = {0};
+    const char *titulos[] = {"Um", "Fora"}, *anos[] = {"2026", "2025"},
+               *posters[] = {"", "https://x/p.jpg"};
+    snprintf(filme.imdb, sizeof filme.imdb, "tt0000100");
+    snprintf(filme.tipo, sizeof filme.tipo, "movie");
+    cat_definir(&filme, 1);
+    extras_shot_relacionados(titulos, anos, posters, 2);
+    posplay_fechar(); aquecer(7200, 0);
+    posplay_atualizar(.016f, 1000, 7100, 7200, 0, 0, 0);
+    assert(posplay_visivel());
+    assert(tecla(SDLK_RIGHT) == 1 && tecla(SDLK_RETURN) == 1);
+    assert(!posplay_visivel() && desc_titulo_pronto() >= 0);
+    extras_shot_relacionados(titulos, anos, posters, 0);
+    cat_definir(&c, 1); cat_definir_episodios(0, eps, 10);
+    posplay_fechar();
+  }
+  puts("ok  OK em relacionado fora do catalogo abre o titulo");
+
+  // #419: recomendacao TMDB ("tmdb:<id>") no pos-play abre com a semente que
+  // ja temos, mesmo sem IMDb no catalogo e sem depender do /meta imediato.
+  { CatItem filme = {0};
+    const char *titulos[] = {"Recomendado"}, *anos[] = {"2026"},
+               *posters[] = {"https://image.tmdb.org/t/p/w342/rec.jpg"},
+               *ids[] = {"tmdb:778"};
+    snprintf(filme.imdb, sizeof filme.imdb, "tt0000100");
+    snprintf(filme.tipo, sizeof filme.tipo, "movie");
+    cat_definir(&filme, 1);
+    extras_shot_relacionados_ids(titulos, anos, posters, ids, 1);
+    posplay_fechar(); aquecer(7200, 0);
+    posplay_atualizar(.016f, 1000, 7100, 7200, 0, 0, 0);
+    assert(posplay_visivel());
+    assert(tecla(SDLK_RETURN) == 1);
+    { int w = 0, k;
+      while (desc_titulo_buscando() && w++ < 500) usleep(10 * 1000);
+      k = desc_titulo_pronto();
+      assert(k >= 0);
+      assert(!strcmp(cat_item(k)->imdb, "tmdb:778"));
+      assert(cat_item(k)->tmdb == 778);
+      assert(!strcmp(cat_item(k)->titulo, "Recomendado")); }
+    extras_shot_relacionados(titulos, anos, posters, 0);
+    cat_definir(&c, 1); cat_definir_episodios(0, eps, 10);
+    posplay_fechar();
+  }
+  puts("ok  #419: OK em recomendacao tmdb abre com semente");
 
   // E a DURACAO PROVISORIA: se o pipeline informa 30 s no primeiro instante,
   // "video de 30 s aos 16 s" acima e verdade para a regra — quem segura e a
@@ -504,21 +552,21 @@ int main(void) {
   }
   intro_shot_definir(NULL, 0);
   puts("ok  prefetch antecipa a janela real em 10 s, com e sem creditos");
-  // #331: a contagem do proximo episodio so adianta com marcador REAL de creditos.
-  assert(posplay_contagem(1000, 1000, 0, 120.0, 1, 1, 5) == 0);           // cartao acabou de subir
-  assert(posplay_contagem(4999, 1000, 0, 120.0, 1, 1, 5) == 0);           // ainda no atraso
-  assert(posplay_contagem(5000, 1000, 0, 120.0, 1, 1, 5) == 10000);       // marcador real: 5 s a partir de agora
-  assert(posplay_contagem(5000, 1000, 0, 120.0, 1, 0, 5) == 0);           // estimativa: nao adianta
-  assert(posplay_contagem(60000, 1000, 0, 100.0, 1, 0, 5) == 0);          // estimativa, cartao ha muito: ainda nao
-  assert(posplay_contagem(5500, 1000, 10000, 100.0, 1, 1, 5) == 10000);   // armado: nao se move
-  assert(posplay_contagem(5000, 1000, 0, 120.0, 0, 1, 5) == 0);           // autoplay desligado: nunca
-  assert(posplay_contagem(2000, 1000, 0, 3.0, 1, 0, 5) == 5000);          // estimativa, 3 s de episodio: so o fim
-  assert(posplay_contagem(2000, 1000, 0, -1.0, 1, 1, 5) == 2000);         // passou do fim: dispara ja
-  assert(posplay_contagem(5000, 1000, 0, 120, 1, 1, 12) == 17000);
-  assert(posplay_contagem(5000, 1000, 0, 120, 1, 1, 1) == 6000);
-  assert(posplay_contagem(5000, 1000, 17000, 100, 0, 1, 12) == 0);
-  assert(posplay_contagem(5000, 1000, 0, 3, 1, 1, 12) == 8000);
-  puts("ok  contagem do proximo episodio: atraso, 5 s, autoplay desligado");
+  // #470: a contagem comeca com o cartao, para toda fonte aceita pelo player.
+  assert(posplay_contagem(1000, 0, 120.0, 1, 5) == 6000);        // conta ao subir
+  assert(posplay_contagem(4999, 0, 120.0, 1, 5) == 9999);        // sem atraso
+  assert(posplay_contagem(5000, 0, 120.0, 1, 5) == 10000);       // marcador real: 5 s a partir de agora
+  assert(posplay_contagem(5000, 0, 120.0, 1, 5) == 10000);       // mesma janela aceita pelo cartao
+  assert(posplay_contagem(60000, 0, 100.0, 1, 5) == 65000);       // estimativa tambem conta
+  assert(posplay_contagem(5500, 10000, 100.0, 1, 5) == 10000);   // armado: nao se move
+  assert(posplay_contagem(5000, 0, 120.0, 0, 5) == 0);           // autoplay desligado: nunca
+  assert(posplay_contagem(2000, 0, 3.0, 1, 5) == 5000);          // estimativa, 3 s de episodio: so o fim
+  assert(posplay_contagem(2000, 0, -1.0, 1, 5) == 2000);         // passou do fim: dispara ja
+  assert(posplay_contagem(5000, 0, 120, 1, 12) == 17000);
+  assert(posplay_contagem(5000, 0, 120, 1, 1) == 6000);
+  assert(posplay_contagem(5000, 17000, 100, 0, 12) == 0);
+  assert(posplay_contagem(5000, 0, 3, 1, 12) == 8000);
+  puts("ok  contagem do proximo episodio: imediata, configuravel, autoplay desligado");
 
   // Cena apos os creditos: o cartao oferece continuar, mas nao troca o
   // episodio enquanto a cena ainda roda. Sem sinal, a contagem antiga vale.
@@ -536,7 +584,6 @@ int main(void) {
     cat_definir_episodios(0, eps, 10);
     posplay_fechar();
     aquecer(3600.0, 1);
-    posplay_marcador_real(1);
     posplay_atualizar(0.016f, 1000, 3450.0, 3600.0, 1, 0, 1);
     assert(posplay_visivel() && posplay_sobre_video());
     posplay_atualizar(0.016f, 12000, 3470.0, 3600.0, 1, 0, 1);
@@ -551,7 +598,6 @@ int main(void) {
     assert(!posplay_visivel() && posplay_pediu_episodio(&t, &e) && e == 4);
     posplay_fechar();   // durante a cena a pessoa ainda pode ir ao proximo na mao
     aquecer(3600.0, 1);
-    posplay_marcador_real(1);
     posplay_atualizar(0.016f, 1000, 3450.0, 3600.0, 1, 0, 1);
     assert(posplay_visivel() && posplay_teste_foco() == 0);
     assert(tecla(SDLK_RIGHT) == 1 && posplay_teste_foco() == 1);
@@ -570,7 +616,6 @@ int main(void) {
     u.posCreditos = 0;
     cat_definir(&u, 1);
     cat_definir_episodios(0, eps, 10);
-    posplay_marcador_real(1);
     aquecer(3600.0, 1);
     posplay_atualizar(0.016f, 1000, 3450.0, 3600.0, 1, 0, 1);
     posplay_atualizar(0.016f, 12000, 3470.0, 3600.0, 1, 0, 1);

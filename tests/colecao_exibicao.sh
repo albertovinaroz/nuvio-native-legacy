@@ -15,4 +15,10 @@ cc "${sources[@]}" tests/colecao_exibicao.c -Isrc -o "$bin" -O1 -g \
   -L/opt/homebrew/lib -lSDL2 -lSDL2_image -lSDL2_ttf -lz -framework OpenGL \
   -Wall -Wextra -Wno-deprecated-declarations -Wno-macro-redefined 2>&1 \
   | { grep -E "colecao_exibicao|vertudo|error" || true; }
-"$bin"
+if [ "$#" -gt 0 ]; then
+  "$bin" "$1"
+else
+  "$bin"
+  "$bin" down
+  "$bin" cost
+fi

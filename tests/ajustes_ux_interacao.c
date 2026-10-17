@@ -1,5 +1,6 @@
 // Exercita o contrato do controle com persistência real numa pasta descartável.
 #include "../src/ajustes.c"
+#include "nvtmp.h"
 #include "../src/addonsui.h"
 #include "../src/pluginsui.h"
 #include <assert.h>
@@ -23,7 +24,7 @@ static void abrir(int op) { focarOpcao(op); key(SDLK_RETURN); assert(uxEditor); 
 int main(void) {
   char dir[1024], bad[1400]; char *antes;
   int original, foco, n, i;
-  snprintf(dir, sizeof dir, "%s/nuvio-ajustes-interacao-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+  snprintf(dir, sizeof dir, "%s/nuvio-ajustes-interacao-XXXXXX", nvt_dir());
   assert(mkdtemp(dir)); assert(SDL_Init(SDL_INIT_TIMER) == 0);
   assert(setenv("NUVIO_DADOS", dir, 1) == 0);
   dados_iniciar(dir); assert(!strcmp(dados_dir(), dir)); snprintf(dirAjustes, sizeof dirAjustes, "%s", dir);

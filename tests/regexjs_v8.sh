@@ -7,6 +7,8 @@
 #   bash tests/regexjs_v8.sh
 set -eu
 cd "$(dirname "$0")/.."
+cc -O1 -g -Wall -Wextra -Isrc src/regexjs.c tests/regexjs_pr489.c -o "${TMPDIR:-/tmp}/regexjs-pr489.$$" -lpthread
+"${TMPDIR:-/tmp}/regexjs-pr489.$$"; rm -f "${TMPDIR:-/tmp}/regexjs-pr489.$$"
 command -v node >/dev/null 2>&1 || { echo "regexjs_v8: sem node, pulado"; exit 0; }
 D=$(mktemp -d "${TMPDIR:-/tmp}/nuvio-regexjs-v8.XXXXXX")
 export NUVIO_DADOS="$D"

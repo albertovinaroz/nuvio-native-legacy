@@ -13,6 +13,7 @@
  * A rede e substituida: cada tamanho do TMDB devolve um JPEG da largura
  * real daquele tamanho (argv[1..3]: 780, 1280 e 1600 de largura). */
 #include <stdio.h>
+#include "nvtmp.h"
 #include <assert.h>
 #include <unistd.h>
 #define rede_baixar_bin redeTeste
@@ -87,7 +88,7 @@ static int promoveu(int idx, int limite) {
 }
 
 int main(int argc, char **argv) {
-  char dir[] = "/tmp/nuvio-texvariante-XXXXXX", dst[600], arq[600], cmd[700];
+  char dir[NVT_MAX], dst[600], arq[600], cmd[700]; nvt_set(dir, sizeof dir, "/nuvio-texvariante-XXXXXX");
   assert(argc == 4);
   arqW780 = argv[1]; arqW1280 = argv[2]; arqOrig = argv[3];
   assert(mkdtemp(dir));

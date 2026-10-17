@@ -12,6 +12,7 @@
 // mudarem la, este teste continua valido para o formato; o que ele mede e a
 // grade.
 #include "teclado.h"
+#include "nvtmp.h"
 #include "dados.h"
 #include "ajustes.h"
 #include "gfx.h"
@@ -110,7 +111,7 @@ static void fechar(void) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-teclado";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-teclado");
   const char *dir = getenv("NUVIO_DADOS");
   SDL_GLContext gl;
   int falhou = 0;

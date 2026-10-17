@@ -3,6 +3,7 @@
 // capada em PAG_SERVIDOR, como o servidor pode fazer) e responde a colecao inteira de
 // uma vez. Compilado com e sem -DNV_ANDROID (os tetos sao os mesmos nas duas).
 #include <assert.h>
+#include "nvtmp.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,7 +71,7 @@ static void captura(int liga) {
   fflush(stdout);
   if (liga) {
     int fd;
-    snprintf(caminho, sizeof caminho, "%s/biblimites-log.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", (int)getpid());
+    snprintf(caminho, sizeof caminho, "%s/biblimites-log.%d", nvt_dir(), (int)getpid());
     fd = open(caminho, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     salvo = dup(1);
     dup2(fd, 1); close(fd);

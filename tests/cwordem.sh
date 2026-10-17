@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # A Ordenacao de "Continuar assistindo" faz efeito (issue #127).
 #
 #   bash tests/cwordem.sh
@@ -15,7 +17,7 @@ set -eu
 cd "$(dirname "$0")/.."
 flags=()
 if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
-out=/tmp
+out=${TMPDIR:-/tmp}
 cc ${flags[@]+"${flags[@]}"} src/cwordem.c src/cwretido.c tests/cwordem.c -Isrc \
   -o "$out/nuvio-cwordem-tests" -O1 -g -Wall -Wextra
 "$out/nuvio-cwordem-tests"

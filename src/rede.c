@@ -105,7 +105,8 @@ void rede_resposta_limpar(RedeResposta *r) {
 #error "NV_TPK40 e so da libnuvio.so do Tizen 4/5; nunca junto com Emscripten"
 #endif
 
-#ifdef NV_TPK40
+#if defined(NV_TPK40) || defined(NV_UM_FIO)
+// ST fibers also use pthread keys: compiler TLS belongs to the browser thread.
 // ESTADO POR FIO SEM _Thread_local (Tizen 4/5, #137/#180).
 //
 // A libnuvio.so dessas TVs pode entrar pelo carregador de ELF proprio do host
@@ -221,6 +222,7 @@ static long redeLimiteAtual(void) {
 // espera e o navegador.
 
 #include <emscripten.h>
+#include "fio1.h"   // so tem corpo com NV_UM_FIO; nv_http troca de implementacao abaixo
 
 // Faz a requisicao e devolve um buffer de malloc com o corpo (com um NUL extra
 // no fim, para quem trata como texto). Escreve o tamanho em *tam e o status
@@ -229,6 +231,125 @@ static long redeLimiteAtual(void) {
 // `cabs` vem como uma unica string com uma linha "Nome: valor" por cabecalho,
 // separadas por \n, porque atravessar um vetor de ponteiros por EM_JS custaria
 // mais codigo do que juntar e separar.
+//
+// DUAS IMPLEMENTACOES, MESMA ASSINATURA C, nada abaixo desta regiao muda:
+// pedir2() chama nv_http() sem saber qual das duas esta ativa.
+//
+//   mt/ (pthreads de verdade): XHR SINCRONO. O fio que chama fica bloqueado
+//   de verdade, que e o contrato de rede_baixar ("chamar de um fio proprio")
+//   — o worker pthread trava, os outros workers e o fio principal seguem.
+//
+//   st/ (--um-fio, NV_UM_FIO): nao ha OUTRO fio de verdade para travar sem
+//   travar TUDO — so existe este fio de JS. Por isso aqui e fetch()
+//   ASSINCRONO, mas com um cuidado que nao e obvio: um EM_ASYNC_JS comum
+//   (await fetch(...)) suspenderia, via ASYNCIFY, a PILHA INTEIRA desta
+//   fibra e devolveria o controle ao LACO DE EVENTOS DO NAVEGADOR ate a
+//   promessa resolver — exatamente o mesmo mecanismo de nv_ceder_quadro em
+//   main.c. Isso tiraria o controle do ESCALONADOR DE FIBRAS (fio1.c) pelo
+//   tempo inteiro da requisicao: nenhuma OUTRA fibra (nem o proprio desenho,
+//   que so roda quando o fio principal volta a chamar fio1_rodar a cada
+//   quadro) rodaria nesse meio tempo — o app inteiro pareceria travado numa
+//   unica requisicao de rede, o oposto do que pthreads de verdade dão.
+//
+//   A saida e nao usar EM_ASYNC_JS aqui: o fetch() e disparado por uma
+//   EM_JS comum (sincrona, so entrega o pedido e devolve um id na hora), e a
+//   fibra chamadora fica num LACO POLLING fio1_ceder()+nv_http_pronto_assinc,
+//   que devolve o controle ao ESCALONADOR (nao ao navegador) a cada volta —
+//   as demais fibras (e o desenho, via fio1_rodar no laco de quadro) correm
+//   normalmente enquanto o fetch() ainda esta em voo no proprio navegador.
+#ifdef NV_UM_FIO
+
+EM_JS(int, nv_http_iniciar_assinc, (const char *metodo, const char *url,
+                                    const char *cabs, const char *corpo), {
+  if (!Module.nvFioReqs) { Module.nvFioReqs = {}; Module.nvFioProxId = 1; }
+  var id = Module.nvFioProxId++;
+  var m = UTF8ToString(metodo), u = UTF8ToString(url);
+  var cab = {};
+  if (cabs) {
+    UTF8ToString(cabs).split("\n").forEach(function (linha) {
+      var i = linha.indexOf(":");
+      if (i <= 0) return;
+      cab[linha.slice(0, i).trim()] = linha.slice(i + 1).trim();
+    });
+  }
+  // redirect:'follow' (padrao do fetch) para manter o mesmo comportamento do
+  // XHR sincrono: rede_url_final quer o ENDERECO FINAL depois de
+  // redirecionamentos (res.url), nao o pedido.
+  var init = { method: m, headers: cab, redirect: "follow" };
+  if (corpo) init.body = UTF8ToString(corpo);
+  var reg = { pronto: false, erro: false, status: 0, url: "", etag: "", bytes: null };
+  Module.nvFioReqs[id] = reg;
+  fetch(u, init).then(function (res) {
+    reg.status = res.status;
+    // Pelo /v1/proxy do worker (so no VIDAA), res.url e o endereco do PROXY;
+    // o destino real depois dos redirecionamentos vem neste cabecalho, que o
+    // worker expoe por CORS. Sem proxy ele nao existe e vale res.url.
+    reg.url = res.headers.get("x-nuvio-url-final") || res.url || "";
+    // getResponseHeader (XHR) e headers.get (fetch) tem a mesma regra: null
+    // quando o servidor nao mandou (ou o CORS escondeu) — string vazia e a
+    // resposta certa para quem chama nos dois casos.
+    reg.etag = res.headers.get("etag") || "";
+    return res.arrayBuffer();
+  }).then(function (buf) {
+    // arrayBuffer(), nao responseText+charset=x-user-defined como no XHR
+    // sincrono: aqui os bytes vem binarios de verdade, sem o truque de
+    // tunelar byte a byte por um charset de 1 byte.
+    reg.bytes = new Uint8Array(buf);
+    reg.pronto = true;
+  }).catch(function () {
+    // Mesma regra do XHR sincrono: falha de rede (CORS, DNS, offline) vira
+    // "requisicao nem saiu" — nv_http_colher_assinc devolve 0.
+    reg.erro = true;
+    reg.pronto = true;
+  });
+  return id;
+});
+
+// Nao-bloqueante DE VERDADE (nao e EM_ASYNC_JS): so olha uma flag. E o que
+// permite ao chamador ceder para outras fibras entre uma chamada e outra.
+EM_JS(int, nv_http_pronto_assinc, (int id), {
+  var reg = Module.nvFioReqs && Module.nvFioReqs[id];
+  return (reg && reg.pronto) ? 1 : 0;
+});
+
+EM_JS(char *, nv_http_colher_assinc, (int id, int *tam, int *status,
+                                      char *urlFinal, int urlFinalTam,
+                                      char *etag, int etagTam), {
+  var reg = Module.nvFioReqs && Module.nvFioReqs[id];
+  if (Module.nvFioReqs) delete Module.nvFioReqs[id];
+  if (status) HEAP32[status >> 2] = 0;
+  if (tam) HEAP32[tam >> 2] = 0;
+  if (!reg || reg.erro || !reg.bytes) return 0;
+  if (status) HEAP32[status >> 2] = reg.status;
+  if (urlFinal && urlFinalTam > 0) stringToUTF8(reg.url, urlFinal, urlFinalTam);
+  if (etag && etagTam > 0) stringToUTF8(reg.etag, etag, etagTam);
+  var n = reg.bytes.length;
+  var p = _malloc(n + 1);
+  if (!p) return 0;
+  HEAPU8.set(reg.bytes, p);
+  HEAPU8[p + n] = 0;
+  if (tam) HEAP32[tam >> 2] = n;
+  return p;
+});
+
+static char *nv_http(const char *metodo, const char *url, const char *cabs,
+                     const char *corpo, int *tam, int *status,
+                     char *urlFinal, int urlFinalTam,
+                     char *etag, int etagTam, int *retryAfter) {
+  int id = nv_http_iniciar_assinc(metodo, url, cabs, corpo);
+  // Retry-After nao e lido no st/: 0 = "sem pista", o chamador usa a espera padrao.
+  if (retryAfter) *retryAfter = 0;
+  // fio1_ceder() dentro de uma fibra troca para outra fibra pronta (ou para
+  // o desenho, via o escalonador); chamado da RAIZ (fio principal fora de
+  // fibra — nao deveria acontecer aqui, rede_baixar exige "fio proprio", mas
+  // sem essa garantia em tempo de compilacao) ele gira o escalonador em vez
+  // de travar o navegador parado num while(1) puro.
+  while (!nv_http_pronto_assinc(id)) fio1_ceder();
+  return nv_http_colher_assinc(id, tam, status, urlFinal, urlFinalTam, etag, etagTam);
+}
+
+#else /* !NV_UM_FIO: mt/, pthreads de verdade, XHR sincrono de sempre */
+
 EM_JS(char *, nv_http, (const char *metodo, const char *url, const char *cabs,
                         const char *corpo, int *tam, int *status,
                         char *urlFinal, int urlFinalTam,
@@ -257,7 +378,12 @@ EM_JS(char *, nv_http, (const char *metodo, const char *url, const char *cabs,
 
   if (status) HEAP32[status >> 2] = xhr.status;
   if (urlFinal && urlFinalTam > 0) {
-    stringToUTF8(xhr.responseURL || "", urlFinal, urlFinalTam);
+    // x-nuvio-url-final: so o /v1/proxy do worker manda (VIDAA). Pelo proxy,
+    // responseURL e o endereco do proprio proxy e nao diz para onde a fonte
+    // redirecionou; nos outros alvos o cabecalho nunca vem e nada muda.
+    var fim = null;
+    try { fim = xhr.getResponseHeader("x-nuvio-url-final"); } catch (e) {}
+    stringToUTF8(fim || xhr.responseURL || "", urlFinal, urlFinalTam);
   }
   // Cabecalho de RESPOSTA, para rede_baixar_etag. getResponseHeader devolve
   // null quando o servidor nao mandou o cabecalho (ou quando o CORS o esconde);
@@ -288,10 +414,14 @@ EM_JS(char *, nv_http, (const char *metodo, const char *url, const char *cabs,
   return p;
 });
 
+#endif /* NV_UM_FIO */
+
+#ifndef NV_UM_FIO
 _Thread_local long rede_teto = 0;
 // Destino do endereco final do proximo pedido (so rede_baixar_trecho_st liga).
 static _Thread_local char *redeFinalDst;
 static _Thread_local unsigned redeFinalTam;
+#endif
 
 void rede_preparar(void) { }   // nao ha biblioteca para carregar
 unsigned rede_pedido_capacidades(void) { return 0; }
@@ -367,11 +497,188 @@ static char *juntarCabs(const char *const *cab, const char *extra) {
 static void (*aviso401)(const char *url);
 void rede_avisar_401(void (*f)(const char *url)) { aviso401 = f; }
 // Ouvinte da saude da rede — ver rede_avisar_saude no cabecalho.
-static void (*avisoSaude)(int codigo, const char *url);
-void rede_avisar_saude(void (*f)(int codigo, const char *url)) { avisoSaude = f; }
+static void (*avisoSaude)(int codigo, const char *url, unsigned primeiraMs);
+void rede_avisar_saude(void (*f)(int codigo, const char *url, unsigned primeiraMs)) { avisoSaude = f; }
 // Ouvinte do pedido por host (o painel de registro, aba Rede) — ver rede.h.
 static void (*avisoHost)(const char *url, int codigo, int http, unsigned ms);
 void rede_avisar_host(void (*f)(const char *url, int codigo, int http, unsigned ms)) { avisoHost = f; }
+
+#ifdef NV_VIDAA
+// VAZIO E O PADRAO, como em todo outro arquivo que usa NV_REC_URL (ver
+// recomenda.c, xtream.c, avisos.c, noticias.c, tex_cache.c): tools/env.sh so
+// emite o -D quando o servico de recomendacoes esta configurado, e uma build
+// sem ele nao pode falhar a compilar por causa disto.
+#ifndef NV_REC_URL
+#define NV_REC_URL ""
+#endif
+// O /v1/proxy mora no worker da TV (servidor/tv), nao mais na API: la ele nao
+// some quando alguem publica a API de outra arvore (issue #135).
+#ifndef NV_VIDAA_PROXY_URL
+#define NV_VIDAA_PROXY_URL "https://nuvio-tv.henriquef29.workers.dev"
+#endif
+
+// ---------------------------------------------------------------- VIDAA/PROXY
+//
+// A pagina da TV VIDAA e servida em https pelo proprio worker de
+// recomendacoes (rotaTv em servidor/recomendacoes/src/index.js). O Chromium
+// da Hisense bloqueia toda requisicao http:// feita de dentro dela (conteudo
+// misto), e alguns https tambem falham por o destino nao mandar CORS. Os dois
+// casos chegam aqui como o MESMO sintoma: nv_http devolve NULL com http==0
+// (nem open() nem send() lancam; o navegador so recusa em silencio). O worker
+// tem uma rota generica para isto, /v1/proxy (servidor/recomendacoes/src/proxy.js):
+// builda a mesma url como query e devolve com CORS.
+//
+// NUNCA PROXY:
+//   - NV_REC_URL: seria pedir ao proxy que buscasse a si mesmo.
+//   - SUPABASE_URL: rotaProxy so aceita GET sem cabecalho de autenticacao
+//     (ver proxy.js) — mandar login ali so gastaria uma volta a mais para
+//     falhar do mesmo jeito, e o pior caso seria logar a url errada.
+//   - VIDEO: o worker rejeita content-type video/audio de proposito (ver
+//     tipoAceito em proxy.js). Um HEAD/probe de stream por ali sempre
+//     voltaria 415, nunca 200 — so custaria a rodada. streams.c troca
+//     rede_url_final por rede_url_final_vidaa exatamente para nao precisar
+//     desta distincao aqui: aquela funcao NUNCA tenta o proxy (ver embaixo)
+//     e devolve "desconhecido" em vez de "morta" quando o bloqueio acontece.
+static int vidaaNuncaProxiar(const char *url) {
+  if (NV_REC_URL[0] && !strncmp(url, NV_REC_URL, strlen(NV_REC_URL))) return 1;
+  if (!strncmp(url, NV_VIDAA_PROXY_URL, strlen(NV_VIDAA_PROXY_URL))) return 1;
+#ifdef NV_SUPABASE_URL
+  if (NV_SUPABASE_URL[0] && !strncmp(url, NV_SUPABASE_URL, strlen(NV_SUPABASE_URL))) return 1;
+#endif
+  return 0;
+}
+
+// URL QUE "PARECE VIDEO", pelos mesmos sinais que o classificador do painel
+// Xtream usa do lado do worker (xtream.js: classificar) — caminho de
+// streaming ou extensao de midia. Nao precisa ser exaustivo: o objetivo aqui
+// e so evitar mandar ao proxy algo que ELE MESMO vai rejeitar por tipo,
+// nunca decidir o que e ou nao video para reproducao (isso e do addon).
+static int vidaaPareceVideo(const char *url) {
+  static const char *caminhos[] = { "/live/", "/movie/", "/series/", "/timeshift/", "/hls/", "/streaming/" };
+  static const char *extensoes[] = { ".m3u8", ".m3u", ".ts", ".mp4", ".mkv", ".avi" };
+  size_t i;
+  for (i = 0; i < sizeof caminhos / sizeof caminhos[0]; i++)
+    if (strstr(url, caminhos[i])) return 1;
+  for (i = 0; i < sizeof extensoes / sizeof extensoes[0]; i++) {
+    const char *p = strstr(url, extensoes[i]);
+    // So conta perto do fim (antes de `?`/`#` ou do fim da string): um
+    // ".mp4" no MEIO de um caminho de CDN nao e a extensao do recurso.
+    if (p) { const char *f = p + strlen(extensoes[i]);
+      if (*f == 0 || *f == '?' || *f == '#') return 1; }
+  }
+  return 0;
+}
+
+// Host[:porta] de uma URL http(s), para a tabela abaixo e para o log. So
+// string — o ramo Emscripten nunca tem libcurl para fazer isto por API.
+static void vidaaHostDe(const char *url, char *dst, size_t tam) {
+  const char *p = strstr(url, "://"), *fim;
+  size_t n;
+  dst[0] = 0;
+  if (!p) return;
+  p += 3;
+  for (fim = p; *fim && *fim != '/' && *fim != '?' && *fim != '#'; fim++) {}
+  n = (size_t)(fim - p);
+  if (n >= tam) n = tam - 1;
+  memcpy(dst, p, n);
+  dst[n] = 0;
+}
+
+// HOSTS QUE JA SE PROVARAM SO ACESSIVEIS VIA PROXY, para as chamadas
+// SEGUINTES ao mesmo host nao pagarem de novo a rodada perdida (https direto
+// ate o status 0, so entao o proxy). 64 e teto generoso: um titulo nao fala
+// com mais que uma duzia de addons/CDNs distintos. Descarte por indice mais
+// antigo (round-robin), nao por LRU de verdade — simples e suficiente para
+// uma tabela deste tamanho, que so existe para ECONOMIZAR uma rodada, nunca
+// para decidir corretude (o pior caso de um descarte errado e pagar de novo a
+// rodada perdida, nao um proxy indevido).
+#define VIDAA_HOSTS_MAX 64
+static char vidaaHosts[VIDAA_HOSTS_MAX][128];
+static int vidaaHostsN;
+static int vidaaHostsProx;
+static pthread_mutex_t vidaaHostsTrava = PTHREAD_MUTEX_INITIALIZER;
+
+static int vidaaHostViaProxy(const char *host) {
+  int i, achou = 0;
+  if (!host[0]) return 0;
+  pthread_mutex_lock(&vidaaHostsTrava);
+  for (i = 0; i < vidaaHostsN; i++)
+    if (!strcmp(vidaaHosts[i], host)) { achou = 1; break; }
+  pthread_mutex_unlock(&vidaaHostsTrava);
+  return achou;
+}
+
+// Registra o host e loga UMA VEZ: a propria ausencia na tabela e a guarda —
+// quem ja estava nao entra de novo, nem loga de novo.
+static void vidaaHostLembrar(const char *host) {
+  int i, ja = 0;
+  if (!host[0]) return;
+  pthread_mutex_lock(&vidaaHostsTrava);
+  for (i = 0; i < vidaaHostsN; i++)
+    if (!strcmp(vidaaHosts[i], host)) { ja = 1; break; }
+  if (!ja) {
+    int slot;
+    if (vidaaHostsN < VIDAA_HOSTS_MAX) slot = vidaaHostsN++;
+    else { slot = vidaaHostsProx; vidaaHostsProx = (vidaaHostsProx + 1) % VIDAA_HOSTS_MAX; }
+    snprintf(vidaaHosts[slot], sizeof vidaaHosts[slot], "%s", host);
+  }
+  pthread_mutex_unlock(&vidaaHostsTrava);
+  if (!ja) printf("[rede] via proxy: %s\n", host);
+}
+
+// Percent-encode minimo (RFC 3986, so os "unreserved" ficam de fora) — o
+// bastante para uma url inteira caber dentro de ?u=. malloc: o chamador libera.
+static char *vidaaUrlEncode(const char *s) {
+  static const char hex[] = "0123456789ABCDEF";
+  size_t n = strlen(s), i, o = 0;
+  char *out = (char *)malloc(n * 3 + 1);
+  if (!out) return NULL;
+  for (i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)s[i];
+    if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') out[o++] = (char)c;
+    else { out[o++] = '%'; out[o++] = hex[c >> 4]; out[o++] = hex[c & 0xF]; }
+  }
+  out[o] = 0;
+  return out;
+}
+
+// "NV_VIDAA_PROXY_URL/v1/proxy?u=<url-encoded>", num buffer malloc'ado (o chamador
+// libera). NULL so por falta de memoria.
+static char *vidaaUrlProxy(const char *url) {
+  char *enc = vidaaUrlEncode(url), *out;
+  size_t tam;
+  if (!enc) return NULL;
+  tam = strlen(NV_VIDAA_PROXY_URL) + strlen("/v1/proxy?u=") + strlen(enc) + 1;
+  out = (char *)malloc(tam);
+  if (out) snprintf(out, tam, "%s/v1/proxy?u=%s", NV_VIDAA_PROXY_URL, enc);
+  free(enc);
+  return out;
+}
+#endif /* NV_VIDAA */
+
+#ifdef NV_VIDAA
+// Cabecalho AUTHORIZATION presente (em `cab` ou no `extraCab` fixo de quem
+// chamou)? Se sim, esta chamada NUNCA vai para o /v1/proxy generico, nem
+// forcada (http://) nem por retry (https:// com status 0): rotaProxy so
+// repassa `accept` e `if-none-match` (ver proxy.js) e DESCARTA qualquer
+// outro cabecalho, entao proxiar um pedido autenticado devolveria um 401 por
+// FALTA DE CREDENCIAL, nao pela credencial ser invalida — e
+// rede_avisar_401 nao sabe diferenciar os dois. NV_REC_URL/Supabase ja saem
+// pela lista de destinos proibidos; isto cobre o Trakt e qualquer outro host
+// https que precise de Authorization.
+static int vidaaTemAutorizacao(const char *const *cab, const char *extraCab) {
+  int k;
+  if (extraCab && !strncasecmp(extraCab, "Authorization:", 14)) return 1;
+  for (k = 0; cab && cab[k]; k++)
+    if (!strncasecmp(cab[k], "Authorization:", 14)) return 1;
+  return 0;
+}
+
+static int vidaaPodeProxiar(const char *url, const char *const *cab, const char *extraCab) {
+  return !vidaaNuncaProxiar(url) && !vidaaPareceVideo(url) &&
+         !vidaaTemAutorizacao(cab, extraCab);
+}
+#endif
 
 static char *pedir2(const char *metodo, const char *url, const char *const *cab,
                     const char *extraCab, const char *corpo,
@@ -379,19 +686,91 @@ static char *pedir2(const char *metodo, const char *url, const char *const *cab,
                     int *retryAfter) {
   char *cabs, *corpoResp;
   int n = 0, http = 0;
+#ifdef NV_VIDAA
+  char *urlProxiada = NULL;
+  const char *urlEfetiva = url;
+#endif
   if (etag && tamEtag) etag[0] = 0;
   if (status) *status = 0;
   if (retryAfter) *retryAfter = 0;
   if (!url || !*url) return NULL;
   if (!status && (!metodo || !strcmp(metodo, "GET")) && negcache_barra(url, (long)time(NULL))) return NULL;
+#ifdef NV_VIDAA
+  // http:// NUNCA SAI DIRETO: a pagina da TV e https, e o navegador bloqueia
+  // conteudo misto antes mesmo de tentar a conexao. HOST JA CONHECIDO como
+  // "so acessivel via proxy" (vidaaHostLembrar, mais abaixo) tambem entra
+  // direto pela mesma rota, para nao pagar de novo a rodada perdida.
+  if (vidaaPodeProxiar(url, cab, extraCab)) {
+    if (!strncmp(url, "http://", 7)) {
+      urlProxiada = vidaaUrlProxy(url);
+      if (urlProxiada) urlEfetiva = urlProxiada;
+    } else {
+      char host[128];
+      vidaaHostDe(url, host, sizeof host);
+      if (vidaaHostViaProxy(host)) {
+        urlProxiada = vidaaUrlProxy(url);
+        if (urlProxiada) urlEfetiva = urlProxiada;
+      }
+    }
+  }
+  cabs = juntarCabs(cab, extraCab);
+  corpoResp = nv_http(metodo, urlEfetiva, cabs, corpo, &n, &http,
+                      redeFinalDst, (int)redeFinalTam, etag, (int)tamEtag, retryAfter);
+  free(cabs);
+  // HTTPS QUE FALHOU DIRETO (http==0: nem chegou a ter status, o mesmo
+  // sintoma do bloqueio de conteudo misto) -> tenta 1x via proxy. So quando
+  // AINDA NAO tinha ido por ele: o http:// e o host ja conhecido acima ja
+  // usaram a rota certa de cara, e tentar de novo so repetiria a mesma falha.
+  if (!corpoResp && http == 0 && !urlProxiada && vidaaPodeProxiar(url, cab, extraCab)) {
+    char *urlP = vidaaUrlProxy(url);
+    if (urlP) {
+      char *cabs2 = juntarCabs(cab, extraCab);
+      int n2 = 0, http2 = 0;
+      char fim2[512];
+      char *r2;
+      fim2[0] = 0;
+      r2 = nv_http(metodo, urlP, cabs2, corpo, &n2, &http2, fim2, (int)sizeof fim2, etag, (int)tamEtag, NULL);
+      free(cabs2);
+      // SO VALE SE FOI O PROXY QUE BUSCOU. rotaProxy manda x-nuvio-url-final
+      // (o destino real, "http...") em TODA resposta que veio do destino, 404
+      // inclusive; sem o cabecalho nv_http devolve o endereco do proprio
+      // worker, e a resposta e dele: erro do proxy (403/415/429/502/504) ou
+      // rota inexistente. MEDIDO em 24/09: o worker publicado ainda nao tem
+      // /v1/proxy e responde 401 {"erro":"nao autenticado"} a qualquer url.
+      // Este ramo aceitava esse 401 como se fosse do destino: logava "via
+      // proxy: images.metahub.space" (o proxy nao buscou nada), anotava o
+      // host, e dai em diante todo pedido a ele ia so ao proxy, sem tentar o
+      // direto — 22 a 99 "HTTP 401 em images.metahub.space" por abertura da
+      // home. Um host que falhou UMA vez por acaso (rede) ficava preso ao
+      // proxy quebrado do mesmo jeito. Agora so anota quando o proxy entregou,
+      // e o erro do worker sai com o nome certo no log.
+      if (r2 && !strncmp(fim2, "http", 4) &&
+          !(NV_REC_URL[0] && !strncmp(fim2, NV_REC_URL, strlen(NV_REC_URL))) &&
+          strncmp(fim2, NV_VIDAA_PROXY_URL, strlen(NV_VIDAA_PROXY_URL))) {
+        char host[128];
+        corpoResp = r2; n = n2; http = http2;
+        vidaaHostDe(url, host, sizeof host);
+        vidaaHostLembrar(host);
+      } else if (r2) {
+        char host[128];
+        vidaaHostDe(url, host, sizeof host);
+        printf("[rede] proxy nao buscou %s (HTTP %d do worker)\n", host, http2);
+        free(r2);
+      }
+      free(urlP);
+    }
+  }
+  free(urlProxiada);
+#else
   cabs = juntarCabs(cab, extraCab);
   corpoResp = nv_http(metodo, url, cabs, corpo, &n, &http,
                       redeFinalDst, (int)redeFinalTam, etag, (int)tamEtag, retryAfter);
   free(cabs);
+#endif
   if (status) *status = http;
   // XHR sem status e sem corpo = nao houve resposta (rede, DNS, CORS): para a
   // saude da rede e o "6" do curl. Qualquer status e transporte que funcionou.
-  if (avisoSaude) avisoSaude(corpoResp || http ? 0 : 6, url);
+  if (avisoSaude) avisoSaude(corpoResp || http ? 0 : 6, url, 0);
   if (avisoHost) avisoHost(url, corpoResp || http ? 0 : 6, http, 0);
   if (http == 401 && aviso401) aviso401(url);
   negcache_nota(url, corpoResp || http ? 0 : 6, http, (long)time(NULL));
@@ -562,6 +941,24 @@ char *rede_postar_seguro_st(const char *url, int segundos, const char *const *ca
   return rede_postar_st(url, segundos, cab, corpo, status);
 }
 
+#ifdef NV_VIDAA
+// HEAD never downloads a media body, including when Range would be ignored;
+// in --um-fio nv_http is fetch() and yields to the other fibers meanwhile.
+// 1 resolved, 0 dead (real HTTP error), -1 unknown (blocked, or HEAD refused:
+// signed GET URLs answer HEAD with 403).
+static int sondaVidaa(const char *url, const char *cabs, char *dst, unsigned tam, int *http) {
+  int n = 0;
+  char *corpo;
+  *http = 0;
+  dst[0] = 0;
+  corpo = nv_http("HEAD", url, cabs, NULL, &n, http, dst, (int)tam, NULL, 0, NULL);
+  if (!corpo) return -1;
+  free(corpo);
+  if (*http == 403 || *http == 405 || *http == 501) return -1;
+  if (*http >= 200 && *http < 300 && dst[0]) return 1;
+  return *http > 0 ? 0 : -1;
+}
+#else
 // Sonda sem corpo atravessando a ponte. O XHR ainda recebe o corpo inteiro se
 // o servidor ignorar Range, mas nao aloca essa copia no heap do WASM.
 EM_JS(int, nv_url_sonda, (const char *url, const char *cabs, char *dst,
@@ -600,6 +997,7 @@ EM_JS(int, nv_url_sonda, (const char *url, const char *cabs, char *dst,
   stringToUTF8(finalUrl, dst, tam);
   return 1;
 });
+#endif
 
 int rede_url_final_cab(const char *url, int segundos, const char *const *cab,
                        char *dst, unsigned tam, int *status) {
@@ -623,8 +1021,15 @@ int rede_url_final_tipo(const char *url, int segundos, const char *const *cab,
   // mas honram Range.
   cabs = juntarCabs(cab, NULL);
   if (cab && cab[0] && !cabs) return 0;
+#ifdef NV_VIDAA
+  // No type/size from HEAD (mime empty, corpo -1). Unknown is not dead: the
+  // player tries the URL itself (same policy as verificarUma).
+  ok = sondaVidaa(url, cabs, dst, tam, &http);
+  if (ok < 0) ok = snprintf(dst, tam, "%s", url) < (int)tam;
+#else
   ok = nv_url_sonda(url, cabs, dst, (int)tam, &http, mime,
                     mime && mimeTam < INT_MAX ? (int)mimeTam : 0, &c32);
+#endif
   free(cabs);
   if (corpo) *corpo = c32;
   if (status) *status = http;
@@ -634,6 +1039,19 @@ int rede_url_final_tipo(const char *url, int segundos, const char *const *cab,
 int rede_url_final(const char *url, int segundos, char *dst, unsigned tam) {
   return rede_url_final_cab(url, segundos, NULL, dst, tam, NULL);
 }
+
+#ifdef NV_VIDAA
+// Ver rede.h. NUNCA passa pelo proxy (o proprio pedir2 evita isto por
+// vidaaPareceVideo — url de video sempre volta 415 do worker), entao esta
+// chamada e SEMPRE direta: um bloqueio de conteudo misto ou de CORS aqui e
+// ROTINEIRO, nao a excecao, e e exatamente o que -1 comunica ao chamador.
+int rede_url_final_vidaa(const char *url, int segundos, char *dst, unsigned tam) {
+  int http;
+  (void)segundos;
+  if (!url || !*url || !dst || tam == 0) return -1;
+  return sondaVidaa(url, NULL, dst, tam, &http);
+}
+#endif
 
 // VAZAO NO TIZEN (ver rede_medir_vazao em rede.h). XHR sincrono so devolve
 // quando o corpo inteiro chegou, entao nao ha "bytes por segundo" de dentro de
@@ -739,6 +1157,10 @@ int rede_aquecer_lote(const char *const *origens, int n, unsigned *ms) {
   return 0;
 }
 
+int rede_aquecer_job(const char *const *origens, int n, unsigned *ms, RedeJob *job) {
+  (void)job; return rede_aquecer_lote(origens, n, ms);
+}
+
 // Navegador nao abre socket. O websocket do Tizen web usa o WebSocket do
 // proprio navegador (discordws.c); estes existem para o modulo linkar.
 RedeTls *rede_tls_abrir(const char *url, int segundos) { (void)url; (void)segundos; return NULL; }
@@ -754,9 +1176,8 @@ void rede_tls_fechar(RedeTls *t) { (void)t; }
 // rede_baixar_trecho_st le: o resto do modulo segue devolvendo NULL e logando.
 static _Thread_local int redeCurlLocal;
 #endif
-// Texto do ultimo erro de TRANSPORTE deste fio ("curl 35: ..."), para a tela de
-// login e o log do APK de release (#223): o stderr da libcurl nao chega a lugar
-// nenhum la. Sem segredo: a libcurl so descreve a falha, nunca o corpo.
+// Numeric transport error for this thread. Raw backend errors may contain
+// request URLs/credentials, so never publish them in the UI or log (#418).
 #ifdef NV_TPK40
 // 4/5: sem TLS de compilador (ver o RedeFio la em cima).
 #define redeErroTxt (redeFio()->erroTxt)
@@ -840,8 +1261,8 @@ static _Thread_local int redeParcialOk;
 static void (*aviso401)(const char *url);
 void rede_avisar_401(void (*f)(const char *url)) { aviso401 = f; }
 // Ouvinte da saude da rede — ver rede_avisar_saude no cabecalho.
-static void (*avisoSaude)(int codigo, const char *url);
-void rede_avisar_saude(void (*f)(int codigo, const char *url)) { avisoSaude = f; }
+static void (*avisoSaude)(int codigo, const char *url, unsigned primeiraMs);
+void rede_avisar_saude(void (*f)(int codigo, const char *url, unsigned primeiraMs)) { avisoSaude = f; }
 // Ouvinte do pedido por host (o painel de registro, aba Rede) — ver rede.h.
 static void (*avisoHost)(const char *url, int codigo, int http, unsigned ms);
 void rede_avisar_host(void (*f)(const char *url, int codigo, int http, unsigned ms)) { avisoHost = f; }
@@ -1143,18 +1564,31 @@ static void *pegarHandle(const char *url) {
 // da resposta abortada, que sai no pedido seguinte. Download completo segue
 // reaproveitado (e o ganho de 0,5-0,8 s por imagem). Conexao que fica anota o
 // host (e o do fim dos redirecionamentos) para o limite de ociosidade.
-static void soltarHandleR(void *c, int r, const char *url) {
-  // TODO pedido da libcurl passa por aqui com o CURLcode: e o ponto unico da
-  // saude da rede (redesaude.h decide o que e transporte).
-  if (avisoSaude) avisoSaude(r, url);
+static void descartarHandle(void *c) {
+  curl_cleanup(c);
+  if (curl_reset) {
+    pthread_setspecific(handleChave, NULL);
+    hostsEsquecer();
+  }
+}
+static void soltarHandleDesde(void *c, int r, const char *url, unsigned primeiraMs) {
+  // #382: HTTP recebido prova conectividade mesmo se o corpo falhou/parou.
+  // O CURLcode original continua com o chamador e no painel de pedidos.
+  if (avisoSaude) {
+    long http = 0;
+    if (curl_getinfo) curl_getinfo(c, INFO_RESPONSE_CODE, &http);
+    // #382: "Resolving timed out" (28 sem resolver) vai como codigo proprio:
+    // o resolvedor da TV demora minutos depois do boot sem a casa estar fora.
+    avisoSaude(http > 0 && r != 42 && r != 23 ? 0
+               : r == 28 && strstr(redeErroBuf, "Resolving timed out") ? 1028 : r, url, primeiraMs);
+  }
   if (avisoHost) {
     long http = 0;
     double seg = 0;
     if (curl_getinfo) { curl_getinfo(c, INFO_RESPONSE_CODE, &http); curl_getinfo(c, INFO_TEMPO_TOTAL, &seg); }
     avisoHost(url, r, (int)http, seg > 0 ? (unsigned)(seg * 1000.0 + 0.5) : 0u);
   }
-#ifdef NV_ANDROID
-  // #266/#332: tempos dos primeiros pedidos e de toda falha — DNS, TCP e TLS
+  // #266/#332/#382: tempos dos primeiros pedidos e de toda falha — DNS, TCP e TLS
   // separados (CURLINFO_*_TIME, acumulados desde o inicio). So o host vai ao log.
   { static int vistos;
     int n = __atomic_add_fetch(&vistos, 1, __ATOMIC_RELAXED);
@@ -1171,36 +1605,32 @@ static void soltarHandleR(void *c, int r, const char *url) {
       fflush(stdout);
     }
   }
-#endif
-  if (!curl_reset) { curl_cleanup(c); return; }
-  if (r != 0) {
-    curl_cleanup(c);
-    pthread_setspecific(handleChave, NULL);
-    hostsEsquecer();
-    return;
-  }
+  if (!curl_reset || r != 0) { descartarHandle(c); return; }
   { unsigned long agora = redeAgoraMs();
     char *fim = NULL;
     hostUsado(url, agora);
     if (curl_getinfo && !curl_getinfo(c, INFO_URL_FINAL, &fim) && fim) hostUsado(fim, agora); }
 }
 
+static void soltarHandleR(void *c, int r, const char *url) {
+  soltarHandleDesde(c, r, url, 0);
+}
+
 // OPCOES DE TODO PEDIDO, com o prazo em ms.
 //
 // CONNECTTIMEOUT: DNS + TCP + TLS numa conexao nova levam 0,14-0,7 s na C9
 // (curl da TV, mzstatic). O padrao da libcurl e esperar ate o prazo inteiro, e
-// a resolucao e c-ares (curl -V da TV: AsynchDNS, c-ares 1.12; resolv.conf
-// aponta para o 127.0.0.1 do connman), que pelo padrao dele so reenvia uma
-// consulta sem resposta depois de 5 s — com prazo de 6 s, uma consulta perdida
-// seria curl 28 (padrao do c-ares, NAO medido na TV). Metade do prazo, entre
-// 2 e 5 s, deixa o resto para a segunda tentativa (rede_baixar_interno2).
+// o c-ares antigo pode reenviar uma consulta perdida so depois de ~5 s.
+// Metade do prazo, entre 2 e 10 s: pedidos de 30 s permitem essa retransmissao
+// e ainda deixam tempo para o retry, sem aumentar o prazo total. O backend da
+// biblioteca carregada vai ao log no arranque; curl -V nao prova qual ela usa.
 // KEEPALIVE: sonda a conexao parada no cache a cada 15 s, o que mantem viva a
 // entrada do NAT e faz a morta dar erro no socket (a libcurl a descarta sem
 // tentar mandar nada por ela).
 static unsigned long conexaoMs(unsigned long prazoMs) {
   unsigned long m = prazoMs / 2;
   if (m < 2000) m = 2000;
-  if (m > 5000) m = 5000;
+  if (m > 10000) m = 10000;
   return m < prazoMs ? m : prazoMs;
 }
 static void opcoesComuns(void *c, unsigned long prazoMs) {
@@ -1227,11 +1657,10 @@ static void opcoesComuns(void *c, unsigned long prazoMs) {
   curl_setopt(c, OPT_ERRORBUFFER, redeErroBuf);
 }
 
-// Guarda o texto da falha (so o codigo e a frase da libcurl, sem URL nem corpo).
+// Keep only the curl code: raw error buffers can repeat secret request data.
 static void anotarErro(int r) {
   if (!r) { redeErroTxt[0] = 0; return; }
-  snprintf(redeErroTxt, sizeof redeErroTxt, "curl %d%s%.150s", r,
-           redeErroBuf[0] ? ": " : "", redeErroBuf);
+  snprintf(redeErroTxt, sizeof redeErroTxt, "curl %d", r);
 }
 const char *rede_ultimo_erro(void) { return redeErroTxt; }
 
@@ -1582,6 +2011,34 @@ static int abrirReal(void) {
 #else
   if (curl_global) curl_global(3 /* CURL_GLOBAL_DEFAULT */);
 #endif
+  // Prefixo ABI de curl_version_info_data ate CURLVERSION_SECOND (7.11.1).
+  // Sem curl.h, como as opcoes acima: a biblioteca carregada vem do aparelho.
+  {
+    typedef struct {
+      int age;
+      const char *version;
+      unsigned version_num;
+      const char *host;
+      int features;
+      const char *ssl_version;
+      long ssl_version_num;
+      const char *libz_version;
+      const char *const *protocols;
+      const char *ares;
+      int ares_num;
+    } CurlVersao;
+    const CurlVersao *(*versao)(int);
+    const CurlVersao *v;
+    *(void **)(&versao) = dlsym(h, "curl_version_info");
+    v = versao ? versao(1 /* CURLVERSION_SECOND */) : NULL;
+    if (v) printf("[rede] libcurl=%s tls_backend=%s async_dns=%s%s\n", v->version ? v->version : "?",
+                  v->ssl_version ? v->ssl_version : "none",
+                  v->age >= 1 && v->ares ? "c-ares/" :
+                  (v->features & (1 << 7)) ? "threaded" : "no (synchronous)",
+                  v->age >= 1 && v->ares ? v->ares : "");
+    else printf("[rede] curl_version_info indisponivel\n");
+    fflush(stdout);
+  }
   // DEPOIS do global_init e ANTES de soltar a trava: a partir daqui qualquer fio
   // pode entrar em curl_easy_perform, e e la que o OpenSSL comeca a ser usado.
 #ifndef NV_ANDROID   // libcurl do APK nao usa libcrypto 1.0 (e dlopen de libcrypto.so seria do sistema)
@@ -1696,6 +2153,12 @@ static char *viaAndroid(const char *verbo, const char *url, int segundos,
   if (status) *status = st;
   else if (st < 200 || st > 299) { free(r); return NULL; }  // como rede_baixar sem status
   if (tam) *tam = bytes;
+  // #205: a contagem tambem vai no estado do fio. Quem baixa ARTE le
+  // redeBytesLocal (rede_baixar_bin_medido_controle), nao o `tam`, e este e o
+  // unico caminho de download que nao passa pelo recebedor da libcurl — sem
+  // isto, todo corpo entregue aqui chegava ao tex_cache como "corpo curto
+  // (0 B)" e a fileira inteira ficava sem arte, refetch a cada item (TCL).
+  redeBytesLocal = bytes;
   return r;
 }
 // 1 = este pedido simples vai direto pelo Android (sem tocar na libcurl).
@@ -1856,6 +2319,7 @@ static char *rede_baixar_interno3(const char *url, int segundos, long *tam,
   void *c, *lista = NULL;
   int r = 0, tentativa, reusada = 0;
   unsigned long inicio, prazoMs, gasto = 0;
+  unsigned primeiraMs = 0;
   caca.dst = (etag && tamEtag > 1) ? etag : NULL;
   caca.tam = tamEtag;
   caca.retry = retry;
@@ -1927,7 +2391,9 @@ static char *rede_baixar_interno3(const char *url, int segundos, long *tam,
              (long)b.n, gasto);
       fflush(stdout);
       if (lista) { curl_setopt(c, OPT_HTTPHEADER, (void *)0); if (slist_free) slist_free(lista); lista = NULL; }
-      soltarHandleR(c, r, url);            // r != 0: descarta o handle
+      // #382: conta so o resultado final, mas preserva a janela da primeira falha.
+      primeiraMs = (unsigned)(inicio + gasto);
+      descartarHandle(c);
       free(b.p);
       b.p = NULL; b.n = b.cap = 0;
       if (etag && tamEtag) etag[0] = 0;
@@ -1965,7 +2431,7 @@ static char *rede_baixar_interno3(const char *url, int segundos, long *tam,
     negcache_nota(url, r, (int)http, (long)time(NULL));
     if (!r && http >= 400 && !status) {
       if (lista) { curl_setopt(c, OPT_HTTPHEADER, (void *)0); if (slist_free) slist_free(lista); }
-      soltarHandleR(c, r, url);
+      soltarHandleDesde(c, r, url, primeiraMs);
       free(b.p);
       { char seg[120];
         printf("[rede] HTTP %ld em %s\n", http, rede_url_publica(url, seg, sizeof seg)); }
@@ -1973,7 +2439,7 @@ static char *rede_baixar_interno3(const char *url, int segundos, long *tam,
       return NULL;
     } }
   if (lista) { curl_setopt(c, OPT_HTTPHEADER, (void *)0); if (slist_free) slist_free(lista); }
-  soltarHandleR(c, r, url);
+  soltarHandleDesde(c, r, url, primeiraMs);
   // 23 = CURLE_WRITE_ERROR. Quando ha teto, ele e o resultado ESPERADO: o
   // recebedor devolve menos bytes de proposito para cortar a conexao assim que
   // enche. Nesse caso o que ja veio e exatamente o que se queria — tratar como
@@ -2003,10 +2469,9 @@ static char *rede_baixar_interno3(const char *url, int segundos, long *tam,
   // rede lenta (bytes > 0, prazo inteiro) e DNS/conexao que nao abriu (nova,
   // 0 bytes). O comeco da linha fica igual para quem ja procura por ele.
   if (r != 0) { char seg[120]; free(b.p);
-    printf("[rede] falha %d em %s (conexao %s, %ld bytes, %lu ms%s)%s%s\n", r,
+    printf("[rede] falha %d em %s (conexao %s, %ld bytes, %lu ms%s)\n", r,
            rede_url_publica(url, seg, sizeof seg), reusada ? "reusada" : "nova",
-           (long)b.n, gasto, tentativa ? ", 2a tentativa" : "",
-           redeErroBuf[0] ? ": " : "", redeErroBuf);
+           (long)b.n, gasto, tentativa ? ", 2a tentativa" : "");
     fflush(stdout);
     return NULL; }
   redeBytesLocal = (long)b.n;
@@ -2115,7 +2580,11 @@ int rede_url_final(const char *url, int segundos, char *dst, unsigned tam) {
 // sai da chave para ficar no estacionamento. ms[i] = tempo da origem i (0 =
 // falhou). Devolve quantas abriram.
 static size_t descartarCorpo(void *d, size_t t, size_t q, void *u) { (void)d; (void)u; return t * q; }
-int rede_aquecer_lote(const char *const *origens, int n, unsigned *ms) {
+static int vigiarMorno(void *u, long long a, long long b, long long c, long long d) {
+  (void)a; (void)b; (void)c; (void)d;
+  return rede_job_estado((RedeJob *)u) != REDE_OK;
+}
+int rede_aquecer_job(const char *const *origens, int n, unsigned *ms, RedeJob *job) {
   char ok[REDE_ESTAC_HOSTS][96];
   int i, abriu = 0, nok = 0;
   void *c;
@@ -2135,8 +2604,18 @@ int rede_aquecer_lote(const char *const *origens, int n, unsigned *ms) {
     curl_setopt(c, OPT_WRITEFUNCTION, descartarCorpo);
     curl_setopt(c, OPT_FOLLOWLOCATION, (long)0);
     opcoesComuns(c, 4000UL);
+    if (rede_job_estado(job) != REDE_OK) { soltarHandleR(c, 42, u); break; }
+    if (job) {
+      curl_setopt(c, OPT_XFERINFOFUNCTION, vigiarMorno);
+      curl_setopt(c, OPT_XFERINFODATA, job);
+      curl_setopt(c, OPT_NOPROGRESS, 0L);
+    }
     t0 = redeAgoraMs();
     r = performTmdb(c, u);
+    curl_setopt(c, OPT_XFERINFOFUNCTION, (void *)0);
+    curl_setopt(c, OPT_XFERINFODATA, (void *)0);
+    curl_setopt(c, OPT_NOPROGRESS, 1L);
+    if (rede_job_estado(job) != REDE_OK) r = 42;
     if (ms) { unsigned long dt = redeAgoraMs() - t0; ms[i] = r ? 0 : (unsigned)(dt ? dt : 1); }
     soltarHandleR(c, r, u);
     if (!r) {
@@ -2152,6 +2631,9 @@ int rede_aquecer_lote(const char *const *origens, int n, unsigned *ms) {
     estacionar(c, ok, nok);
   }
   return abriu;
+}
+int rede_aquecer_lote(const char *const *origens, int n, unsigned *ms) {
+  return rede_aquecer_job(origens, n, ms, NULL);
 }
 
 char *rede_postar(const char *url, int segundos, const char *const *cab,
@@ -2206,9 +2688,11 @@ static char *postarNativo(const char *url, int segundos, const char *const *cab,
   void *c, *lista = NULL;
   int r;
   if (status) *status = 0;
-  if (!url || !*url || !abrir()) return NULL;
+  anotarErro(0);
+  if (!url || !*url) { anotarErro(3); return NULL; }
+  if (!abrir()) { anotarErro(2); return NULL; }
   c = seguro ? curl_init() : pegarHandle(url);
-  if (!c) return NULL;
+  if (!c) { anotarErro(27); return NULL; }
   curl_setopt(c, OPT_URL, url);
   curl_setopt(c, OPT_WRITEFUNCTION, receber);
   curl_setopt(c, OPT_WRITEDATA, &b);
@@ -2429,7 +2913,7 @@ int rede_medir_vazao(const char *url, const char *const *cab, int segundos,
   curl_setopt(c, OPT_HEADERDATA, &ct);
   curl_setopt(c, OPT_FOLLOWLOCATION, (long)1);
   // Prazo: a janela mais o prazo do 1o byte (8 s, ou o de rede_vazao_espera) para DNS, TLS, redirecionamentos e o primeiro
-  // byte. O conexaoMs de opcoesComuns fica no teto de 5 s.
+  // byte. O conexaoMs de opcoesComuns fica no teto de 10 s.
   opcoesComuns(c, ct.janelaMs + vazEsperaMs);
   curl_setopt(c, OPT_XFERINFOFUNCTION, contadorVigia);
   curl_setopt(c, OPT_XFERINFODATA, &ct);
@@ -2821,9 +3305,167 @@ char *rede_baixar_trecho64_cab(const char *url, const char *headers,
   return rede_baixar_trecho64_final(url, headers, start, end, size, total, status, cancelled, NULL, NULL);
 }
 
+/* ONE LONG READ, LIKE THE TV'S OWN PLAYER (Samsung DTS/TrueHD converter).
+ *
+ * The ranged reader above asks 4 MiB at a time from up to 4 lanes. A 4K remux
+ * at 60-67 Mbit/s is then ~2 requests a second on 4 connections, and TorBox's
+ * CDN throttled it after about a minute and refused every connection after
+ * (S95C, 13/10/2026), while the TV's player streaming the same file over one
+ * connection never dropped. This asks "bytes=start-" once and hands the body
+ * to `sink` as it arrives. The sink may block (backpressure: the converter is
+ * paced by the TV); time spent inside it does not count as a stall. */
+typedef struct {
+  DtsRange r;
+  int (*sink)(void *, const char *, size_t);
+  void *opaque;
+  int stopped, accepted;
+  int64_t got;
+  uint64_t lastByteMs;
+  long stallMs;
+} DtsFluxo;
+static uint64_t fluxoAgoraMs(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
+}
+static size_t dtsFluxoBody(void *data, size_t size, size_t count, void *user) {
+  DtsFluxo *f = user;
+  size_t n;
+  if (size && count > SIZE_MAX / size) return 0;
+  n = size * count;
+  if (f->r.cancel && __atomic_load_n(f->r.cancel, __ATOMIC_RELAXED)) return 0;
+  if (f->r.status >= 300 && f->r.status < 400) return n;
+  if (!f->accepted) {
+    /* 206 starting exactly where asked; a 200 is the whole file, usable only
+     * when the request was for byte 0 (some origins ignore Range). */
+    if (f->r.status == 206 && f->r.valid && f->r.start == f->r.requested) f->accepted = 1;
+    else if (f->r.status == 200 && f->r.requested == 0) f->accepted = 1;
+    else { f->r.overflow = 1; return 0; }
+  }
+  if (!f->sink(f->opaque, data, n)) { f->stopped = 1; return 0; }
+  f->got += (int64_t)n;
+  f->lastByteMs = fluxoAgoraMs();
+  return n;
+}
+static int dtsFluxoProgress(void *user, long long dt, long long dn, long long ut, long long un) {
+  DtsFluxo *f = user;
+  (void)dt; (void)dn; (void)ut; (void)un;
+  if (f->r.cancel && __atomic_load_n(f->r.cancel, __ATOMIC_RELAXED)) return 1;
+  return f->stallMs > 0 && fluxoAgoraMs() - f->lastByteMs > (uint64_t)f->stallMs;
+}
+int rede_fluxo64(const char *url, const char *headers, int64_t start,
+                 int (*sink)(void *opaque, const char *data, size_t n), void *opaque,
+                 int64_t *total, int *status, volatile int *cancelled,
+                 char *final, int *cross, long stall_ms, int64_t *bytes) {
+  char current[8192], range[48], origin[128];
+  int hop, public_only = 0, downgraded = 0;
+  if (total) *total = -1;
+  if (status) *status = 0;
+  if (final) final[0] = 0;
+  if (cross) *cross = 0;
+  if (bytes) *bytes = 0;
+  if (!url || !sink || strlen(url) >= sizeof current || start < 0 || !abrir()) return -1;
+  if (strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) return -1;
+  snprintf(current, sizeof current, "%s", url);
+  if (!dtsRangeOrigin(url, origin, sizeof origin)) return -1;
+  snprintf(range, sizeof range, "%lld-", (long long)start);
+  for (hop = 0; hop < 6; hop++) {
+    DtsFluxo f;
+    void *c, *list;
+    int result;
+    long http = 0;
+    char redirected[8192] = "", *next = NULL;
+    if (cancelled && __atomic_load_n(cancelled, __ATOMIC_RELAXED)) return -1;
+    memset(&f, 0, sizeof f);
+    f.r.requested = start; f.r.total = -1; f.r.cancel = cancelled;
+    f.sink = sink; f.opaque = opaque; f.stallMs = stall_ms; f.lastByteMs = fluxoAgoraMs();
+    c = pegarHandle(current);
+    if (!c) return -1;
+    opcoesComuns(c, 15000);                 /* connect deadline from here...      */
+    curl_setopt(c, OPT_TIMEOUT_MS, (long)0); /* ...but no limit on the whole body */
+    curl_setopt(c, OPT_SSL_VERIFYPEER, (long)1);
+    curl_setopt(c, OPT_SSL_VERIFYHOST, (long)2);
+    if (discordCa[0]) curl_setopt(c, OPT_CAINFO, discordCa);
+    curl_setopt(c, OPT_URL, current);
+    curl_setopt(c, OPT_RANGE, range);
+    curl_setopt(c, OPT_FOLLOWLOCATION, (long)0);
+    curl_setopt(c, OPT_WRITEFUNCTION, dtsFluxoBody);
+    curl_setopt(c, OPT_WRITEDATA, &f);
+    curl_setopt(c, OPT_HEADERFUNCTION, dtsRangeHeader);
+    curl_setopt(c, OPT_HEADERDATA, &f.r);
+    curl_setopt(c, OPT_XFERINFOFUNCTION, dtsFluxoProgress);
+    curl_setopt(c, OPT_XFERINFODATA, &f);
+    curl_setopt(c, OPT_NOPROGRESS, (long)0);
+    list = downgraded ? NULL : dtsRangeHeaders(headers, public_only);
+    if (list) curl_setopt(c, OPT_HTTPHEADER, list);
+    result = performTmdb(c, url);
+    if (curl_getinfo) {
+      curl_getinfo(c, INFO_RESPONSE_CODE, &http);
+      curl_getinfo(c, 1048607, &next);
+      if (next && strlen(next) < sizeof redirected)
+        snprintf(redirected, sizeof redirected, "%s", next);
+    }
+    if (status) *status = (int)http;
+    if (list && slist_free) slist_free(list);
+    soltarHandleR(c, result, current);
+    if (bytes) *bytes = f.got;
+    if (f.r.total >= 0 && total) *total = f.r.total;
+    if (!result && http >= 300 && http < 400 && redirected[0]) {
+      char host[128];
+      if (strncmp(redirected, "http://", 7) && strncmp(redirected, "https://", 8)) return -1;
+      if (!dtsRangeOrigin(redirected, host, sizeof host)) return -1;
+      if (strcmp(host, origin)) public_only = 1;
+      if (!strncmp(current, "https://", 8) && !strncmp(redirected, "http://", 7)) downgraded = public_only = 1;
+      snprintf(current, sizeof current, "%s", redirected);
+      continue;
+    }
+    if (f.accepted) {
+      if (final && hop > 0) snprintf(final, 8192, "%s", current);
+      if (cross) *cross = public_only;
+    }
+    if (f.stopped) return 1;                 /* the sink asked to stop */
+    if (!result && f.accepted) return 0;     /* body ended (EOF or a capped range) */
+    return -1;                               /* error: status/curl, bytes so far in *bytes */
+  }
+  return -1;
+}
+
 #endif  /* __EMSCRIPTEN__ */
 
+// #382: o resolvedor da TV falha por minutos depois do boot ("Resolving timed out").
+// Falha de transporte (status 0) tenta de novo com espera crescente; resposta
+// HTTP, ou tentativa que gastou o prazo inteiro, encerra.
+#ifndef REDE_POST_ESPERA_MS
+#define REDE_POST_ESPERA_MS 1000
+#endif
+char *rede_postar_repetindo(const char *url, int segundos, const char *const *cab,
+                            const char *corpo, int *status, int tentativas) {
+  char *r = NULL;
+  int k;
+  for (k = 0; k < tentativas || k == 0; k++) {
+    unsigned long t0 = redeAgoraMs();
+    r = rede_postar_st(url, segundos, cab, corpo, status);
+    if (r || !status || *status != 0 || k + 1 >= tentativas) break;
+    if (redeAgoraMs() - t0 >= (unsigned long)segundos * 1000UL * 3 / 4) break;
+    { struct timespec d;
+      unsigned long ms = (unsigned long)REDE_POST_ESPERA_MS << k;
+      d.tv_sec = (time_t)(ms / 1000); d.tv_nsec = (long)(ms % 1000) * 1000000L;
+      nanosleep(&d, NULL); }
+  }
+  return r;
+}
+
 #ifdef __EMSCRIPTEN__
+int rede_fluxo64(const char *u, const char *h, int64_t s, int (*sk)(void *, const char *, size_t), void *o,
+                 int64_t *t, int *st, volatile int *c, char *f, int *x, long ms, int64_t *b) {
+  (void)u; (void)h; (void)s; (void)sk; (void)o; (void)c; (void)ms;
+  if (t) *t = -1;
+  if (st) *st = 0;
+  if (f) f[0] = 0;
+  if (x) *x = 0;
+  if (b) *b = 0;
+  return -1;
+}
 char *rede_baixar_trecho64_cab(const char *u, const char *h, int64_t s, int64_t e, long *n, int64_t *t, int *st, volatile int *c) {
   (void)u; (void)h; (void)s; (void)e; (void)c;
   if (n) *n = 0;
@@ -2866,7 +3508,7 @@ static unsigned long redeAgoraMs(void) {
 // pedido do resto volta com ZERO bytes em ~140 ms, toda vez, e as tentativas
 // de 2 s e 5 s so repetem a recusa. Quem chama le isto logo depois de
 // rede_baixar_trecho_st, NO MESMO FIO, para recuar de verdade.
-#ifndef NV_TPK40   // no NV_TPK40 e campo da struct por fio (topo)
+#if !defined(NV_TPK40) && !defined(NV_UM_FIO) // otherwise stored in RedeFio
 static _Thread_local int redeRestoRecusado;
 #endif
 int rede_resto_recusado(void) { return redeRestoRecusado; }

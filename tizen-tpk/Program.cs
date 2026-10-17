@@ -48,8 +48,10 @@ namespace NuvioTpk
         [DllImport("libnuvio.so")] static extern void nv_tpk_config(int esperaMs, int swapZero);
         [DllImport("libnuvio.so")] static extern void nv_tpk_tecla(string nome, int apertou);
         [DllImport("libnuvio.so")] static extern void nv_tpk_log(string linha);
+        [DllImport("libnuvio.so")] static extern void nv_tpk_ciclo(int memoria);
         [DllImport("libdl.so.2")] static extern IntPtr dlopen(string path, int flags);
         [DllImport("libdl.so.2")] static extern IntPtr dlerror();
+        [DllImport("libc.so.6")] static extern int setenv(string name, string value, int overwrite);
         // Reserva de teclas de midia (#196), ver ReservaTeclasMidia. Assinaturas
         // do Ecore_Wl2.h/Ecore_Wayland2.h do rootstrap tizen-9.0-device.core.
         [DllImport("libecore_wl2.so.1")] static extern IntPtr ecore_wl2_window_find(uint id);
@@ -185,6 +187,10 @@ namespace NuvioTpk
         Video video;
 #if NV_TEXTO
         Texto texto;
+#else
+        // Guardado aqui de proposito: o C chama os delegates do Voz; sem esta
+        // referencia o GC os recolheria.
+        Voz voz;
 #endif
         bool soCarregada;
 
@@ -293,6 +299,12 @@ namespace NuvioTpk
             // CANARIO (Texto.cs): teclado/ditado do sistema. So com -p:NvTextoCanario=1.
             try { texto = new Texto(a => { if (principal != null) principal.Post(_ => a(), null); else a(); }, s => video.Log(s)); }
             catch (Exception e) { Etapa("note texto-init " + e.GetType().Name + ": " + e.Message); }
+#else
+            // Botao de microfone das buscas (Voz.cs): abre o teclado da Samsung
+            // so para o microfone dele. Se aparece, decide o ajuste "Botao de
+            // microfone na busca" com o que a TV diz sobre microfone.
+            try { voz = new Voz(a => { if (principal != null) principal.Post(_ => a(), null); else a(); }, s => video.Log(s)); }
+            catch (Exception e) { Etapa("note voz-init " + e.GetType().Name + ": " + e.Message); }
 #endif
 
             // API8: o callback roda no fio principal e o DALi troca os buffers
@@ -302,6 +314,8 @@ namespace NuvioTpk
             Etapa("begin nv_tpk_iniciar");
             try
             {
+                // Reuse the model already reported by the [tv] startup line.
+                setenv("NUVIO_TV_MODEL", Tv().Split(' ')[0], 1);
 #if NV_API8
                 nv_tpk_config(-1, 0);
 #else
@@ -933,8 +947,18 @@ namespace NuvioTpk
             pausado = true;
             if (!jaPausou) { jaPausou = true; Janela("primeira pausa (canario 8: video no gl, gl opaco, sem prime, sobe no appcontrol; ela ainda vem?)"); }
             Etapa("note pause" + Contagem() + " mainVisible=" + principalVisivel + (JanelaUnica ? " (glview)" : " glVisible=" + glVisivel));
+#if !NV_TEXTO
+            try { voz?.Cancelar(); } catch { }
+#endif
             video?.PausarPeloSistema();
+            try { nv_tpk_ciclo(0); } catch (EntryPointNotFoundException) { }
             base.OnPause();
+        }
+
+        protected override void OnLowMemory(Tizen.Applications.LowMemoryEventArgs e)
+        {
+            try { nv_tpk_ciclo(1); } catch (EntryPointNotFoundException) { }
+            base.OnLowMemory(e);
         }
 
         protected override void OnResume()
@@ -998,6 +1022,9 @@ namespace NuvioTpk
         {
             if (soltou) return;
             soltou = true;
+#if !NV_TEXTO
+            try { voz?.Cancelar(); } catch { }
+#endif
             try { video?.Encerrar(); Janela("saida: player solto (" + porque + ")"); } catch (Exception e) { Janela("saida: player falhou " + e.GetType().Name + ": " + e.Message); }
 #if NV_API11
             try { glView?.Hide(); } catch { }

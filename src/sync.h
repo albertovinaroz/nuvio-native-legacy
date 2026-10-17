@@ -43,6 +43,7 @@
 // Todas as chamadas de rede acontecem num fio proprio. A UI so consulta estado.
 #ifndef NV_SYNC_H
 #define NV_SYNC_H
+#include <stdint.h>
 
 typedef enum {
   SYNC_PARADO = 0,
@@ -54,6 +55,17 @@ typedef enum {
 // Dispara um ciclo completo (puxa e, onde faz sentido, empurra). Volta na hora.
 // Idempotente enquanto um ciclo estiver em andamento.
 void sync_iniciar(void);
+// Confirmed profile opening: clear live private data, keep durable settings.
+void sync_abrir_sessao(int perfilAnterior);
+
+typedef struct {
+  uint64_t sessao;
+  int perfil;
+  char usuario[80];
+} SyncCredencialPedido;
+int sync_credencial_pedido(SyncCredencialPedido *pedido);
+int sync_empurrar_credencial_pedido(const SyncCredencialPedido *pedido,
+                                  const char *provider, const char *credJson);
 
 // SINCRONIZAR ADD-ONS A MAO (#360). Pede uma volta da conta ja (nao espera os 5
 // minutos) e guarda o resultado para a tela de Add-ons dizer o que mudou. A volta

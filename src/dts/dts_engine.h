@@ -12,8 +12,16 @@ typedef struct {
   uint64_t range_blocked_ns; /* Time the demux worker actually waits for ranges. */
 } DtsEngineMetrics;
 void dts_engine_metrics(DtsEngine *, DtsEngineMetrics *out);
+/* Samsung remux readers: rings alive now and the most alive at once since the
+ * last reset (count and bytes), for the per-playback memory line of the .tpk.
+ * reset_peak sets the peak back to what is alive now. */
+typedef struct { int alive, peak; long long bytes, peak_bytes; } DtsEngineRings;
+void dts_engine_rings(DtsEngineRings *out, int reset_peak);
 /* Output for the next open: 1 = AC3 5.1 640 kbps, 0 = stereo AAC (default). */
 void dts_engine_set_ac3(int on);
+/* Samsung remux only: ring of the single-connection reader, in MiB (8..32,
+ * default 32), for rings allocated after the call. webOS never calls it. */
+void dts_engine_set_ring_mib(int mib);
 DtsEngine *dts_engine_create(void);
 int dts_engine_available(void);
 /* Dolby Vision path, set before open: AC-3/E-AC-3 tracks are selectable and
@@ -36,4 +44,14 @@ int dts_engine_seek(DtsEngine *, double seconds);
 void dts_engine_cancel(DtsEngine *);
 void dts_engine_destroy(DtsEngine *);
 const char *dts_engine_error(DtsEngine *);
+/* Samsung remux (dts_remux.c): open only the container over the ranged reader
+ * (4 MiB ranges, final address reused). 0 on success. dts_engine_avformat()
+ * then returns the AVFormatContext (as void *: no FFmpeg type crosses this
+ * header), valid until the next open or destroy. Cancel stays permanent. */
+int dts_engine_open_demux(DtsEngine *, const char *url, const char *headers);
+void *dts_engine_avformat(DtsEngine *);
+int64_t dts_engine_size(DtsEngine *);
+/* Remux: on = 1 makes the read in progress (and the next ones) fail until it
+ * is set back to 0; unlike cancel it is not permanent. Any thread. */
+void dts_engine_interrupt(DtsEngine *, int on);
 #endif

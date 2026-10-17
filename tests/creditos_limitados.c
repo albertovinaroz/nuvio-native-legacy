@@ -42,6 +42,16 @@ void rede_resposta_limpar(RedeResposta *r) { (void)r; }
 static int fixtureBuscar(const char *url, char **corpo, int *status) {
   *corpo = rede_baixar(url, 12); *status = 200; return 1;
 }
+static const char *respostaAni = "{\"results\":[{\"skipType\":\"op\",\"interval\":{\"startTime\":10,\"endTime\":100},\"episodeLength\":1440},{\"skipType\":\"ed\",\"interval\":{\"startTime\":1350,\"endTime\":1400},\"episodeLength\":1440}]}";
+static int statusDb = 200;
+static int fontesBuscar(const char *url, char **corpo, int *status) {
+  int ani = strstr(url, "api.aniskip.com") != NULL;
+  assert(ani || strstr(url, "api.theintrodb.org"));
+  assert(!pthread_setspecific(fimFio, (void *)(size_t)1));
+  *status = ani ? 200 : statusDb;
+  *corpo = *status == 200 ? strdup(ani ? respostaAni : resposta) : NULL;
+  return *status;
+}
 static void esperar(int *flag) {
   struct timespec limite; assert(!clock_gettime(CLOCK_REALTIME, &limite)); limite.tv_sec += 5;
   pthread_mutex_lock(&netTrava);
@@ -157,6 +167,50 @@ int main(void) {
   intro_desligar(); liberar(1);
   assert(!intro_creditos_limitados(v, 8)); // sair invalida tambem a resposta em voo
   assert(!intro_creditos_limitados(NULL, 8) && !intro_creditos_limitados(v, 0));
+  // Oito limites descartados do TheIntroDB nao podem bloquear o ED escolhido.
+  resposta = "{\"credits\":[{\"start_ms\":1200000,\"end_ms\":1210000},"
+    "{\"start_ms\":1220000,\"end_ms\":1230000},{\"start_ms\":1240000,\"end_ms\":1250000},"
+    "{\"start_ms\":1260000,\"end_ms\":1270000},{\"start_ms\":1280000,\"end_ms\":1290000},"
+    "{\"start_ms\":1300000,\"end_ms\":1310000},{\"start_ms\":1320000,\"end_ms\":1330000},"
+    "{\"start_ms\":1340000,\"end_ms\":1350000}]}";
+  intro_definir_buscador(fontesBuscar);
+  acabou[0] = 0;
+  intro_pedir_ids("mal:21", 21, 1, 1, 0, 0); esperar(&acabou[0]);
+  acabou[0] = 0;
+  intro_definir_duracao(1440, 0); esperar(&acabou[0]);
+  assert(intro_trechos(v, 8) == 2);
+  assert(intro_ativo(1360, &fim, &tipo) && fim == 1400 && tipo == INTRO_CREDITOS);
+  assert(intro_auto_ativo(1360, &fim, &tipo) && fim == 1400 && tipo == INTRO_CREDITOS);
+  assert(intro_creditos_limitados(v, 8) == 1 && v[0].inicio == 1350 && v[0].fim == 1400 && v[0].ani);
+  intro_desligar();
+  puts("ok  limites descartados do TheIntroDB nao saturam o ED do AniSkip");
+  // OP parcial continua publicado; 503 complementar ainda tenta apos 30 s.
+  respostaAni = "{\"results\":[{\"skipType\":\"op\",\"interval\":{\"startTime\":10,\"endTime\":100},\"episodeLength\":1440}]}";
+  resposta = "{\"recap\":[{\"start_ms\":0,\"end_ms\":10000}],\"credits\":[{\"start_ms\":1350000,\"end_ms\":1400000}]}";
+  statusDb = 503; acabou[0] = 0;
+  intro_pedir_ids("mal:21", 21, 1, 1, 0, 0); esperar(&acabou[0]);
+  assert(intro_trechos(v, 8) == 1 && v[0].tipo == INTRO_ABERTURA && v[0].ani);
+  acabou[0] = 0;
+  intro_definir_duracao(1440, 0); esperar(&acabou[0]);
+  assert(intro_trechos(v, 8) == 1 && v[0].inicio == 10);
+  assert(intro_auto_ativo(20, &fim, &tipo) && fim == 100 && tipo == INTRO_ABERTURA);
+  // Avanca somente o prazo da falha, sem mudar a duracao nem esperar 30 s.
+  pthread_mutex_lock(&trava); falhouEm = (long)time(NULL); pthread_mutex_unlock(&trava);
+  statusDb = 200;
+  intro_definir_duracao(1440, 0);
+  assert(intro_trechos(v, 8) == 1); // antes do prazo, segue parcial
+  pthread_mutex_lock(&trava); falhouEm -= 30; pthread_mutex_unlock(&trava);
+  acabou[0] = 0;
+  intro_definir_duracao(1440, 0);
+  for (int i = 0; i < 2000 && intro_trechos(v, 8) != 3; i++) usleep(1000);
+  assert(intro_trechos(v, 8) == 3); // o retry recupera recap/creditos ausentes
+  esperar(&acabou[0]);
+  assert(v[0].tipo == INTRO_ABERTURA && v[0].inicio == 10 && v[0].ani);
+  assert(v[1].tipo == INTRO_RESUMO && v[1].fim == 10 && !v[1].ani);
+  assert(v[2].tipo == INTRO_CREDITOS && v[2].inicio == 1350 && !v[2].ani);
+  assert(intro_auto_ativo(1360, &fim, &tipo) && fim == 1400 && tipo == INTRO_CREDITOS);
+  intro_desligar();
+  puts("ok  publicacao parcial mantem retry de 30 s da fonte complementar");
   pthread_key_delete(fimFio);
   puts("creditos_limitados: limites explicitos, leitura manual e publicacao por titulo OK");
   return 0;

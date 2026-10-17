@@ -16,6 +16,10 @@ char *rede_baixar_st(const char *u, int s, const char *const *c, int *st) {
   (void)u; (void)s; (void)c; (void)st; assert(!"sem rede nesta fixture"); return NULL;
 }
 int ajustes_selos_coloridos(void) { return 0; }
+int ajustes_idioma(void) { return IDIOMA_EN; }
+int fontefalha_filtro_ativo(void) { return 0; }
+void fontefalha_filtro(FonteFiltroConfig *saida) { memset(saida, 0, sizeof *saida); }
+int perfis_sessao_atual(uint64_t geracao) { (void)geracao; return 1; }
 void selospacote_colorido(int ligado) { (void)ligado; }
 int selospacote_embutidos_ok(void) { return 0; }
 const SeloFiltro *selospacote_filtro(unsigned short id) { (void)id; return NULL; }
@@ -84,7 +88,9 @@ int main(void) {
   assert(a[0].foraCache && !a[2].foraCache && !a[3].foraCache);
   stream_definir_lista(a, 4); free(a);
   atualizarProvedores(); melhorFolha = -1;
-  const int mistaQ[] = {2,3,1,0}, mistaA[] = {1,2,3,0};
+  // Modo Nuvio: fora do cache no fim do PROPRIO grupo de resolucao (38f3dd35);
+  // modo Do addon: no fim da lista inteira.
+  const int mistaQ[] = {0,2,3,1}, mistaA[] = {1,2,3,0};
   modo = 0; conferir(mistaQ, 4);
   melhorFolha = 0; conferir(mistaQ, 4); // nem a promocao pode ressuscita-la
   modo = 1; conferir(mistaA, 4);
@@ -100,7 +106,7 @@ int main(void) {
   assert(a[0].foraCache && !a[1].foraCache && !a[2].foraCache);
   stream_definir_lista(a, 3); free(a); melhorFolha = -1;
   atualizarProvedores();
-  const int hintQ[] = {2,1,0}, hintA[] = {1,2,0};
+  const int hintQ[] = {0,2,1}, hintA[] = {1,2,0};
   modo = 0; conferir(hintQ, 3); modo = 1; conferir(hintA, 3);
   Conferencia c = {0}; c.geracao = listaGeracao;
   negativa = 0; assert(!verificarUma(2, &c)); // erro/sem resposta nao e negativa
@@ -108,7 +114,7 @@ int main(void) {
   negativa = 1; assert(!verificarUma(2, &c));
   assert(lista[2].foraCache && consultas == 2 && !stream_automatico_disponivel(2));
   assert(!verificarUma(2, &c) && consultas == 2); // nao consulta de novo
-  const int consultada[] = {1,0,2};
-  modo = 0; conferir(consultada, 3); modo = 1; conferir(consultada, 3);
+  const int consultadaQ[] = {0,2,1}, consultadaA[] = {1,0,2};
+  modo = 0; conferir(consultadaQ, 3); modo = 1; conferir(consultadaA, 3);
   puts("fonte_ordem_addon: PASS (qualidade, addon, chegada inversa, filtros, melhor fonte, StreamFit, troca, vazio)");
 }

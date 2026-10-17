@@ -47,6 +47,19 @@ void stream_definir_alvo(const char *s) { (void)s; }
 void addons_buscar(const char *s, const char *t) { (void)s; (void)t; }
 void marco(const char *s) { (void)s; }
 int stream_url_serve(const char *u, const char *c) { (void)u; (void)c; return 0; }
+int rede_url_final_tipo(const char *u, int s, const char *const *c, char *d,
+                        unsigned t, int *st, char *m, unsigned mt, long *b) {
+  (void)u; (void)s; (void)c; (void)d; (void)t; (void)st; (void)m; (void)mt; (void)b;
+  return 0;
+}
+void stream_falha_identidade(const Stream *s, char *dst, unsigned tam) {
+  (void)s; if (tam) dst[0] = 0;
+}
+int stream_falha_aplicar(int indice, unsigned lista, int servico, const char *url) {
+  (void)indice; (void)lista; (void)servico; (void)url; return 1;
+}
+const Stream *stream_item(int i) { (void)i; return &fonte; }
+const char *video_url_atual(void) { return ""; }
 const char *video_erro_texto(void) { return ""; }
 int stream_atual(void) { return 0; }
 unsigned stream_lista_geracao(void) { return 1; }
@@ -69,7 +82,8 @@ const char *i18n(const char *s) { return s; }
 static void *concluido(void *u) { return u; }
 static void concluir(int resultado) {
   torrentJob.indice = 0; torrentJob.geracaoLista = 1;
-  torrentJob.sessao = torrentSessao; torrentJob.resultado = resultado;
+  torrentJob.sessao = torrentSessao; torrentJob.sessaoPerfil = perfis_sessao_geracao();
+  torrentJob.resultado = resultado;
   strcpy(torrentJob.url, "https://video.invalid/resolvido");
   strcpy(torrentJob.servico, "TorBox"); torrentJob.pct = 50;
   atomic_store(&torrentJob.estado, 2);

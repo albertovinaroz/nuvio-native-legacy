@@ -3,6 +3,7 @@
 #include "streams.h"
 #include "selospacote.h"
 #include "fonteregra.h"
+#include "stub_perfisessao.h"
 #include "../src/streams.c"
 #include <errno.h>
 #include <assert.h>

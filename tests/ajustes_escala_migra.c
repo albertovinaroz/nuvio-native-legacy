@@ -1,6 +1,7 @@
 // 2.0.3: o tamanho dos Ajustes volta a 80% UMA vez para quem ficou no padrao
 // antigo (90%); 100% escolhido fica; uma troca depois da marca fica.
 #include "../src/ajustes.c"
+#include "nvtmp.h"
 #include <assert.h>
 #include <unistd.h>
 
@@ -14,7 +15,7 @@ static void apaga_marca(const char *dir) {
 }
 int main(void) {
   char dir[1024];
-  snprintf(dir, sizeof dir, "%s/nuvio-escala-XXXXXX", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp");
+  snprintf(dir, sizeof dir, "%s/nuvio-escala-XXXXXX", nvt_dir());
   assert(mkdtemp(dir));
   setenv("NUVIO_DADOS", dir, 1); dados_iniciar(dir);
   assert(valorPadrao[AJ_TAMANHO_AJUSTES] == 0);                 // fabrica: 80%

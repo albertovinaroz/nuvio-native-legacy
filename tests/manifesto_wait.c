@@ -3,6 +3,7 @@ int ajustes_social(void) { return 1; }
 int ajustes_hist_conta(void) { return 1; }
 int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
+int ajustes_ocultar_filmes_vistos(void) { return 0; }    // #366: descoberta.c le o ajuste
 #include "../src/descoberta.c"
 #include <assert.h>
 #include <stdatomic.h>
@@ -13,6 +14,13 @@ static _Atomic int requests;
 static int fixtureAddons;
 char *rede_baixar(const char *url, int seconds) {
   (void)url; (void)seconds; requests++; return NULL;
+}
+void addons_lista_travar(void) {}
+void addons_lista_destravar(void) {}
+const char *sessao_usuario(void) { return ""; }
+int perfis_ativo(void) { return 1; }
+void ws_destino(const char *b, const char *u, int p, char out[20]) {
+  (void)b; (void)u; (void)p; strcpy(out, "fixture");
 }
 unsigned addons_versao(void) { return 1; }
 int addons_n(void) { return fixtureAddons; }

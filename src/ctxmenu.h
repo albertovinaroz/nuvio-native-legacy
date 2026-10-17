@@ -22,6 +22,9 @@
 // tecla nem abre no KEYDOWN; assim o toque curto continua abrindo o detalhe e
 // o modal recebe apenas o foco D-pad depois de estar visivel.
 void ctx_abrir(int indice);
+// Fecha a UI e descarta copias/pedidos do perfil anterior. Escritas ja
+// despachadas continuam nos seus proprios workers, com o dono original.
+void ctx_abrir_sessao(void);
 int  ctx_aberto(void);
 void ctx_evento(const SDL_Event *e);
 void ctx_atualizar(float dt, Uint32 agora);
@@ -98,10 +101,11 @@ void ctx_fileira(const char *chave, const char *titulo);
 // passa 0 nos outros cartoes.
 void ctx_dispensar_retomar(int on);
 // Menu SO da fileira, para o cartao que nao e titulo (pasta de colecao, pilha
-// fechada do ranking): abre direto no modal de estilo — formas a esquerda,
-// previa da fileira a direita (home_previa_fileira). Nao abre nada se a chave
-// nao aceita forma.
+// fechada do ranking): abre direto no menu de estilo, ao lado da fileira (a
+// propria fileira e a previa). Nao abre nada se a chave nao aceita forma.
 void ctx_abrir_fileira(const char *chave, const char *titulo);
+// O retangulo (tela virtual) do menu de estilo aberto; 0 com ele fechado.
+int ctx_estilo_rect(GfxRect *out);
 // O MESMO MENU, aberto pela BIBLIOTECA (biblioteca.c) segurando OK num cartaz.
 // `r` e a caixa do cartaz na tela virtual (1920x1080) e `arte` o poster dele: o
 // menu nasce ao lado e o poster volta por cima do veu, como na home. Sem arte

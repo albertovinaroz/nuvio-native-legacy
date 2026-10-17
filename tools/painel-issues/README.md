@@ -25,6 +25,21 @@ Sem argumentos le o mapa do proprio repo e escreve em `tools/painel-issues/site/
   (rascunho por id de decisao, foco e cursor do textarea, scroll das caixas).
   Sem a API, avisa e fica so leitura.
 
+## Build público estático
+
+    python3 tools/painel-issues/gerar.py --publico --out /tmp/painel-publico
+    sh tools/painel-issues/tests/publico.sh
+
+Publicar somente a saída de `--publico`. O build normal continua interno.
+Allowlist: `meta.repo/publico`; issues com `numero`, `titulo`, `plataforma`,
+`estado_github`, `status` normalizado, `alvo`, `release`, `branches`,
+`commits` (`hash`, `assunto`); roadmap com `release` e `situacao` normalizada.
+Versões são extraídas sem notas; referências locais só acompanham trabalho em
+andamento/aguardando teste. Títulos e assuntos contendo os termos internos
+bloqueados pelo teste recebem rótulos neutros. Nenhum campo de nota é copiado.
+Sem seletor de perfil, drawer ou API de respostas; “Quero pegar” leva ao GitHub
+com orientação para comentar na issue. Não implementa atribuição automática.
+
 ## Publicar
 
     tools/painel-issues/publicar.sh [--dry-run] [worktree]
@@ -36,8 +51,12 @@ containers; aborta se a 8094 estiver ocupada por outra coisa. Padrao de worktree
 
 ## Acesso
 
-Somente LAN (`http://192.168.1.20:8094`) ou Tailscale. Nao expor publicamente:
-as notas contem detalhes internos.
+Somente LAN (`http://192.168.1.20:8094`) ou Tailscale. O build normal não deve ser exposto publicamente: as notas contêm detalhes internos.
+Para hospedagem estática pública, usar exclusivamente `--publico`.
+
+Roadmap público: https://nuvio-legacy-roadmap.henriquef29.workers.dev. `publicar-publico.sh`
+roda `tests/publico.sh` e só então gera com `--publico` e faz `wrangler deploy` (Worker de
+assets `nuvio-legacy-roadmap`). O hook `painel-publicar` chama ele depois do `publicar.sh`.
 
 ## Respostas do dono (Aceitar/Negar + informacao adicional)
 

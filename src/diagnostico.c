@@ -2318,7 +2318,7 @@ static void desenharApresentacao(int primeiraAbertura) {
   float ar, ag, ab;
   ajustes_acento(&ar, &ag, &ab);
   gfx_cor(tela, 0.0f, 0, 0, 0, 0.78f);
-  gfx_cor(cartao, 30.0f / cartao.h, 0.055f, 0.058f, 0.068f, 0.98f);
+  gfx_vidro_ou_solido(cartao, 30.0f / cartao.h, GFX_VIDRO_DENS_MODAL, 1.0f, 0.055f, 0.058f, 0.068f, 0.98f);
   gfx_luz_canto(cartao, 30.0f / cartao.h, 160.0f, -80.0f, 620.0f, ar, ag, ab, 0.20f);
   txt_desenhar(txt_linha(TXT_TITULO2, i18n("Antes de começar"), 255, 255, 255, 255),
                cartao.x + 64.0f, cartao.y + 42.0f);

@@ -19,6 +19,7 @@
 // la ele FALHA nas assercoes — e a prova de que o defeito existe. Com
 // src/vistonao.c presente, o .sh liga TEM_VISTONAO e o juiz entra.
 #include "vistoep.h"
+#include <stdint.h>
 #include "contapend.h"
 #include "contalib.h"
 #include "catalogo.h"
@@ -46,6 +47,8 @@ static int perfil = 1, logada = 0;
 static long long agora = 1759000000000LL;   // 27/09/2025 19:06:40 UTC
 static long long relogio(void) { return agora; }
 int perfis_ativo(void) { return perfil; }
+int perfis_sessao_travar(uint64_t g) { return g == 0; }
+void perfis_sessao_destravar(void) {}
 int sessao_logada(void) { return logada; }
 const char *sessao_usuario(void) { return logada ? "u-123" : ""; }
 const char *dados_cliente_id(void) { return "cliente-teste"; }

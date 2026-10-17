@@ -9,6 +9,7 @@
 //   - `true` do web vira INDICE 0 ("Ligado"), nao 1;
 //   - `collapseSidebar: true` vira "Recolhida", que tambem e o indice 0.
 #include <stdio.h>
+#include "nvtmp.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>   // mkdtemp
@@ -195,7 +196,7 @@ int main(void) {
     static const char *CONTA_DESLIGADO =
       "{\"features\":{\"layout_settings\":{"
       "\"focused_poster_backdrop_trailer_enabled\":{\"type\":\"boolean\",\"value\":false}}}}";
-    char dir[] = "/tmp/nuvio-conta-trailer.XXXXXX", cam[200], *saida = NULL;
+    char dir[NVT_MAX], cam[200], *saida = NULL; nvt_set(dir, sizeof dir, "/nuvio-conta-trailer.XXXXXX");
     unsigned q;
     FILE *f;
     if (!mkdtemp(dir)) { falhas++; goto fim; }
@@ -226,7 +227,7 @@ int main(void) {
   // do web), e a subida nao toca selected_theme — nem com um valor que o web
   // nao conhece, nem com o padrao, que apagaria o tema escolhido la.
   printf("\ntema dinamico e local:\n");
-  { char dir[] = "/tmp/nuvio-conta-tema.XXXXXX", cam[200];
+  { char dir[NVT_MAX], cam[200]; nvt_set(dir, sizeof dir, "/nuvio-conta-tema.XXXXXX");
     static const char *CONTA_JADE =
       "{\"version\":1,\"features\":{\"theme_settings\":{"
       "\"selected_theme\":{\"type\":\"string\",\"value\":\"JADE\"}}}}";

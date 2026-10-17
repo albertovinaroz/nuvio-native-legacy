@@ -1029,6 +1029,7 @@ typedef struct {
   unsigned geracao;
   double pos;
   PxSessaoPlay s;
+  PxConta conta; // immutable original server/account at enqueue
 } Relato;
 
 typedef struct {
@@ -1044,7 +1045,7 @@ static pthread_cond_t sinalCtl = PTHREAD_COND_INITIALIZER, sinalRel = PTHREAD_CO
 static pthread_once_t uma = PTHREAD_ONCE_INIT;
 static pthread_t fioCtl, fioRel;
 static int fiosVivos, parar;
-static RedeGrupo *grupo;
+static RedeGrupo *grupo, *grupoRel;
 static unsigned geracao = 1;
 static RedeJob *jobCtl;
 static unsigned cancelEntrada;
@@ -1083,6 +1084,7 @@ static void *trabalharRel(void *u);
 
 static void iniciar(void) {
   grupo = rede_grupo_criar();
+  grupoRel = rede_grupo_criar();
   if (pthread_create(&fioCtl, NULL, trabalharCtl, NULL) == 0) {
     if (pthread_create(&fioRel, NULL, trabalharRel, NULL) == 0) fiosVivos = 2;
     else fiosVivos = 1;
@@ -1200,8 +1202,13 @@ static void soltarSnapshotLocked(void) {
     apagarSegredo(sessoes[i].s.url, sizeof sessoes[i].s.url);
     sessoes[i].ativo = 0;
   }
-  for (i = 0; i < PX_FILA_REL; i++) apagarSegredo(&filaRel[i], sizeof filaRel[i]);
-  nRel = 0;
+  // Keep already queued reports with their immutable outgoing account.
+}
+
+static void relatoriosDescartarLocked(void) {
+  for (int i = 0; i < PX_FILA_REL; i++) apagarSegredo(&filaRel[i], sizeof filaRel[i]);
+  nRel = 0; iniRel = 0;
+  if (grupoRel) rede_grupo_avancar(grupoRel);
 }
 
 static void avancarLocked(void) {
@@ -1264,6 +1271,7 @@ void plex_esquecer(void) {
   pthread_mutex_lock(&trava);
   conferirPerfilLocked();
   avancarLocked();
+  relatoriosDescartarLocked();
   cancelEntrada++;
   arquivo(nome, sizeof nome, perfis_ativo());
   dados_apagar(nome);
@@ -1281,6 +1289,7 @@ void plex_esquecer_todos(void) {
   garantir();
   pthread_mutex_lock(&trava);
   avancarLocked();
+  relatoriosDescartarLocked();
   cancelEntrada++;
   for (i = 1; i <= 32; i++) { arquivo(nome, sizeof nome, i); dados_apagar(nome); }
   apagarSegredo(&conta, sizeof conta);
@@ -1293,6 +1302,7 @@ void plex_encerrar(void) {
   pthread_mutex_lock(&trava);
   parar = 1;
   avancarLocked();
+  relatoriosDescartarLocked();
   vivos = fiosVivos;
   pthread_cond_broadcast(&sinalCtl);
   pthread_cond_broadcast(&sinalRel);
@@ -1304,6 +1314,7 @@ void plex_encerrar(void) {
   free(snapItens); snapItens = NULL;
   free(fontesLista); fontesLista = NULL;
   if (grupo) { rede_grupo_cancelar(grupo); rede_grupo_soltar(grupo); grupo = NULL; }
+  if (grupoRel) { rede_grupo_cancelar(grupoRel); rede_grupo_soltar(grupoRel); grupoRel = NULL; }
   apagarSegredo(&conta, sizeof conta);
   pthread_mutex_unlock(&trava);
 }
@@ -1800,10 +1811,10 @@ static void *trabalharRel(void *u) {
     apagarSegredo(&filaRel[iniRel], sizeof filaRel[iniRel]);
     iniRel = (iniRel + 1) % PX_FILA_REL;
     nRel--;
-    if (r.geracao == geracao && grupo && conta.token[0]) {
-      c = conta;
-      j = rede_job_criar(grupo);
-      relEmVoo = 1;
+    if (grupoRel && r.conta.token[0]) {
+      c = r.conta;
+      j = rede_job_criar(grupoRel);
+      relEmVoo = j != NULL;
     }
     pthread_mutex_unlock(&trava);
     if (j) {
@@ -1846,7 +1857,7 @@ static void relatarLocked(int evento, const Sessao *s, double pos) {
   r->evento = evento;
   r->geracao = s->geracao;
   r->pos = pos;
-  r->s = s->s;
+  r->s = s->s; r->conta = conta;
   nRel++;
   pthread_cond_signal(&sinalRel);
 }

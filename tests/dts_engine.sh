@@ -1,10 +1,12 @@
 #!/bin/sh
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # Requires ffmpeg CLI for transient fixtures and minimal FFmpeg libraries built
 # by tools/build-dts-ffmpeg.sh (NUVIO_DTS_HOST=1 CC=gcc for a host prefix).
 set -eu
 cd "$(dirname "$0")/.."
-PREFIX=${NUVIO_DTS_ROOT:-/tmp/nuvio-dts-host}
-TMP=$(mktemp -d /tmp/nuvio-dts-test.XXXXXXXX)
+PREFIX=${NUVIO_DTS_ROOT:-${TMPDIR:-/tmp}/nuvio-dts-host}
+TMP=$(mktemp -d ${TMPDIR:-/tmp}/nuvio-dts-test.XXXXXXXX)
 SERVER_PID=""
 trap 'if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$TMP"' EXIT
 ${CC:-gcc} -std=gnu11 -Wall -Wextra -Werror -DNV_DTS_FFMPEG -I"$PREFIX/include" \

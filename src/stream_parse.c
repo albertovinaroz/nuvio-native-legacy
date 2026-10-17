@@ -17,7 +17,7 @@ static long tamanhoMB(double valor) {
 
 // Find only a direct property of this exact object. JSON strings and nested
 // objects are skipped; proxyHeaders/request cannot masquerade as videoSize.
-static const char *valorRaiz(const char *p, const char *fim, const char *nome) {
+static const char *propriedadeRaiz(const char *p, const char *fim, const char *nome, const char **chave) {
   int depth = 0;
   size_t n = strlen(nome);
   if (!p || p >= fim || *p != '{') return NULL;
@@ -33,6 +33,7 @@ static const char *valorRaiz(const char *p, const char *fim, const char *nome) {
       while (apos < fim && isspace((unsigned char)*apos)) apos++;
       if (depth == 1 && (size_t)(p - ini) == n && !memcmp(ini, nome, n) && apos < fim && *apos == ':') {
         apos++; while (apos < fim && isspace((unsigned char)*apos)) apos++;
+        if (chave) *chave = ini - 1;
         return apos < fim ? apos : NULL;
       }
     } else if (*p == '{' || *p == '[') depth++;
@@ -41,12 +42,190 @@ static const char *valorRaiz(const char *p, const char *fim, const char *nome) {
   }
   return NULL;
 }
+static const char *valorRaiz(const char *p, const char *fim, const char *nome) {
+  return propriedadeRaiz(p, fim, nome, NULL);
+}
 
 static const char *objetoRaiz(const char *p, const char *fim, const char *nome) {
   const char *v = valorRaiz(p, fim, nome), *f;
   if (!v || *v != '{' || !(f = js_fim(v)) || f <= v || f > fim || f[-1] != '}') return NULL;
   return v;
 }
+
+// A chave ja foi localizada na profundidade correta. Limita a decodificacao
+// ao proprio valor, sem procurar nomes iguais em proxyHeaders ou outra fonte.
+static int textoRaiz(const char *p, const char *fim, const char *nome, char *dst, unsigned tam) {
+  const char *v = valorRaiz(p, fim, nome), *f;
+  if (!v || *v != '"' || !tam) return 0;
+  for (f = v + 1; f < fim && *f != '"'; f++) if (*f == '\\' && f + 1 < fim) f++;
+  if (f >= fim || (size_t)(f - v - 1) >= tam) return 0;
+  return js_cadeia(v, dst, tam);
+}
+static int textoRaizLinhas(const char *p, const char *fim, const char *nome, char *dst, unsigned tam) {
+  const char *chave = NULL, *v = propriedadeRaiz(p, fim, nome, &chave), *f;
+  if (!v || *v != '"' || !tam) return 0;
+  for (f = v + 1; f < fim && *f != '"'; f++) if (*f == '\\' && f + 1 < fim) f++;
+  if (f >= fim) return 0;
+  return js_texto_linhas(chave, f + 1, nome, dst, tam);
+}
+
+// Valores estruturados podem ser texto, numero (resolucao/canais) ou lista de
+// textos. Objetos e booleanos nao viram etiquetas; listas aninhadas nao contam.
+static int campoFiltro(const char *v, const char *fim, char *dst, unsigned tam) {
+  const char *f;
+  if (!v || v >= fim || !tam) return 0;
+  dst[0] = 0;
+  if (*v == '"') {
+    for (f = v + 1; f < fim && *f != '"'; f++) if (*f == '\\' && f + 1 < fim) f++;
+    return f < fim && (size_t)(f - v - 1) < tam && js_cadeia(v, dst, tam);
+  }
+  if (*v == '[') {
+    const char *af = js_fim(v), *q = v + 1;
+    unsigned usada = 0;
+    if (!af || af > fim || af <= q || af[-1] != ']') return 0;
+    while (q < af - 1) {
+      char item[128];
+      while (q < af - 1 && (isspace((unsigned char)*q) || *q == ',')) q++;
+      if (q >= af - 1) break;
+      if (*q != '"') { dst[0] = 0; return 0; }
+      for (f = q + 1; f < af - 1 && *f != '"'; f++) if (*f == '\\' && f + 1 < af - 1) f++;
+      if (f >= af - 1 || (size_t)(f - q - 1) >= sizeof item || !js_cadeia(q, item, sizeof item)) {
+        dst[0] = 0; return 0;
+      }
+      size_t n = strlen(item);
+      if ((size_t)usada + n + (usada ? 1u : 0u) >= tam) { dst[0] = 0; return 0; }
+      if (usada) dst[usada++] = '|';
+      memcpy(dst + usada, item, n + 1); usada += (unsigned)n;
+      q = f + 1;
+      while (q < af - 1 && isspace((unsigned char)*q)) q++;
+      if (q < af - 1 && *q != ',') { dst[0] = 0; return 0; }
+    }
+    return usada > 0;
+  }
+  if (!isdigit((unsigned char)*v)) return 0;
+  for (f = v; f < fim && (isdigit((unsigned char)*f) || *f == '.'); f++);
+  if (f == v || (size_t)(f - v) >= tam ||
+      (f < fim && *f != ',' && *f != '}' && !isspace((unsigned char)*f))) return 0;
+  memcpy(dst, v, (size_t)(f - v)); dst[f - v] = 0;
+  char *e;
+  double d = strtod(dst, &e);
+  if (*e || !isfinite(d) || d <= 0) { dst[0] = 0; return 0; }
+  return 1;
+}
+
+static void camposFiltro(const char *const *objetos, int n, const char *fim,
+                          const char *const *nomes, char *dst, unsigned tam) {
+  dst[0] = 0;
+  for (int i = 0; i < n; i++) if (objetos[i])
+    for (int j = 0; nomes[j]; j++)
+      if (campoFiltro(valorRaiz(objetos[i], js_fim(objetos[i]), nomes[j]), fim, dst, tam)) return;
+}
+
+// Inteiro decimal sem arredondamento de double. Ao contrario do StreamFit,
+// este tamanho tambem pode vir do raw.size declarado pelo AIOStreams.
+static uint64_t bytesFiltro(const char *v, const char *fim) {
+  uint64_t n = 0;
+  int quoted;
+  if (!v || v >= fim) return 0;
+  quoted = *v == '"'; if (quoted) v++;
+  if (v >= fim || !isdigit((unsigned char)*v)) return 0;
+  if (!quoted && *v == '0' && v + 1 < fim && isdigit((unsigned char)v[1])) return 0;
+  while (v < fim && isdigit((unsigned char)*v)) {
+    unsigned d = (unsigned)(*v++ - '0');
+    if (n > (UINT64_MAX - d) / 10) return 0;
+    n = n * 10 + d;
+  }
+  if (quoted && (v >= fim || *v++ != '"')) return 0;
+  while (v < fim && isspace((unsigned char)*v)) v++;
+  return v < fim && (*v == ',' || *v == '}') ? n : 0;
+}
+
+static uint64_t bytesTextoFiltro(const char *texto) {
+  static const struct { const char *unidade; uint64_t escala; } unidades[] = {
+    {"GiB", UINT64_C(1073741824)}, {"GB", UINT64_C(1000000000)},
+    {"MiB", UINT64_C(1048576)}, {"MB", UINT64_C(1000000)},
+    {"TiB", UINT64_C(1099511627776)}, {"TB", UINT64_C(1000000000000)},
+    {"KiB", UINT64_C(1024)}, {"KB", UINT64_C(1000)}
+  };
+  for (const char *p = texto; p && *p; p++) {
+    if (!isdigit((unsigned char)*p) || (p > texto &&
+        (isalnum((unsigned char)p[-1]) || p[-1] == '.' || p[-1] == '-'))) continue;
+    char *fim;
+    long double valor = strtold(p, &fim);
+    if (fim == p || !isfinite(valor) || valor <= 0) continue;
+    while (isspace((unsigned char)*fim)) fim++;
+    for (size_t i = 0; i < sizeof unidades / sizeof unidades[0]; i++) {
+      size_t n = strlen(unidades[i].unidade);
+      if (strncasecmp(fim, unidades[i].unidade, n) || isalnum((unsigned char)fim[n])) continue;
+      long double bytes = valor * (long double)unidades[i].escala;
+      // A comparacao estrita evita conversao indefinida na representacao
+      // arredondada de UINT64_MAX em plataformas cujo long double e double.
+      if (!isfinite(bytes) || bytes <= 0 || bytes >= (long double)UINT64_MAX) return 0;
+      uint64_t inteiro = (uint64_t)bytes;
+      return inteiro + ((long double)inteiro < bytes);
+    }
+  }
+  return 0;
+}
+
+static void metadadosFiltro(const char *obj, const char *fim, const char *nome,
+                             const char *descricao, const char *titulo, Stream *s) {
+  const char *cr = objetoRaiz(obj, fim, "clientResolve");
+  const char *st = cr ? objetoRaiz(cr, js_fim(cr), "stream") : NULL;
+  const char *raw = st ? objetoRaiz(st, js_fim(st), "raw") : NULL;
+  const char *parsed = raw ? objetoRaiz(raw, js_fim(raw), "parsed") : NULL;
+  if (!parsed && st) parsed = objetoRaiz(st, js_fim(st), "parsed");
+  if (!parsed && cr) parsed = objetoRaiz(cr, js_fim(cr), "parsed");
+  if (!raw) raw = objetoRaiz(obj, fim, "raw");
+  if (!parsed && raw) parsed = objetoRaiz(raw, js_fim(raw), "parsed");
+  if (!parsed) parsed = objetoRaiz(obj, fim, "parsed");
+  const char *data = objetoRaiz(obj, fim, "streamData");
+  const char *parsedFile = data ? objetoRaiz(data, js_fim(data), "parsedFile") : NULL;
+  const char *bh = objetoRaiz(obj, fim, "behaviorHints");
+  const char *objetos[] = {parsedFile, parsed, raw, st, cr, obj};
+  static const char *const chaves[FONTEFILTRO_N][4] = {
+    {"resolution", "videoResolution", NULL},
+    {"quality", NULL},
+    {"hdr", "visualTags", "videoTags", NULL},
+    {"audio", "audioTags", "audioCodec", NULL},
+    {"channels", "audioChannels", NULL},
+    {"codec", "videoCodec", "encode", NULL},
+    {"languages", "language", "audioLanguages", NULL}
+  };
+  char campos[FONTEFILTRO_N][512], grupo[128] = "", nomeCompleto[1024] = "", texto[6144];
+  for (int k = 0; k < FONTEFILTRO_N; k++)
+    camposFiltro(objetos, 6, fim, chaves[k], campos[k], sizeof campos[k]);
+  // O leitor de faixas ja validou audioTracks/languages. Legendas nao sao
+  // evidencia de audio, e a preferencia de idioma nao declara uma faixa.
+  if (!campos[FONTEFILTRO_LINGUAS][0] && s->audioIdiomas[0])
+    snprintf(campos[FONTEFILTRO_LINGUAS], sizeof campos[FONTEFILTRO_LINGUAS], "%s", s->audioIdiomas);
+  static const char *const grupoChaves[] = {"group", "releaseGroup", "release_group", NULL};
+  camposFiltro(objetos, 6, fim, grupoChaves, grupo, sizeof grupo);
+  if (!textoRaiz(obj, fim, "filename", nomeCompleto, sizeof nomeCompleto) &&
+      !(bh && textoRaiz(bh, js_fim(bh), "filename", nomeCompleto, sizeof nomeCompleto)) &&
+      !(cr && textoRaiz(cr, js_fim(cr), "filename", nomeCompleto, sizeof nomeCompleto)) &&
+      !(raw && textoRaiz(raw, js_fim(raw), "filename", nomeCompleto, sizeof nomeCompleto)) && raw)
+    textoRaiz(raw, js_fim(raw), "torrentName", nomeCompleto, sizeof nomeCompleto);
+  snprintf(s->arquivo, sizeof s->arquivo, "%.*s", (int)sizeof s->arquivo - 1, nomeCompleto);
+  // Mantem title e description mesmo quando ambos existem; nao usa URL,
+  // cabecalhos ou nome do provedor como evidencia de formato/idioma/grupo.
+  snprintf(texto, sizeof texto, "%s\n%s\n%s", nome, descricao, titulo);
+  uint64_t bytes = s->tamanhoBytes;
+  if (!bytes && bh) bytes = bytesFiltro(valorRaiz(bh, js_fim(bh), "videoSize"), js_fim(bh));
+  if (!bytes && raw) bytes = bytesFiltro(valorRaiz(raw, js_fim(raw), "size"), js_fim(raw));
+  if (!bytes) bytes = bytesFiltro(valorRaiz(obj, fim, "videoSize"), fim);
+  if (!bytes) bytes = bytesTextoFiltro(texto);
+  FonteFiltroEntrada e = {
+    .resolucao = campos[FONTEFILTRO_RESOLUCAO], .qualidade = campos[FONTEFILTRO_QUALIDADE],
+    .visual = campos[FONTEFILTRO_VISUAL], .audio = campos[FONTEFILTRO_AUDIO],
+    .canais = campos[FONTEFILTRO_CANAIS], .encode = campos[FONTEFILTRO_ENCODE],
+    .linguas = campos[FONTEFILTRO_LINGUAS], .grupo = grupo,
+    .filename = nomeCompleto, .texto = texto, .tamanhoBytes = bytes
+  };
+  fontefiltro_classificar(&e, &s->filtro);
+  s->filtroLido = 1;
+}
+
 
 // Idiomas de faixas sao metadados positivos do addon.
 // Valida cada valor antes de usa-lo: JSON cortado, objetos muito
@@ -765,6 +944,33 @@ int stream_texto_fora_de_cache(const char *t) {
       || contem(t, " download]") || contem(t, "uncached") || contem(t, "not cached");
 }
 
+// As marcas positivas que os addons usam (AIOStreams/Torrentio). Nao ler
+// arquivo, URL ou o nome configurado do addon: nao descrevem disponibilidade.
+static int textoEmCache(const char *t) {
+  return t && (strstr(t, "\xe2\x9a\xa1") || contem(t, "[TB+]") || contem(t, "[RD+]") ||
+               contem(t, "[PM+]") || contem(t, "[AD+]"));
+}
+static int marcaEmCache(const char *p, const char *fim) {
+  static const char *const campos[] = {"name", "description", "title"};
+  char texto[2048];
+  for (unsigned i = 0; i < sizeof campos / sizeof *campos; i++)
+    if (js_texto_raiz_em(p, fim, campos[i], texto, sizeof texto) && textoEmCache(texto)) return 1;
+  return 0;
+}
+
+// Booleano da PROPRIA fonte, nao de cabecalhos nem da fonte seguinte.
+// 0 = ausente/invalido; -1 = false; 1 = true. Strings e numeros nao contam.
+static int cacheDeclarado(const char *p, const char *fim) {
+  const char *cr = objetoRaiz(p, fim, "clientResolve");
+  if (!cr) return 0;
+  const char *f = js_fim(cr), *v = valorRaiz(cr, f, "isCached");
+  if (!v) return 0;
+  unsigned n = *v == 't' ? 4 : 5;
+  if (f - v < n || memcmp(v, n == 4 ? "true" : "false", n)) return 0;
+  const char *apos = faixasEspacos(v + n, f);
+  return apos < f && (*apos == ',' || *apos == '}') ? (n == 4 ? 1 : -1) : 0;
+}
+
 // "sources": ["tracker:udp://...", "dht:<hash>"] de um stream de torrent, uma
 // entrada por linha em `dst`. So as que o servidor de streaming do Stremio
 // entende (prefixo tracker: ou dht:); uma URL solta de tracker ganha o prefixo.
@@ -1327,11 +1533,16 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida) {
   p = js_array(json, json + strlen(json), "streams");
   while (p && *p == '{') {
     Stream s = {0};
-    char titulo[2048] = "", texto[5000];
+    char titulo[2048] = "", nomeFonte[1024] = "", texto[5000];
     fim = js_fim(p);
     if (!fim || fim <= p) break;
-    js_texto(p, fim, "url", s.url, sizeof s.url);
-    if (!s.url[0]) js_texto(p, fim, "externalUrl", s.url, sizeof s.url);
+    // externalUrl abre fora do player; sem midia/hash a fonte fica oculta.
+    js_texto_raiz_em(p, fim, "url", s.url, sizeof s.url);
+    { const char *bh = valorRaiz(p, fim, "behaviorHints");
+      const char *hint = bh ? valorRaiz(bh, fim, "notWebReady") : NULL;
+      s.notWebReady = hint && fim - hint >= 4 && !memcmp(hint, "true", 4) &&
+        (hint + 4 == fim || hint[4] == ',' || hint[4] == '}' || isspace((unsigned char)hint[4]));
+    }
     s.fileIdx = -1;
     // Torrent puro: sem url, com infoHash (no topo ou dentro de clientResolve,
     // como o AIOStreams manda). A url nasce depois, no debrid.
@@ -1353,13 +1564,15 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida) {
       // rotulo de 192 bytes pode cortar "...FHDx" em "...FHD", e o provedor
       // entra no lugar do name que falta mais abaixo.
       int fhd = 0;
-      { char nome[1024];
-        if (js_texto_linhas(p, fim, "name", nome, sizeof nome) && strlen(nome) < sizeof nome - 1)
-          fhd = fhdNoNome(nome); }
-      js_texto_linhas(p, fim, "description", s.descricao, sizeof s.descricao);
-      js_texto_linhas(p, fim, "title", titulo, sizeof titulo);
+      if (textoRaizLinhas(p, fim, "name", nomeFonte, sizeof nomeFonte) && strlen(nomeFonte) < sizeof nomeFonte - 1)
+        fhd = fhdNoNome(nomeFonte);
+      textoRaizLinhas(p, fim, "description", s.descricao, sizeof s.descricao);
+      textoRaizLinhas(p, fim, "title", titulo, sizeof titulo);
+      int cache = cacheDeclarado(p, fim);
+      s.emCache = cache > 0 || (cache == 0 && marcaEmCache(p, fim));
+      s.cacheNegado = cache < 0;
       metadadosFaixas(p, fim, &s);
-      js_texto(p, fim, "filename", s.arquivo, sizeof s.arquivo);
+      metadadosFiltro(p, fim, nomeFonte, s.descricao, titulo, &s);
       // behaviorHints.bingeGroup — ANCORADO NO OBJETO, e nao procurado solto.
       //
       // Duas coisas separadas, e as duas custam uma linha:
@@ -1390,7 +1603,8 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida) {
       snprintf(s.provedor, sizeof s.provedor, "%s", provedor);
       snprintf(texto, sizeof texto, "%s %s %s %s", s.rotulo, s.descricao, titulo, s.arquivo);
       for (char *q = texto; *q; q++) if (*q == '\n') *q = ' ';
-      s.altura = contem(texto, "2160") || token(texto, "4k") || token(texto, "uhd") ? 2160 :
+      s.altura = contem(texto, "4320") || token(texto, "8k") ? 4320 :
+                 contem(texto, "2160") || token(texto, "4k") || token(texto, "uhd") ? 2160 :
                  contem(texto, "1440") ? 1440 : contem(texto, "1080") ? 1080 :
                  contem(texto, "720") ? 720 : contem(texto, "480") ? 480 : 0;
       s.dolbyVision = token(texto, "dv") || token(texto, "dovi") ||
@@ -1408,15 +1622,15 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida) {
         s.badges |= badges_bit("r-1080");
       }
       s.mp4 = token(texto, "mp4") || contem(s.url, ".mp4");
+      // "av1" tambem casa "av1.0.0" (nivel/perfil, comum em nome de release);
+      // token() basta porque nao ha AV1 escrito colado a outra palavra nos
+      // nomes que os addons mandam (ao contrario de "dv", que precisa do
+      // cuidado de token() com DVDRip — o mesmo cuidado ja se aplica aqui).
+      s.av1 = token(texto, "av1") || contem(texto, "av01");
       s.foraCache = stream_texto_fora_de_cache(texto);
       // AIOStreams: clientResolve.isCached e explicito; ausente nao e false.
-      if (s.infoHash[0] && !s.url[0]) {
-        const char *cr = valorRaiz(p, fim, "clientResolve");
-        const char *v = cr ? valorRaiz(cr, fim, "isCached") : NULL;
-        if (v && fim - v >= 5 && !memcmp(v, "false", 5) &&
-            (v + 5 == fim || v[5] == ',' || v[5] == '}' || isspace((unsigned char)v[5])))
-          s.foraCache = 1;
-      }
+      if (s.infoHash[0] && !s.url[0] && cache < 0) s.foraCache = 1;
+      if (s.foraCache) s.emCache = 0;
       if (s.infoHash[0]) s.temSemeadores = lerSemeadores(texto, &s.semeadores);
       s.tamanhoBytes = bytesExatos(p, fim);
       double bytes = js_num(p, fim, "videoSize", 0);

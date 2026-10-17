@@ -35,6 +35,8 @@
 // evento) simplesmente nao tem grade real: o guia os mostra "ao vivo", sem
 // programa — e isso e a verdade, nao um defeito do casamento.
 #include "epg.h"
+#include "perfisessao.h"
+#include <stdatomic.h>
 #include "rede.h"
 #include "dados.h"
 #include <stdio.h>
@@ -163,7 +165,20 @@ static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
 static int      estado = EPG_PARADO;
 static time_t   carregadaEm;
 static int      fioVivo;
-static int      pendPronto, pendOk;    // o fio terminou e tem resultado
+static atomic_int pendPronto;
+static int      pendOk;
+static int      perfilGrade = 1, reiniciarPend;
+static struct {
+  NvPerfilSessao sessao;
+  volatile int cancelada;
+  int perfil, nArq, nFiltro;
+  char arq[EPG_MAX_FONTES][8], extra[1100];
+  char (*filtro)[64];
+} carga;
+
+static int cargaAtual(void) {
+  return !carga.cancelada && nv_perfil_sessao_atual(carga.sessao);
+}
 
 // --- normalizacao de nomes ---------------------------------------------------
 // Desfaz o UTF-8: acentuadas viram a letra de base (á->a, ç->c); tudo que nao
@@ -751,7 +766,10 @@ static char *obterXml(const char *arq, long *nOut) {
     if (xml && xml[0] == '<') return xml;
     free(xml);
   }
-  gz = rede_baixar_bin(url, 60, &ngz);
+  if (!cargaAtual()) return NULL;
+  if (!carga.sessao) gz = rede_baixar_bin(url, 60, &ngz);
+  else { RedeControle ctl = {0}; ctl.cancelado = &carga.cancelada;
+    gz = rede_baixar_bin_medido_controle(url, 60, NULL, &ctl, &ngz, NULL); }
   if (!gz) { printf("[epg] %s: sem resposta\n", nXml); fflush(stdout); return NULL; }
   xml = abrirGz(gz, ngz, nOut);
   if (xml && xml[0] == '<') gravarBin(nGz, nTs, gz, ngz);
@@ -856,9 +874,6 @@ int epg_pais_existe(const char *pais) {
 #define EPG_EXTRA_TETO_REDE (32L << 20)
 #define EPG_EXTRA_TETO_XML  (128L << 20)
 #endif
-static const char *EXTRA_BIN = "epg-extra.bin";
-static const char *EXTRA_TS  = "epg-extra.ts";
-static const char *EXTRA_ID  = "epg-extra.id";
 static char extraUrl[1100];
 static volatile int extraMudou;
 
@@ -891,13 +906,30 @@ static char *abrirExtra(const char *b, long n, long *nOut) {
 
 static char *obterExtra(const char *url, long *nOut) {
   char id[24], *b, *xml, *velho;
+  char nBin[48], nTs[48], nId[48];
   long n = 0;
   RedeControle ctl;
   RedeMedida med;
+  snprintf(nBin, sizeof nBin, "epg-extra-p%d.bin", carga.perfil);
+  snprintf(nTs, sizeof nTs, "epg-extra-p%d.ts", carga.perfil);
+  snprintf(nId, sizeof nId, "epg-extra-p%d.id", carga.perfil);
   hashUrl(url, id, sizeof id);
-  velho = dados_ler(EXTRA_ID);
-  if (velho && !strcmp(velho, id) && arquivoIdade(EXTRA_TS) < EPG_CACHE_SEG) {
-    b = lerBin(EXTRA_BIN, &n);
+  velho = dados_ler(nId);
+  if (!velho && carga.perfil == 1) {
+    // Migra o cache antigo somente quando pertence EXATAMENTE a URL deste
+    // cadastro. A URL nunca e gravada: o identificador e seu hash.
+    velho = dados_ler("epg-extra.id");
+    if (velho && !strcmp(velho, id) && arquivoIdade("epg-extra.ts") < EPG_CACHE_SEG) {
+      b = lerBin("epg-extra.bin", &n);
+      xml = b ? abrirExtra(b, n, nOut) : NULL;
+      if (xml && gravarBin(nBin, nTs, b, n)) dados_gravar_leve(nId, id);
+      free(b);
+      if (xml) { free(velho); return xml; }
+    }
+    free(velho); velho = NULL;
+  }
+  if (velho && !strcmp(velho, id) && arquivoIdade(nTs) < EPG_CACHE_SEG) {
+    b = lerBin(nBin, &n);
     xml = b ? abrirExtra(b, n, nOut) : NULL;
     free(b);
     if (xml) { free(velho); return xml; }
@@ -906,6 +938,8 @@ static char *obterExtra(const char *url, long *nOut) {
   memset(&ctl, 0, sizeof ctl);
   memset(&med, 0, sizeof med);
   ctl.max_bytes = EPG_EXTRA_TETO_REDE;
+  ctl.cancelado = &carga.cancelada;
+  if (!cargaAtual()) return NULL;
   b = rede_baixar_bin_medido_controle(url, 120, NULL, &ctl, &n, &med);
   if (!b || med.limitado) {
     // O teto vai no log (#158): "maior que o teto" sem o numero nao dizia se
@@ -922,7 +956,9 @@ static char *obterExtra(const char *url, long *nOut) {
     return NULL;
   }
   xml = abrirExtra(b, n, nOut);
-  if (xml && gravarBin(EXTRA_BIN, EXTRA_TS, b, n)) dados_gravar_leve(EXTRA_ID, id);
+  // O nome pertence ao dono capturado ao iniciar: nunca ao perfil que
+  // acabou de abrir enquanto este download ainda esperava a rede.
+  if (xml && gravarBin(nBin, nTs, b, n)) dados_gravar_leve(nId, id);
   if (!xml) { printf("[epg] grade do provedor: %ld B que nao sao XMLTV\n", n); fflush(stdout); }
   free(b);
   return xml;
@@ -956,48 +992,26 @@ void epg_fonte_extra(const char *url) {
 
 static void *fioEpg(void *u) {
   int i, ok = 0;
-  char extra[sizeof extraUrl];
   (void)u;
-  char arq[EPG_MAX_FONTES][8];
-  int nArq;
-  pthread_mutex_lock(&trava);
-  snprintf(extra, sizeof extra, "%s", extraUrl);
-  extraMudou = 0;
-  fontesMudaram = 0;
-  if (nFontesArq < 0) {
-    for (nArq = 0; nArq < (int)(sizeof PADRAO_ARQ / sizeof PADRAO_ARQ[0]); nArq++)
-      snprintf(arq[nArq], sizeof arq[0], "%s", PADRAO_ARQ[nArq]);
-  } else {
-    for (nArq = 0; nArq < nFontesArq; nArq++) snprintf(arq[nArq], sizeof arq[0], "%s", fontesArq[nArq]);
-  }
-  pthread_mutex_unlock(&trava);
-  if (!wAbrir(&W)) { pendPronto = 1; pendOk = 0; return NULL; }
-  for (i = 0; i < nArq; i++) {
+  if (!cargaAtual() || !wAbrir(&W)) goto fim;
+  for (i = 0; cargaAtual() && i < carga.nArq; i++) {
     long n = 0;
-    char *xml = obterXml(arq[i], &n);
+    char *xml = obterXml(carga.arq[i], &n);
     if (xml) {
       char nXml[40];
-      int achou = wProcessar(&W, xml);
-      nomesFonte(arq[i], NULL, 0, nXml, NULL, NULL, sizeof nXml);
+      int achou = cargaAtual() ? wProcessar(&W, xml) : 0;
+      nomesFonte(carga.arq[i], NULL, 0, nXml, NULL, NULL, sizeof nXml);
       printf("[epg] %s: %d programas\n", nXml, achou);
       fflush(stdout);
       free(xml);
       ok = 1;
     }
   }
-  if (extra[0]) {
+  if (cargaAtual() && carga.extra[0]) {
     long n = 0;
-    char *xml = obterExtra(extra, &n);
+    char *xml = obterExtra(carga.extra, &n);
     if (xml) {
-      // O filtro e copiado sob a trava: o fio do guia pode troca-lo durante
-      // o processamento.
-      char (*f)[64] = NULL; int nf = 0, achou;
-      pthread_mutex_lock(&trava);
-      if (filtroIds && nFiltroIds > 0 && (f = malloc(sizeof *f * (size_t)nFiltroIds)) != NULL) {
-        memcpy(f, filtroIds, sizeof *f * (size_t)nFiltroIds); nf = nFiltroIds; }
-      pthread_mutex_unlock(&trava);
-      achou = wProcessarF(&W, xml, f, nf);
-      free(f);
+      int achou = cargaAtual() ? wProcessarF(&W, xml, carga.filtro, carga.nFiltro) : 0;
       printf("[epg] grade do provedor: %d programas (%ld KB)\n", achou, n / 1024);
       fflush(stdout);
       free(xml);
@@ -1005,33 +1019,69 @@ static void *fioEpg(void *u) {
     }
   }
   wFechar(&W);
-  pendPronto = 1; pendOk = ok;
+fim:
+  free(carga.filtro); carga.filtro = NULL;
+  pendOk = ok;
+  atomic_store_explicit(&pendPronto, 1, memory_order_release);
   return NULL;
 }
 
 // --- API ---------------------------------------------------------------------------
 void epg_iniciar(void) {
   pthread_t t;
-  if (fioVivo) return;
+  if (fioVivo) {
+    if (!cargaAtual()) reiniciarPend = 1;
+    return;
+  }
+  carga.sessao = nv_perfil_sessao_ler(); carga.cancelada = 0;
+  carga.perfil = perfilGrade; carga.nFiltro = 0;
+  pthread_mutex_lock(&trava);
+  snprintf(carga.extra, sizeof carga.extra, "%s", extraUrl);
+  extraMudou = fontesMudaram = 0;
+  if (nFontesArq < 0) {
+    for (carga.nArq = 0; carga.nArq < (int)(sizeof PADRAO_ARQ / sizeof PADRAO_ARQ[0]); carga.nArq++)
+      snprintf(carga.arq[carga.nArq], sizeof carga.arq[0], "%s", PADRAO_ARQ[carga.nArq]);
+  } else {
+    for (carga.nArq = 0; carga.nArq < nFontesArq; carga.nArq++)
+      snprintf(carga.arq[carga.nArq], sizeof carga.arq[0], "%s", fontesArq[carga.nArq]);
+  }
+  if (nFiltroIds > 0 && filtroIds && (carga.filtro = malloc(sizeof *carga.filtro * (size_t)nFiltroIds))) {
+    memcpy(carga.filtro, filtroIds, sizeof *carga.filtro * (size_t)nFiltroIds);
+    carga.nFiltro = nFiltroIds;
+  }
+  pthread_mutex_unlock(&trava);
   fioVivo = 1;
   estado = EPG_BAIXANDO;
-  if (pthread_create(&t, NULL, fioEpg, NULL) != 0) { fioVivo = 0; estado = EPG_FALHOU; }
+  if (pthread_create(&t, NULL, fioEpg, NULL) != 0) {
+    free(carga.filtro); carga.filtro = NULL;
+    fioVivo = 0; estado = EPG_FALHOU;
+  }
   else pthread_detach(t);
 }
 
 int epg_estado(void) { return estado; }
 
 void epg_passo(void) {
-  if (pendPronto) {
+  if (atomic_load_explicit(&pendPronto, memory_order_acquire)) {
     pthread_mutex_lock(&trava);
-    free(P.evs); free(P.arena);
-    P = W;
+    int atual = cargaAtual();
+    if (atual) {
+      free(P.evs); free(P.arena);
+      P = W;
+      carregadaEm = time(NULL);
+      estado = pendOk ? EPG_PRONTO : EPG_FALHOU;
+    } else {
+      free(W.evs); free(W.arena);
+      estado = EPG_PARADO;
+    }
     memset(&W, 0, sizeof W);
-    carregadaEm = time(NULL);
-    estado = pendOk ? EPG_PRONTO : EPG_FALHOU;
-    pendPronto = 0;
+    atomic_store_explicit(&pendPronto, 0, memory_order_relaxed);
     fioVivo = 0;
     pthread_mutex_unlock(&trava);
+    if (!atual) {
+      if (reiniciarPend) { reiniciarPend = 0; epg_iniciar(); }
+      return;
+    }
     // A cobertura sai no log para a proxima medicao nao depender de script:
     // "+3,4 d" e o horizonte que a fonte entregou nesta carga.
     { time_t ji = 0, jf = 0, ag = time(NULL);
@@ -1054,6 +1104,18 @@ void epg_passo(void) {
   else if ((extraMudou || fontesMudaram) && !fioVivo &&
            (estado == EPG_PRONTO || estado == EPG_FALHOU))
     epg_iniciar();
+}
+
+void epg_abrir_sessao(int perfil) {
+  carga.cancelada = 1;
+  pthread_mutex_lock(&trava);
+  free(P.evs); free(P.arena); memset(&P, 0, sizeof P);
+  free(filtroIds); filtroIds = NULL; nFiltroIds = 0;
+  extraUrl[0] = paisesAtivos[0] = 0;
+  nFontesArq = -1; extraMudou = fontesMudaram = 0;
+  perfilGrade = perfil > 0 ? perfil : 1;
+  carregadaEm = 0; estado = EPG_PARADO; reiniciarPend = 0;
+  pthread_mutex_unlock(&trava);
 }
 
 // A grade lista canais SEM programa: a BR1 real tem 266 <channel> e so 105

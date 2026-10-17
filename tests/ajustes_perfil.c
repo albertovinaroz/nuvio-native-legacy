@@ -9,11 +9,13 @@
 //      do principal);
 //   4. o logout apaga as copias.
 #include "../src/ajustes.c"
+#include "nvtmp.h"
 #include <assert.h>
+#include <string.h>
 #include <unistd.h>
 
 int main(void) {
-  char dir[] = "/tmp/nuvio-aj-perfil-XXXXXX";
+  char dir[NVT_MAX]; nvt_set(dir, sizeof dir, "/nuvio-aj-perfil-XXXXXX");
   assert(mkdtemp(dir));
   setenv("NUVIO_DADOS", dir, 1);
   dados_iniciar(dir);
@@ -42,6 +44,7 @@ int main(void) {
   valor[AJ_HERO] = 1;
   valor[AJ_RESOLUCAO] = RES_4K;
   valor[AJ_ADDONS_PRINCIPAL] = 0;
+  ajustes_definir_ocultar_filmes_vistos(1);
   ajustes_perfil_guardar(1);
 
   // O perfil 2 mexe nas duas coisas.
@@ -52,6 +55,7 @@ int main(void) {
   valor[AJ_HERO] = 0;
   valor[AJ_RESOLUCAO] = 0;
   valor[AJ_ADDONS_PRINCIPAL] = 1;
+  ajustes_definir_ocultar_filmes_vistos(0);
   ajustes_perfil_guardar(2);
 
   // Volta ao 1: o destaque dele volta, a TV continua como esta.
@@ -61,17 +65,52 @@ int main(void) {
   assert(valor[AJ_ADDONS_PRINCIPAL] == 1);   // ajuste desta TV, nao do perfil
   assert(valor[AJ_CW_FONTE] == AJ_CWF_SIMKL && valor[AJ_SALVOS_DEST] == AJ_SALVOS_SIMKL);
   assert(!ajustes_hist_conta() && !ajustes_social());
+  assert(ajustes_ocultar_filmes_vistos());
 
   // E o 2 de novo.
   assert(ajustes_perfil_restaurar(2) == 1);
   assert(valor[AJ_HERO] == 0);
   assert(valor[AJ_CW_FONTE] == AJ_CWF_CONTA && valor[AJ_SALVOS_DEST] == AJ_SALVOS_LOCAL);
   assert(ajustes_hist_conta() && ajustes_social());
+  assert(!ajustes_ocultar_filmes_vistos());
+
+  // Session reset clears the outgoing preference; reload restores its owner.
+  ajustes_definir_ocultar_filmes_vistos(1);
+  ajustes_perfil_padrao();
+  assert(!ajustes_ocultar_filmes_vistos());
+  assert(ajustes_perfil_restaurar(3) == 0);
+  assert(!ajustes_ocultar_filmes_vistos());
+  assert(ajustes_perfil_restaurar(1) == 1);
+  assert(ajustes_ocultar_filmes_vistos());
+  ajustes_aplicar_blob("{\"hideWatchedMoviesLocal\":1}");
+  assert(ajustes_ocultar_filmes_vistos());
+  { char *localBlob = NULL;
+    ajustes_mesclar_blob("{}", &localBlob);
+    assert(!localBlob || !strstr(localBlob, "hideWatchedMoviesLocal"));
+    free(localBlob); }
 
   // Perfil nunca usado aqui: nada muda.
   valor[AJ_HERO] = 1;
   assert(ajustes_perfil_restaurar(3) == 0);
   assert(valor[AJ_HERO] == 1);
+
+  // #461: copia gravada ANTES da chave menuTopoLocal. O perfil 1 ligou o topo;
+  // trocar para o 2 (arquivo antigo) tem de voltar ao padrao 0, e nao herdar o 1.
+  valor[AJ_MENU_TOPO] = 1;
+  { char *t = dados_ler("ajustes-p2.txt"), *l; FILE *f;
+    char nome[600], buf[AJ_N * 56]; size_t u = 0;
+    assert(t);
+    for (l = t; *l; ) {
+      char *fim = strchr(l, '\n'); size_t n = fim ? (size_t)(fim - l + 1) : strlen(l);
+      if (strncmp(l, "menuTopoLocal ", 14)) { memcpy(buf + u, l, n); u += n; }
+      if (!fim) break; l = fim + 1;
+    }
+    buf[u] = 0; free(t);
+    snprintf(nome, sizeof nome, "%s/ajustes-p2.txt", dir);
+    f = fopen(nome, "w"); assert(f); fputs(buf, f); fclose(f); }
+  assert(ajustes_perfil_restaurar(2) == 1);
+  assert(valor[AJ_MENU_TOPO] == 0);
+  assert(ajustes_menu_topo() == 0);
 
   // A copia nao carrega linha de aparelho nem chave local com "-".
   { char *t = dados_ler("ajustes-p1.txt");
@@ -81,6 +120,7 @@ int main(void) {
     assert(!strstr(t, CHAVE[AJ_ADDONS_PRINCIPAL]));
     assert(!strstr(t, "\n-") && t[0] != '-');
     assert(strstr(t, CHAVE[AJ_HERO]));
+    assert(strstr(t, "hideWatchedMoviesLocal 0\n"));
     free(t); }
 
   // An older or foreign client may upload device-only keys. Pull must

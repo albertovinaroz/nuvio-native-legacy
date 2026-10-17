@@ -505,8 +505,33 @@ static void aj2DesenharMenu(const Aj2Pose *p) {
 }
 
 // --- DICAS GRANDES ------------------------------------------------------------------
+// #205: as teclas do rodape sao clicaveis. O chip "OK" concentra o clique (o
+// foco ja e o da tela) e o ponteiro entrega o RETURN pelo caminho de sempre; o
+// "Voltar" sintetiza a tecla Voltar. Visual de TV intocado; no celular a area
+// de toque cresce um pouco. Em transicao (gfx_transformar) o desenho esta
+// escalado e os retangulos nao sao os da tela: nao registra.
+static void aj2DicaOk(int a, int b) { (void)a; (void)b; }
+static void aj2DicaVoltar(int a, int b) {
+  (void)a; (void)b;
+  { SDL_Event e; SDL_zero(e);
+    e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_AC_BACK; e.key.state = SDL_PRESSED;
+    ajustes_evento(&e);
+    e.type = SDL_KEYUP; e.key.state = SDL_RELEASED;
+    ajustes_evento(&e); }
+}
+static void aj2DicasAlvo(const char *k, float x, float yc, float kw, float kh) {
+  int ok = !strcmp(k, "OK"), voltar = !strcmp(k, "Voltar");
+  float m;
+  if ((!ok && !voltar) || gfx_transformado()) return;
+  m = layout_modo_mobile() ? 12.0f : 4.0f;
+  ponteiro_alvo(x - m, yc - kh * 0.5f - m, kw + 2.0f * m, kh + 2.0f * m,
+                ok ? aj2DicaOk : NULL, ok ? NULL : aj2DicaVoltar, 0, 0);
+}
 // kbd com o corpo `ek` e altura `kh`, rotulo `el`; vao tecla-rotulo `g1`,
-// entre dicas `g2`. Devolve a largura.
+// entre dicas `g2`. Devolve a largura. `desenha`: 0 so mede (as chamadas de
+// medida usam coordenadas de mentira — nada pode registrar), 1 desenha e
+// registra os alvos, 2 so registra (o replay do rodape da TV: os chips ja
+// foram desenhados pelo rodape de verdade).
 static float aj2DicasLinha(const AjDica *d, int n, float x, float yc, TxtEstilo ek, float kh, float kmin,
                            float kpad, TxtEstilo el, float g1, float g2, int desenha, float a) {
   int i;
@@ -514,11 +539,13 @@ static float aj2DicasLinha(const AjDica *d, int n, float x, float yc, TxtEstilo 
   for (i = 0; i < n; i++) {
     TxtLinha k = ajTxt(ek, d[i].k), l = ajTxt(el, d[i].l);
     float kw = k.w + 2 * kpad < kmin ? kmin : k.w + 2 * kpad;
-    if (desenha) {
+    if (desenha == 1) {
       ajNeutro((GfxRect){ x, yc - kh * 0.5f, kw, kh }, kh * 0.5f, 0.09f, AJ_CHIP_SOL, a);
       txt_desenhar_alpha(k, x + (kw - k.w) * 0.5f, yc - k.h * 0.5f, 0.82f * a);
       txt_desenhar_alpha(l, x + kw + g1, yc - l.h * 0.5f, 0.55f * a);
+      aj2DicasAlvo(d[i].k, x, yc, kw, kh);
     }
+    if (desenha) aj2DicasAlvo(d[i].k, x, yc, kw, kh);
     x += kw + g1 + l.w + g2;
   }
   return x - x0 - g2;

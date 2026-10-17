@@ -1,4 +1,5 @@
 #include "traktauth.h"
+#include "perfisessao.h"
 #include "idioma.h"
 #include "nuvem.h"
 #include "dados.h"
@@ -85,6 +86,26 @@ static int tokenNovo;
 static long criadoEm, expiraSeg;   // do token: o web exige os dois na conta
 static int  pushGeracaoAtual, pushGeracao; // geracao do token (a cada vinculo) e a do push no ar
 static int  pushPendente;          // a conta ainda nao tem este token (push falhou ou nunca saiu)
+
+// Os arquivos por perfil pertencem a conta Nuvio que iniciou o fluxo. Uma
+// resposta pode sobreviver a troca de perfil, mas nunca ao logout/login.
+// A copia local nao renova o JWT nem faz rede no fio principal.
+extern int sessao_identidade_local_copiar(char *, size_t, char *, size_t) NV_PERFIL_OPCIONAL;
+extern const char *sessao_usuario(void) NV_PERFIL_OPCIONAL;
+static char usuarioFio[80], usuarioEstado[80];
+static void usuarioCopiar(char dst[80]) {
+  char jwt[3000];
+  dst[0] = 0;
+  if (sessao_identidade_local_copiar) {
+    sessao_identidade_local_copiar(dst, 80, jwt, sizeof jwt);
+    memset(jwt, 0, sizeof jwt);
+  } else if (sessao_usuario) snprintf(dst, 80, "%s", sessao_usuario());
+}
+static int mesmaConta(const char *usuario) {
+  char atual[80];
+  usuarioCopiar(atual);
+  return !strcmp(usuario, atual);
+}
 
 static char *postar(const char *caminho, const char *corpo, int *status) {
   char completo[300];
@@ -191,6 +212,7 @@ static void zerarEstado(void) {
 int traktauth_carregar(void) {
   char *b;
   char *col[6] = { NULL, NULL, NULL, NULL, NULL, NULL };
+  usuarioCopiar(usuarioEstado);
   migrarLegado();
   b = dados_ler(arqToken(perfil).s);
   if (!b) goto fluxo;
@@ -317,7 +339,7 @@ static void *fioPedir(void *u) {
     // Caso de COMPILACAO, nao do usuario: o pacote saiu sem as chaves do
     // aplicativo. Dizer isso evita a pessoa tentar de novo para sempre.
     pthread_mutex_lock(&trava);
-    if (fioAtual()) {
+    if (fioAtual() && mesmaConta(usuarioFio)) {
       snprintf(erro, sizeof erro, "pacote sem as chaves do Trakt");
       estado = TRA_ERRO;
     }
@@ -347,7 +369,7 @@ static void *fioPedir(void *u) {
   pthread_mutex_lock(&trava);
   // Pedido de um perfil que ja nao esta na tela: o codigo nao e mostrado a
   // ninguem, entao nao ha o que guardar.
-  if (!fioAtual()) {
+  if (!fioAtual() || !mesmaConta(usuarioFio)) {
     pthread_mutex_unlock(&trava);
     free(r);
     fioPronto = 1;
@@ -391,6 +413,12 @@ static void *fioPoll(void *u) {
   jsw_livre(&w);
 
   pthread_mutex_lock(&trava);
+  if (!mesmaConta(usuarioFio)) {
+    pthread_mutex_unlock(&trava);
+    free(r);
+    fioPronto = 1;
+    return NULL;
+  }
   if (!fioAtual()) {
     // O perfil mudou com o poll no ar. Autorizado: o vinculo e do perfil que
     // pediu o codigo, e vai para o arquivo DELE — o perfil em vigor nao ve
@@ -464,7 +492,7 @@ static void *fioPoll(void *u) {
 // access_token, refresh_token, token_type, created_at, expires_in.
 static void empurrarParaConta(void) {
   Jsw c;
-  if (!token[0] || !sessao_logada()) return;
+  if (!token[0] || !sessao_logada() || !mesmaConta(usuarioEstado)) return;
   jsw_iniciar(&c);
   jsw_obj_ini(&c);
   jsw_cs(&c, "access_token", token);
@@ -503,6 +531,12 @@ static void *fioRenovar(void *u) {
   jsw_livre(&w);
 
   pthread_mutex_lock(&trava);
+  if (!mesmaConta(usuarioFio)) {
+    pthread_mutex_unlock(&trava);
+    free(r);
+    fioPronto = 1;
+    return NULL;
+  }
   if (!fioAtual()) {
     // Renovacao do perfil ANTERIOR. O refresh velho morreu nesta resposta, entao
     // descartar mataria o vinculo daquele perfil: o par novo vai para o arquivo
@@ -555,6 +589,8 @@ static void *fioRenovar(void *u) {
 
 static void soltar(void *(*rotina)(void *)) {
   if (fioVivo) return;
+  usuarioCopiar(usuarioFio);
+  if (strcmp(usuarioFio, usuarioEstado)) return;
   fioPronto = 0;
   gerFio = geracao;
   perfilFio = perfil;
@@ -566,6 +602,7 @@ static void soltar(void *(*rotina)(void *)) {
 
 void traktauth_comecar(void) {
   if (estado == TRA_PEDINDO || estado == TRA_AGUARDANDO) return;
+  usuarioCopiar(usuarioEstado);
   erro[0] = 0;
   comecouMs = 0;
   pollMs = TRA_POLL_PADRAO;
@@ -574,6 +611,12 @@ void traktauth_comecar(void) {
 }
 
 void traktauth_passo(unsigned agoraMs) {
+  // Inclui tokenNovo e o resultado de um push que esperavam o proximo quadro.
+  // Logout nao pode fazer esses caminhos recriarem o arquivo apagado.
+  if (!mesmaConta(usuarioEstado)) {
+    if (fioVivo && fioPronto) { fioVivo = 0; fioPronto = 0; }
+    return;
+  }
   { int res;   // resultado do push de credencial que saiu em fio proprio (#203)
     if (credfio_resultado("trakt", &res) && res != 0 && pushGeracao == pushGeracaoAtual) {
       pushPendente = 0; gravar();

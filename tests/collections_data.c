@@ -6,6 +6,8 @@ int ajustes_hist_conta(void) { return 1; }
 int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
 int ajustes_ocultar_nao_lancados(void) { return 0; }   // #369: descoberta.c le o ajuste
+int ajustes_ocultar_filmes_vistos(void) { return 0; }    // #366: descoberta.c le o ajuste
+unsigned cat_revisao_itens(void) { return 0; }               // #366: a projecao le a revisao
 #include "../src/descoberta.c"
 // descoberta.c passou a traduzir os rotulos que monta ("Filme", "Serie", a
 // data por extenso) e este teste nao linka idioma.c: linkar puxaria

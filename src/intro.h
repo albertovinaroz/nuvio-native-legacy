@@ -27,7 +27,7 @@
 // `fim` ZERO QUER DIZER "ATE O FIM DA MIDIA", que e como a API representa o
 // `end_ms: null` dos creditos. Quem consome tem de tratar esse caso — ver
 // intro_ativo.
-typedef struct { double inicio,fim; int tipo; } IntroTrecho;
+typedef struct { double inicio,fim; int tipo; int ani; } IntroTrecho; // ani 1 = veio do AniSkip
 enum { INTRO_ABERTURA=1, INTRO_RESUMO=2, INTRO_CREDITOS=3, INTRO_PREVIA=4 };
 // `temporada` e `episodio` ZERO = filme: a consulta sai so com o imdb.
 void intro_pedir(const char *imdb,int temporada,int episodio);
@@ -53,6 +53,8 @@ void intro_definir_buscador(int (*f)(const char *url,char **corpo,int *status));
 // lancamento de duracao mais proxima de `dur`, recusado se diferir mais que
 // INTRO_ANISKIP_TOLERA (outro corte). dur 0 = nao compara.
 #define INTRO_ANISKIP_TOLERA 0.10
+int  intro_tipos_completos(const IntroTrecho *v,int n);
+int  intro_completar(IntroTrecho *dst,int n,const IntroTrecho *src,int ns,int max);
 int  intro_extrair_aniskip(const char *json,double dur,IntroTrecho *out,int max);
 void intro_montar_url_aniskip(char *url,size_t n,long mal,int ep,double dur);
 // O id do MyAnimeList na resposta de kitsu.io/api/edge/anime/<id>/mappings; 0 = nao ha.

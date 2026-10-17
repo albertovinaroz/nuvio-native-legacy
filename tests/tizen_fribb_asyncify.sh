@@ -12,6 +12,6 @@ guard = body.index('#ifdef __EMSCRIPTEN__')
 mapping = body.index('malMapeado(')
 assert guard < mapping
 assert 'Fribb mapping disabled on Tizen WGT' in body
-assert '-sASYNCIFY_ONLY=[main,dados_iniciar]' in Path('tools/tizen.sh').read_text()
+assert '-sASYNCIFY_ONLY=[main,dados_iniciar,baixar,pedirAniskip,malMapeado,mapaBaixar,rede_pedir]' in Path('tools/tizen.sh').read_text()
 print('ok: Tizen WGT skips the worker Asyncify path with a clear log')
 PY

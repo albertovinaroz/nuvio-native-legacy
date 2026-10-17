@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 set -eu
 cd "$(dirname "$0")/.."
 flags=()
@@ -11,8 +13,8 @@ if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit
 # nasceu. A lista e escrita a mao, entao ela nao acompanha sozinha: o teste
 # ficou sem linkar ("_fil_unir referenced from _sincronizarFileiras") e o
 # script morria antes de rodar um caso sequer.
-cc ${flags[@]+"${flags[@]}"} src/catalogo.c src/progresso.c src/focus.c src/ajustes.c src/posterprov.c src/redeurl.c src/colecoes.c src/js.c src/catordem.c src/fileiras.c src/artehero.c tests/home_tex_duble.c src/cwordem.c src/cwretido.c tests/home_layout.c tests/amigosfil_stub.c \
-  -Isrc -o /tmp/nuvio-home-tests -O1 -g -ffunction-sections -fdata-sections \
-  -Wl,-dead_strip -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
+cc ${flags[@]+"${flags[@]}"} src/catalogo.c src/progresso.c src/focus.c src/ajustes.c src/posterprov.c src/redeurl.c src/colecoes.c src/js.c src/catordem.c src/fileiras.c src/artehero.c tests/home_tex_duble.c src/cwordem.c src/cwretido.c src/curadoria.c tests/home_layout.c tests/amigosfil_stub.c \
+  -Isrc -o ${TMPDIR:-/tmp}/nuvio-home-tests -O1 -g -ffunction-sections -fdata-sections \
+  -DCURADORIA_TESTE -Wl,-dead_strip -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
   -Wno-deprecated-declarations -Wno-macro-redefined
-/tmp/nuvio-home-tests
+${TMPDIR:-/tmp}/nuvio-home-tests

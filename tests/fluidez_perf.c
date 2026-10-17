@@ -39,6 +39,7 @@
 #include "dados.h"
 #include "detail.h"
 #include "extras.h"   // extras_shot_relacionados (NV_SHOT_HOOKS): fileiras do detalhe
+#include "fpscena.h"
 #include "fundo.h"
 #include "gfx.h"
 #include "home.h"
@@ -137,7 +138,6 @@ static void quadro(SDL_Window *w, Quadro *q, Uint32 agora) {
   tex_novo_quadro();
   gfx_sem_recorte();
   gfx_ambiente_preparar();
-  fundo_fosco_quadro();   // main.c: vidro fosco
   glClearColor(NV_COR_FUNDO_R, NV_COR_FUNDO_G, NV_COR_FUNDO_B, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT);
   gfx_ambiente(1.0f);
@@ -262,6 +262,22 @@ static int cmpd(const void *a, const void *b) {
 }
 static double p95(double *v, int n) { qsort(v, (size_t)n, sizeof *v, cmpd); return v[(int)(0.95 * (n - 1))]; }
 
+// FPS GATE (fpscena.h): every reported phase also prints its percentiles and a
+// `FPSBASE <cena> <p95> <upl>` line. Save the output and compare it offline
+// with tests/fps_gate.sh. These CPU samples exclude GPU/swap waits; never
+// compare this baseline with the TV's full frame intervals.
+static void fps_gate_fase(const char *cen, const char *rotulo, const Quadro *qs, int n) {
+  static FpsAmostra am;
+  char nome[96], l[400];
+  int i;
+  snprintf(nome, sizeof nome, "cpu/%s/%s", cen, rotulo);
+  fps_zerar(&am);
+  for (i = 0; i < n; i++) fps_add(&am, qs[i].des + qs[i].upd, qs[i].upl);
+  fps_linha(&am, nome, l, sizeof l);
+  printf("%s\n", l);
+  printf("FPSBASE %s %.3f %ld\n", nome, fps_percentil(&am, 95), am.upl);
+}
+
 static void relatar(const char *cen, const char *rotulo, Quadro *qs, int n) {
   double *v = malloc(sizeof(double) * (size_t)n);
   double su = 0, sd = 0, sg = 0, sf = 0, sfv = 0, sfg = 0, sfm = 0, sm[GFX_NMODOS];
@@ -275,6 +291,7 @@ static void relatar(const char *cen, const char *rotulo, Quadro *qs, int n) {
     st += qs[i].txtRast;
     for (k = 0; k < GFX_NMODOS; k++) sm[k] += qs[i].modo[k];
   }
+  fps_gate_fase(cen, rotulo, qs, n);
   { int pi = 0, su_upl = 0; double pm = -1;
     for (i = 0; i < n; i++) su_upl += qs[i].upl;
     for (i = 0; i < n; i++) if (qs[i].des + qs[i].upd > pm) { pm = qs[i].des + qs[i].upd; pi = i; }

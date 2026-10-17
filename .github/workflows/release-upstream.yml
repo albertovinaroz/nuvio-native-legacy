@@ -97,11 +97,16 @@ jobs:
             git diff --name-only --diff-filter=U | tee conflictos.txt
             git merge --abort
             TITULO="Conflicto al integrar upstream $TAG"
-            if [ -z "$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "$TITULO in:title" -q '.[].number' --json number)" ]; then
-              { echo "El merge automático de \`$TAG\` en \`master\` tiene conflictos en:"; echo; while read -r f; do echo "- \`$f\`"; done < conflictos.txt; echo
-                echo "Resuélvelo a mano (\`git fetch https://github.com/$UPSTREAM.git tag $TAG && git merge $TAG\`), sube master y relanza el workflow."; } > cuerpo.md
-              gh issue create -R "$GITHUB_REPOSITORY" --title "$TITULO" --body-file cuerpo.md
+            { echo "## $TITULO"; echo; echo "El merge automático de \`$TAG\` en \`master\` tiene conflictos en:"; echo; while read -r f; do echo "- \`$f\`"; done < conflictos.txt; echo
+              echo "Resuélvelo a mano (\`git fetch https://github.com/$UPSTREAM.git tag $TAG && git merge $TAG\`), sube master y relanza el workflow."; } > cuerpo.md
+            # El resumen del run siempre; el issue solo si el repo tiene issues
+            # (en este fork estan desactivados y gh fallaba antes de avisar).
+            cat cuerpo.md >> "$GITHUB_STEP_SUMMARY"
+            if [ "$(gh api "repos/$GITHUB_REPOSITORY" -q .has_issues)" = true ] &&
+               [ -z "$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "$TITULO in:title" -q '.[].number' --json number)" ]; then
+              gh issue create -R "$GITHUB_REPOSITORY" --title "$TITULO" --body-file cuerpo.md || true
             fi
+            echo "::error title=$TITULO::conflictos en $(paste -sd' ' conflictos.txt)"
             exit 1
           fi
           git push origin HEAD:master

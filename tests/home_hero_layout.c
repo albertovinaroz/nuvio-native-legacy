@@ -16,6 +16,8 @@ static void ordered(HeroCopyLayout p, float btnH, float btnGap,
 }
 
 int main(void) {
+  assert(NV_FT_HERO_SIN == 22 && NV_LD_HERO_SIN == 30);
+  assert(heroSinEstilo() == TXT_HERO_SIN && heroSinEntrelinha() == 30);
   static CatItem c;
   snprintf(c.logoIdiomaUrl, sizeof c.logoIdiomaUrl,
            "https://image.tmdb.org/t/p/original/title.png");

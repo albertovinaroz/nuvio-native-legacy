@@ -9,6 +9,7 @@
 #include <SDL2/SDL.h>
 
 int  biblioteca_iniciar(void);
+void biblioteca_abrir_sessao(void); // foco/fonte transitorios; conserva preferencias
 void biblioteca_evento(const SDL_Event *e);
 void biblioteca_atualizar(float dt, Uint32 agora);
 void biblioteca_desenhar(Uint32 agora);

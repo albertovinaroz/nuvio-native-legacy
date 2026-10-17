@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "nvtmp.h"
 #include <errno.h>
 #include <assert.h>
 #include <sys/statvfs.h>
@@ -68,7 +69,7 @@ static int appleTeste(const char *id, const char *titulo, int ano, int serie, ch
   return 1;
 }
 int main(void) {
-  char dir[] = "/tmp/nuvio-texdisco-XXXXXX", nome[32], dst[600], tmp[640];
+  char dir[NVT_MAX], nome[32], dst[600], tmp[640]; nvt_set(dir, sizeof dir, "/nuvio-texdisco-XXXXXX");
   long total = 700 * 1024;
   assert(mkdtemp(dir));
   assert(NV_CACHE_DISCO_MAX <= 512L * 1024 * 1024);

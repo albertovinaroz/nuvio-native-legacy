@@ -13,6 +13,7 @@
 // fixar uma lista GRAVA, e um teste deste repositorio ja sobrescreveu os dados
 // reais do dono.
 #include "biblioteca.h"
+#include "nvtmp.h"
 #include "ctxmenu.h"
 #include "colecoes.h"
 #include "listas.h"
@@ -250,7 +251,7 @@ static void injetarListas(void) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-biblioteca";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-biblioteca");
   // "lista" no segundo argumento COMECA em exibicao de lista, sem ter desenhado
   // um quadro antes. E a unica forma de medir a arte das duas exibicoes com o
   // cache FRIO nas duas: o tex_cache e indexado pelo CAMINHO, nao pela largura

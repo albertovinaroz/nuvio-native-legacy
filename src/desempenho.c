@@ -15,7 +15,7 @@
 static float piorSerie[DS_N];
 static int   nSerie;
 static float uFps, uPior, uTelaMb, uRss;
-static int   uJanks, uTela, uFila, uDesp, uDespTela, temAmostra;
+static int   uJanks, uTela, uFila, uDesp, uDespTela, temAmostra, trailerTocando;
 #ifdef DESEMPENHO_TESTE
 static int formaFixa = -1;
 void desempenho_teste_forma(int forma) { formaFixa = forma; }
@@ -30,12 +30,14 @@ void desempenho_amostra(float fps, float piorMs, int janks, int texTela, float t
   temAmostra = 1;
 }
 
+void desempenho_trailer(int tocando) { trailerTocando = tocando; }
+
 int desempenho_forma(void) {
   int f = ajustes_medidor_desempenho();
 #ifdef DESEMPENHO_TESTE
   if (formaFixa >= 0) f = formaFixa;
 #endif
-  if (!temAmostra || f < DS_MINIMO || f > DS_GRANDE) return DS_DESLIGADO;
+  if (!temAmostra || trailerTocando || f < DS_MINIMO || f > DS_GRANDE) return DS_DESLIGADO;
   return f;
 }
 

@@ -14,6 +14,8 @@
 #include "../src/home.c"
 void desc_sinopse_hero(const int *idx, int n) { (void)idx; (void)n; }
 
+// #204: o "Ocultar filmes assistidos" da descoberta, parado neste teste.
+void desc_ocultar_vistos_atualizar(void) {}
 void cachearte_marcar_grupo(int grupo, const char *url, int variante, int essencial, int emUso) {
   (void)grupo; (void)url; (void)variante; (void)essencial; (void)emUso;
 }

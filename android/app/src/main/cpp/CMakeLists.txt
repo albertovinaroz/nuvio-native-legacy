@@ -10,6 +10,7 @@ set(NUVIO_RAIZ "" CACHE PATH "raiz do repositorio")
 set(NUVIO_SDL_SRC "$ENV{HOME}/.cache/nuvio-android/src" CACHE PATH "fontes do SDL")
 set(NUVIO_ENV_CMAKE "" CACHE FILEPATH "chaves -D geradas por tools/android.sh (fora do git)")
 set(NUVIO_P2P_MOTOR "" CACHE PATH "motor P2P de tools/p2p-motor/build-android.sh (vazio = sem motor)")
+set(NUVIO_RUST_MKVCORE "" CACHE PATH "pasta <abi>/libmkvcore.a de tools/rust-mkvcore.sh --android (vazio = nucleo C)")
 
 set(SDL_DIR   "${NUVIO_SDL_SRC}/SDL2-2.30.9")
 set(IMG_DIR   "${NUVIO_SDL_SRC}/SDL2_image-2.8.2")
@@ -105,6 +106,17 @@ target_link_libraries(main PRIVATE SDL2::SDL2 SDL2_image SDL2_ttf webpdemux webp
 # sem atributo de pilha, o fio nasce com 8 MB como no glibc da LG/Tizen, e nao
 # com o ~1 MB do bionic. O nucleo tem vetores grandes na pilha dos fios.
 target_link_options(main PRIVATE "-Wl,--wrap=pthread_create")
+
+# Nucleo EBML/NAL do mkv.c em Rust (piloto, docs/plans/rust-mapa.md): so com a
+# pasta informada; vazio = o caminho C de sempre.
+if(NUVIO_RUST_MKVCORE)
+  set(RUST_MKV_LIB "${NUVIO_RUST_MKVCORE}/${ANDROID_ABI}/libmkvcore.a")
+  if(NOT EXISTS "${RUST_MKV_LIB}")
+    message(FATAL_ERROR "libmkvcore.a ausente em ${RUST_MKV_LIB} (rode tools/rust-mkvcore.sh --android)")
+  endif()
+  target_compile_definitions(main PRIVATE NV_RUST_MKVCORE)
+  target_link_libraries(main PRIVATE "${RUST_MKV_LIB}")
+endif()
 
 # Motor P2P embutido (src/p2pmotor.h): nuvio-engine + libtorrent + OpenSSL,
 # estaticos e ja compilados por tools/p2p-motor/build-android.sh. C++ dentro de

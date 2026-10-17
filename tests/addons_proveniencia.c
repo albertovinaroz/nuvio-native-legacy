@@ -67,7 +67,11 @@ int main(void) {
   pthread_mutex_init(&c.trava, NULL);
   progLigado = 1;
   addons_capturar_escopo(&fioEscopo);
+  c.sessao = fioEscopo.sessao;
+  c.origens = capturarPedidos(c.sessao, &c.nOrigens, &c.versao);
+  assert(c.origens && c.nOrigens == 2);
   fioFontes(&c);
+  free(c.origens);
   for (int i = 0; i < 2; i++) {
     assert(baldes[i].n == 1);
     assert(!strcmp(baldes[i].achados[0].addonChave, esperado[i]));
@@ -95,7 +99,11 @@ int main(void) {
   c.id = "channel1"; c.tipo = "tv"; c.tipoAlt = "channel";
   c.timeout = 1; c.baldes = baldes; c.nBaldes = 1;
   pthread_mutex_init(&c.trava, NULL);
+  c.sessao = perfis_sessao_geracao();
+  c.origens = capturarPedidos(c.sessao, &c.nOrigens, &c.versao);
+  assert(c.origens);
   fioFontes(&c);
+  free(c.origens);
   assert(baldes[0].n == 1 && !strcmp(baldes[0].achados[0].addonChave, esperado[0]));
   assert(baldes[0].achados[0].addonOrdem == 0);
   free(baldes[0].achados); pthread_mutex_destroy(&c.trava);

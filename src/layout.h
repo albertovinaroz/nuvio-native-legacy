@@ -261,9 +261,7 @@ int layout_modo_mobile(void);
 // Altura e respiro do botao do destaque (o "Ver titulo"), e a mesma medida do
 // NV_HERO_BOTAO_H que o layout do hero ja usava para a linha de acoes.
 #define NV_HOME_HERO_BOTAO_GAP 26.0f
-// 58 e nao os 46 medidos no web (564 - 518): com a pilula de tipo/addon ao
-// lado do titulo, 46 deixava o titulo colado nos cards (pedido do dono do fork).
-#define NV_LEGACY_ROW_HEAD_H 58.0f // titulo + margem ate os cards
+#define NV_LEGACY_ROW_HEAD_H 64.0f // titulo + margem ate os cards — dono, 14/10: "os titulos tão saindo muito perto da fileira", no espacamento da referencia da Apple TV
 
 // --- LAYOUTS DA HOME (ajustes_home_layout) ---------------------------------
 // MODERNA e tudo o que esta acima. As medidas abaixo sao DESTES DOIS layouts
@@ -330,6 +328,17 @@ int layout_modo_mobile(void);
 #define NV_DIN_LARGA_VEU  0.62f    // altura do veu da legenda na faixa deitada
 #define NV_DIN_LARGA_PAD  20.0f    // recuo da legenda dentro da faixa
 #define NV_DIN_PAINEL_RAIO 36.0f   // canto do painel de vidro de cada fileira
+// Fileira "Herói" (#205): um cartão só do tamanho da fileira — o banner
+// largo entre fileiras que a Apple TV usa. A altura sai da largura, porque a
+// largura é a fileira inteira (homeLarguraUtil): 0,24 é a proporção medida
+// na foto do dono (fotos1014/appletv-hero-card.jpg) com folga para o selo, o
+// título e as duas linhas.
+#define NV_HEROI_ASPECT  0.24f
+#define NV_HEROI_PAD     28.0f    // recuo do selo, do título e do texto
+#define NV_HEROI_VEU_F   0.82f     // escuro→claro de baixo para cima, para o texto
+#define NV_HEROI_VEU_A   0.72f
+#define NV_HEROI_LOGO_W  0.42f     // o título nunca passa desta fração da largura
+
 // Faixa do numeral do Top 10: o numeral mora no vao a esquerda do cartaz e o
 // cartaz cobre a ponta direita dele (a Apple faz assim), entao o passo da
 // fileira cresce por ela.
@@ -338,9 +347,22 @@ int layout_modo_mobile(void);
 // cartazes. Ficha: cartaz 212 + a ficha de texto. Palco: o cartaz do centro
 // sobre a medida do cartaz comum; os vizinhos caem para NV_PALCO_VIZ dele.
 #define NV_TEMPO_FAIXA_H   96.0f
-#define NV_FICHA_W        600.0f
+#define NV_FICHA_W        540.0f  // dono, 14/10: "deixar ele um pouco menor" — 600 transbordava o cartaz
+#define NV_FICHA_VAO      22.0f   // do cartaz a ilha da ficha: o card sai do filme, como a extensao do menu
+#define NV_FICHA_ILHA_DY  12.0f   // a ilha um pouco menor que o cartaz, dentro da fileira
+#define NV_FICHA_RAIO     32.0f   // o mesmo canto do menu contextual (CTX_ILHA_RAIO)
 #define NV_PALCO_ESC       1.3f
+// Fileira redonda (pessoas): diametro do disco. O nome vai abaixo, no bloco do rotulo.
+#define NV_REDONDA_D       200.0f
 #define NV_PALCO_VIZ       0.66f
+// FILEIRA "PÔSTER GRANDE" (home.c): o card 3:4 grande do pedido de 14/10
+// ("o pôster só que do tamanho do grande tipo o 3:4 grande"). A base do card
+// leva logo, gênero, classificação e duas linhas de sinopse sobre um véu na
+// COR PREDOMINANTE do cartaz (corviva), e não em preto.
+#define NV_POSTER_G_H       460.0f
+#define NV_POSTER_G_W       (NV_POSTER_G_H * 3.0f / 4.0f)
+#define NV_POSTER_G_VEU_F    0.58f   // quanto da altura o véu da base cobre
+#define NV_POSTER_G_VEU_A    0.94f
 // O numeral: corpo do TXT_RANK_GRANDE (os algarismos da Inter medem ~0,73 do
 // corpo, ~190 px contra o cartaz de 322 — perto de 60%, a proporcao da Apple),
 // quanto da largura dele fica POR BAIXO do cartaz, e a folga minima ate o
@@ -381,10 +403,10 @@ int layout_modo_mobile(void);
 // todo consumido pela expansão lateral; este valor preserva cerca de 24px
 // visíveis entre os cards grandes mesmo no foco.
 #define NV_CARD_GAP_GRANDE 40.0f
-// Passo entre fileiras MEDIDO: titulo da fileira 0 em y=518, da fileira 1 em
-// y=934 -> 416. Desses, 46 sao do cabecalho ate os cards (518 -> 564) e 322 do
-// card, sobrando 48 de respiro entre uma fileira e a proxima.
-#define NV_FILEIRA_GAP  48.0f
+// Passo entre fileiras: era 48 (medido no app web, 518->934), dono, 14/10:
+// "espacamento que nem a da foto" (referencia Apple TV) — o vao largo entre
+// secoes, o mesmo respiro do layout Padrao (NV_PAD_FILEIRA_GAP).
+#define NV_FILEIRA_GAP  80.0f
 
 // POSTER DEITADO (`modernLandscapePostersEnabled`). MEDIDO no app web com a
 // preferencia ligada: `.home-poster-card.is-landscape` = 318 de largura, moldura
@@ -560,12 +582,12 @@ int layout_modo_mobile(void);
 // .home-modern-hero-secondary: 18/600 na sessao logada.
 #define NV_FT_HERO_SEC   18   // --modern-hero-secondary-size (212*0.085)
 #define NV_FT_HERO_META  21   // --modern-hero-meta-size (212*0.1), peso 500
-#define NV_FT_HERO_SIN   22   // --modern-hero-description-size, peso 400
+#define NV_FT_HERO_SIN   22   // original hero synopsis, peso 400
 // Tela de DETALHE, medidos no app web rodando (getBoundingClientRect e
 // getComputedStyle sobre .series-detail-shell), nao lidos da folha.
 #define NV_FT_DET_BOTAO  25   // .series-primary-btn (peso 600)
 #define NV_FT_DET_META   25   // .series-detail-support e .detail-meta-row
-#define NV_FT_DET_SIN    26   // .series-detail-description
+#define NV_FT_DET_SIN    28   // era 26 (#477, sinopse pequena na TV)
 #define NV_FT_DET_META2  23   // .detail-meta-row.secondary
 #define NV_FT_PLR_TITULO 56   // .player-title
 #define NV_FT_PLR_CORPO  32   // .player-subtitle e .player-time-label
@@ -573,7 +595,11 @@ int layout_modo_mobile(void);
 // (components.css:15282), ja convertidos para o canvas de 1920; o guia
 // parental nao e refeito la e fica com os 22 da regra base.
 #define NV_FT_PG_RELOGIO 26   // .player-clock
-#define NV_FT_PG_FIM     22   // .player-ends-at
+// Side-sheet typography derives from one body size; text.c applies the readable floor.
+#define NV_FT_SHEET_BODY 26
+#define NV_FT_SHEET_TITLE (NV_FT_SHEET_BODY * 17 / 13)
+#define NV_FT_SHEET_META (NV_FT_SHEET_BODY * 11 / 13)
+#define NV_FT_PG_FIM     NV_FT_SHEET_META   // .player-ends-at
 #define NV_FT_PG_ROTULO  22   // .player-parental-label
 #define NV_FT_PG_GRAV    22   // .player-parental-severity
 // Entrelinha (leading) OFICIAL de cada estilo. Usar a altura que o SDL_ttf
@@ -650,11 +676,19 @@ int layout_modo_mobile(void);
 //
 // ILHA DO RELOGIO (ilha.h). Topo a 36 px: dentro da area segura de acao das
 // TVs (5 % de 1080 = 54 px para o TEXTO; a pilula comeca antes, o texto dela
-// fica em ~50). Fechada ela mede 52 de altura; aberta para um aviso, 64.
-#define NV_ILHA_Y          36.0f
-#define NV_ILHA_H          52.0f
+// fica em ~50). Fechada ela mede 60 de altura; aberta para um aviso, 64.
+// TOP CHROME A27 (tvOS 27, glassdesign/brief.md 3a): avatar chip, top bar and
+// clock island share one line: top 32, height 60, capsule radius 30, edges 64;
+// the bar track wraps its 48 px tab capsules with a 6 px inset.
+#define NV_CHROME_TOP      32.0f
+#define NV_CHROME_H        60.0f
+#define NV_CHROME_EDGE     64.0f
+#define NV_CHROME_INSET     6.0f
+#define NV_ILHA_Y          NV_CHROME_TOP
+#define NV_ILHA_H          NV_CHROME_H
 #define NV_ILHA_H_ABERTA   64.0f
-#define NV_ILHA_MARGEM_D   64.0f   // da borda direita, quando ancorada a direita
+#define NV_ILHA_MARGEM_D   NV_CHROME_EDGE   // da borda direita, quando ancorada a direita
+#define NV_ILHA_REP_W     190.0f   // pilula em repouso (12 h AM/PM e a mais larga) + respiro
 #define NV_ILHA_TEXTO_MAX 760.0f   // frase do aviso: mais que isto, reticencias
 
 // Fundo: #0D0D0D. Aqui estava #252629, com a justificativa de que "o

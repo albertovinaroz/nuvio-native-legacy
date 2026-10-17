@@ -49,6 +49,8 @@ int  faixas_estilo_controle(void);
 // F04: what the subtitle selector (legendasui.c) needs from the primary.
 // Combined index of the active primary (embedded first, then addons; -1 none).
 int  faixas_legenda_ativa(void);
+// Primary collector rendering waits until native fallback hands over ownership.
+int  faixas_legenda_overlay(void);
 // Opaque identity of the active external primary ("" = none).
 const char *faixas_legenda_externa_id(void);
 // Choose the primary: embedded track `i` (-1 = off) / an addon entry COPY.

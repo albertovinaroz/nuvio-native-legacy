@@ -2,13 +2,13 @@
 # Inicio de volta da descoberta atomico (dois desc_iniciar juntos = um montar)
 # e o fio adiado com a marca copiada no agendamento. Ver o .c.
 #
-#   bash tests/desc_iniciar_corrida.sh        (SANITIZE=1 para ASan/UBSan, TSAN=1 para TSan)
+#   bash tests/desc_iniciar_corrida.sh        (SANITIZE=1 para ASan/UBSan, SANITIZE=thread para TSan)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tmp="${TMPDIR:-/tmp}"
 flags=()
 if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
-if [ "${TSAN:-0}" = 1 ]; then flags+=(-fsanitize=thread); fi
+if [ "${SANITIZE:-0}" = thread ]; then flags+=(-fsanitize=thread); fi
 cc ${flags[@]+"${flags[@]}"} -DNV_DESC_MIN_MS=1000ull -DCAT_ESPERA_SILENCIO_MS=300 -DCAT_ESPERA_MIN_MS=600 \
   src/cwordem.c tests/desc_iniciar_corrida.c src/homeestado.c src/catalogo.c \
   src/progresso.c src/js.c src/metaprov.c src/colecoes.c src/redeurl.c src/catordem.c src/cotacat.c \

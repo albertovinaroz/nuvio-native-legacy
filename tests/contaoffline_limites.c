@@ -44,14 +44,61 @@ char *sessao_rpc(const char *funcao, const char *corpo, int *st) {
   return roteiro_sessao_rpc(funcao, corpo, st);
 }
 
+#define NV_PERFIL_SESSAO_FORTE
+#include "../src/debrid.h"
+
+// Cycle RPCs now carry the captured token. This fixture never logs in;
+// the empty token still has to reach the existing sessao_* fakes.
+uint64_t perfis_sessao_geracao(void) { return 1; }
+int perfis_sessao_atual(uint64_t geracao) { return geracao == perfis_sessao_geracao(); }
+int perfis_sessao_travar(uint64_t geracao) { return perfis_sessao_atual(geracao); }
+void perfis_sessao_destravar(void) {}
+int sessao_identidade_local_copiar(char *usuarioOut, size_t nUsuario, char *jwt, size_t nJwt) {
+  (void)nUsuario; (void)nJwt;
+  usuarioOut[0] = jwt[0] = 0;
+  return 0;
+}
+void sessao_token_recusado(const char *tok) { (void)tok; }
+char *nuvem_tabela(const char *t, const char *q, const char *bearer, int *st) {
+  (void)bearer;
+  return sessao_tabela(t, q, st);
+}
+char *nuvem_rpc_com(const char *funcao, const char *corpo, const char *bearer, int *st) {
+  (void)bearer;
+  return sessao_rpc(funcao, corpo, st);
+}
+int perfis_puxar_sessao(uint64_t sessao, const char *usuarioIn, const char *jwt) {
+  (void)sessao; (void)usuarioIn; (void)jwt; return 0;
+}
+int syncprog_puxar_sessao(int perfil, uint64_t sessao) { (void)perfil; (void)sessao; return 0; }
+int syncprog_empurrar_sessao(int perfil, uint64_t sessao) { (void)perfil; (void)sessao; return 0; }
+void debrid_conta_iniciar(DebridConta *conta) { if (conta) memset(conta, 0, sizeof *conta); }
+void debrid_conta_definir(DebridConta *conta, const char *servico, const char *chave) {
+  (void)conta; (void)servico; (void)chave;
+}
+int debrid_aplicar_chaves_conta(const DebridConta *conta, uint64_t sessao) {
+  (void)conta; (void)sessao; return 0;
+}
+void desc_sessao_preparada(void) {}
+void desc_sessao_passo(void) {}
+void desc_abrir_sessao(void) {}
+void extras_abrir_sessao(void) {}
+void perfis_invalidar_sessao(void) {}
+void recomenda_esquecer_conta(void) {}
+int sessao_token_copiar(char *dst, size_t n) { if (dst && n) dst[0] = 0; return 0; }
+void ajustes_perfil_padrao(void) {}
+
 // Os pontos de cache sao estaticos; incluir a implementacao permite controlar
 // a resposta no instante preciso, sem sleeps nem corrida entre fios do teste.
 #include "../src/sync.c"
+#include "nvtmp.h"
 
 static void cicloTeste(void) {
   perfilTeste = perfilDoCiclo = 1;
   usuario = "conta-a";
   snprintf(usuarioDoCiclo, sizeof usuarioDoCiclo, "%s", usuario);
+  tokenDoCiclo[0] = 0;
+  sessaoDoCiclo = perfis_sessao_geracao();
   copiaGeracaoDoCiclo = contacache_geracao();
   foraCiclo = copiaCiclo = 0;
   temAddonsRem = 0;

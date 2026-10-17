@@ -187,6 +187,19 @@ typedef enum {
   // Medium nas outras). Mesmo corpo da sinopse (NV_FT_DET_SIN).
   TXT_DET_META_FORTE,   // ano, duracao       26 / 700
   TXT_DET_META_GEN,     // generos            26 / 600
+  // BARRA DA APPLE TV (menu.c; dono, 14/10: "a font da sidebar tem que ser
+  // mais pesada e o titulo streaming pode ser mais marcante"). Rotulo de
+  // item um peso acima do TXT_DET_META (Regular); cabecalho de secao maior
+  // e em Bold, desenhado em caixa alta com tracking.
+  TXT_TV_ROTULO,        // item da barra       25 / 500
+  TXT_TV_SECAO,         // "STREAMING"         24 / 700
+  TXT_HERO_SIN_GRANDE, // optional hero synopsis, 24/400
+  // #477: corpos exclusivos das sinopses; 100% usa o original.
+  TXT_SINOPSE_19, TXT_SINOPSE_21, TXT_SINOPSE_22, TXT_SINOPSE_23,
+  TXT_SINOPSE_24, TXT_SINOPSE_25, TXT_SINOPSE_26, TXT_SINOPSE_27,
+  TXT_SINOPSE_28, TXT_SINOPSE_29, TXT_SINOPSE_30, TXT_SINOPSE_31,
+  TXT_SINOPSE_33, TXT_SINOPSE_34, TXT_SINOPSE_35, TXT_SINOPSE_39,
+  TXT_SINOPSE_20, // 125% de 16px; append-only, preserva os estilos anteriores
   TXT_NFONTES
 } TxtEstilo;
 
@@ -221,6 +234,8 @@ extern const char *const TXT_FAMILIAS_PT[TXT_FAMILIA_N];
 // que o chamador escolheu para a legenda.
 void txt_definir_fonte_interface(TxtFamilia familia);
 TxtFamilia txt_fonte_interface(void);
+// CORPO E PESO de um estilo, para teste e diagnostico (o desenho nao usa).
+void txt_estilo_medidas(TxtEstilo estilo, int *corpo, int *peso);
 // Que fonte desenharia a linha `s` no estilo dado, em texto ("principal",
 // "inter", "reserva:CJK:/caminho"). Para teste e diagnostico; NULL = nenhuma.
 // Linha de legenda ja quebrada -> ordem visual, arabe moldado so se a fonte tem
@@ -296,6 +311,8 @@ TxtLinha txt_linha_corta_enfase(TxtEstilo estilo, const char *s, int r, int g,
 // Desenha no canto superior esquerdo (x,y).
 void txt_desenhar(TxtLinha l, float x, float y);
 void txt_desenhar_alpha(TxtLinha l, float x, float y, float alpha);
+// Multiplica so o RGB da textura (0..1); preserva o alpha e o encaixe no pixel.
+void txt_desenhar_tom(TxtLinha l, float x, float y, float cr, float cg, float cb, float alpha);
 
 // Desenha com ESPACAMENTO entre letras (tracking) e devolve a largura total.
 // SDL_ttf nao tem tracking, e o titulo da pagina do tvOS depende dele: sem o
@@ -303,6 +320,19 @@ void txt_desenhar_alpha(TxtLinha l, float x, float y, float alpha);
 // cabecalho. Passe x = -1 para so medir, sem desenhar.
 float txt_tracking(TxtEstilo estilo, const char *s, int r, int g, int b,
                    float x, float y, float alpha, float tracking);
+
+// TEXTO VIVO: desenha `s` glifo a glifo, cada caractere uma linha de UMA letra
+// rasterizada em BRANCO e tintada na hora (o GFX_TEXTO pega a cor no uniforme,
+// nao no RGB da textura). Para o texto que muda com o relogio da cena — tempo
+// do seek, percentuais, o IP sendo digitado: um valor novo reusa glifos que ja
+// estao no cache em vez de rasterizar + subir uma textura nova (~2,4 ms na C9,
+// medido) no meio da rolagem. Perde o kerning ENTRE caracteres, o que nao
+// aparece em digitos e selos curtos; frase com palavra vai em txt_linha.
+void txt_glifos(TxtEstilo estilo, const char *s, int r, int g, int b,
+                float x, float y, float alpha);
+// A largura do que txt_glifos desenharia, SEM desenhar: quem centra o texto
+// vivo tem de medir do mesmo jeito que desenha.
+float txt_glifos_largura(TxtEstilo estilo, const char *s);
 
 // Desenha texto QUEBRADO em linhas que cabem em `larg`, devolvendo a altura
 // usada. Sem isso, qualquer texto de tamanho variavel (sinopse de episodio,

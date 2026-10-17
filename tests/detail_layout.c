@@ -1,15 +1,23 @@
 // Regression: unknown logo language and fullscreen carousel edge navigation.
 #define desc_pedir_titulo_semente capturar_rota_tmdb
 #define extras_relacionado_imdb relacionado_tmdb_fixture
+// Cast: OK on a person tile opens the filmography only when the tile has a
+// TMDB person id; without one it must warn (island), never die silent.
+#define pessoa_pedir capturar_pessoa
+#define ilha_avisar capturar_aviso
 #include "../src/notasui.h"
 #define notasui_fontes_n notas_n_fixture
 int notas_n_fixture(const NotasSecao *s);
 #include "../src/detail.c"
 #undef desc_pedir_titulo_semente
 #undef extras_relacionado_imdb
+#undef pessoa_pedir
+#undef ilha_avisar
 #include <assert.h>
 static long rotaId;
 static char rotaTipo[16];
+static long pessoaId;
+static char avisoChave[40];
 // detail.c now opens a TMDB recommendation through desc_pedir_titulo_semente
 // (click seed: title/year/poster); the stub keeps it free of I/O.
 void capturar_rota_tmdb(const char *imdb, long id, const char *tipo, const char *titulo,
@@ -22,6 +30,14 @@ void capturar_rota_tmdb(const char *imdb, long id, const char *tipo, const char 
 int notas_n_fixture(const NotasSecao *s) { (void)s; return 5; }
 const char *relacionado_tmdb_fixture(int i) {
   return i == 0 ? "tmdb:42" : "";
+}
+void capturar_pessoa(long tmdb, const char *n, const char *f) {
+  (void)n; (void)f; pessoaId = tmdb;
+}
+void capturar_aviso(const char *chave, int tipo, const char *icone,
+                    const char *texto, unsigned ms, int tecla) {
+  (void)tipo; (void)icone; (void)texto; (void)ms; (void)tecla;
+  snprintf(avisoChave, sizeof avisoChave, "%s", chave ? chave : "");
 }
 int main(void) {
   assert(SDL_Init(SDL_INIT_TIMER) == 0);
@@ -138,6 +154,14 @@ int main(void) {
   colListaAberta = 1; detail_evento(&e);
   assert(colListaAberta && !saindo && detail_pediu_menu());
   colListaAberta = 0;
+  // #407: CIMA no alto da pagina de titulo (sobre os botoes) NAO abre o painel
+  // de Salvos/Avisos. O atalho existia para controles sem tecla AZUL, mas na
+  // Samsung o CH+ ja abre o painel (e o relogio continua clicavel); a seta
+  // disparando um menu era o que o relato pedia para sair.
+  nivel = 0; focoAmigos = 0; botao = 0; saindo = 0;
+  e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_UP;
+  detail_evento(&e);
+  assert(!detail_pediu_social() && !saindo && nivel == 0 && botao == 0);
   // Back never carries a menu request.
   nivel = 0; e.key.keysym.sym = SDLK_ESCAPE; detail_evento(&e);
   assert(saindo && !detail_pediu_menu());
@@ -184,6 +208,34 @@ int main(void) {
     snprintf(m.tipo, sizeof m.tipo, "tv");
     cat_definir_tudo(&m, 1, NULL, 0);
     assert(!temExplorar() && !temMais()); }
+  // CAST CLICK (#205): sem id de pessoa do TMDB o OK nao abre nada e tem de
+  // avisar; com id, abre a filmografia.
+  { CatItem m = {0};
+    snprintf(m.tipo, sizeof m.tipo, "movie");
+    snprintf(m.imdb, sizeof m.imdb, "tt1392214");
+    snprintf(m.elenco[0].nome, sizeof m.elenco[0].nome, "Fulana");
+    m.nElenco = 1;
+    cat_definir_tudo(&m, 1, NULL, 0); idx = 0; aberto = 1;
+    saindo = 0; pessoaAberta = 0; abaInfo = 0;   // aba 0 = ABA_ELENCO
+    nivel = 1;
+    foco.fileira = SEC_ELENCO; foco.coluna = 0;
+    pessoaId = 0; avisoChave[0] = 0;
+    e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_RETURN; detail_evento(&e);
+    e.type = SDL_KEYUP; detail_evento(&e);
+    // sem tmdb: nem pagina nem silencio — aviso na ilha
+    assert(!pessoaAberta && pessoaId == 0 &&
+           !strcmp(avisoChave, "det-elenco-sem-pagina"));
+    // com tmdb: a filmografia abre
+    { const CatItem *ci = cat_item(idx);   // escreve no item da tela
+      CatItem copia = *ci;
+      copia.elenco[0].tmdb = 5150;
+      cat_definir_tudo(&copia, 1, NULL, 0); idx = 0; }
+    avisoChave[0] = 0; pessoaAberta = 0;
+    nivel = 1; foco.fileira = SEC_ELENCO; foco.coluna = 0;
+    e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_RETURN; detail_evento(&e);
+    e.type = SDL_KEYUP; detail_evento(&e);
+    assert(pessoaAberta && pessoaId == 5150 && !avisoChave[0]);
+    pessoaAberta = 0; }
   puts("PASS: title/navigation and focus-only action group");
   return 0;
 }

@@ -8,6 +8,7 @@
 #include "catalogo.h"
 #include "intro.h"
 #include "idbase.h"
+#include "proximopreparo.h"
 
 static CatItem titulo;
 static CatEp episodios[2];
@@ -34,6 +35,20 @@ void player_episodio_atual(int *t, int *e) { *t = atualT; *e = atualE; }
 int player_velocidade_efetiva(void) { return velocidade; }
 void player_aprender_creditos(void) {}
 int ajustes_fonte_preparar(void) { return preparar; }
+// This fixture exercises metadata prefetch with native video preparation off.
+int ajustes_fonte_precarregar(void) { return 0; }
+int ajustes_fonte_manual(void) { return 0; }
+int proximopreparo_agendar(int c, int t, int e, const char *atual, const char *alvo,
+                          const FontecacheEscopo *escopo) {
+  (void)c; (void)t; (void)e; (void)atual; (void)alvo; (void)escopo;
+  assert(!"native video preparation is disabled"); return 0;
+}
+void proximopreparo_passo(const char *atual) { (void)atual; }
+void proximopreparo_cancelar(void) {}
+int proximopreparo_renovar(const char *atual, const char *alvo) {
+  (void)atual; (void)alvo;
+  assert(!"native video preparation is disabled"); return 0;
+}
 int ajustes_proximo_auto(void) { return 1; }
 int ajustes_proximo_contagem(void) { return 5; }
 double video_creditos(void) { return credito; }
@@ -43,7 +58,15 @@ int player_janela_proximo(double antecedencia) {
 }
 int extras_n_relacionados(void) { return 0; }
 const char *extras_relacionado_imdb(int i) { (void)i; return ""; }
+const char *extras_relacionado_titulo(int i) { (void)i; return ""; }
+const char *extras_relacionado_ano(int i) { (void)i; return ""; }
+const char *extras_relacionado_poster(int i) { (void)i; return ""; }
 void desc_pedir_titulo(const char *id) { (void)id; }
+void desc_pedir_titulo_semente(const char *id, long tmdb, const char *tipo,
+                               const char *nome, const char *ano, const char *poster) {
+  (void)id; (void)tmdb; (void)tipo; (void)nome; (void)ano; (void)poster;
+  assert(!"no related titles in this fixture");
+}
 
 static void quadro(double p, int serie) {
   posicao = p;
@@ -118,16 +141,20 @@ static void testarContagem(void) {
       int antes = pedidos, t, e;
       double inicio = (marcador ? 1050 : 1150) - 10 * velocidade / 100.0;
       quadro(inicio, 1); esperarFim(); assert(cacheProximo() == 2);
-      for (double p = inicio + velocidade / 100.0; p <= 1200; p += velocidade / 100.0) {
+      // #470: a contagem comeca com o cartao e o pedido sai antes de qualquer
+      // renovacao; a resposta do preparo ainda e valida nesse instante.
+      int pediu = 0;
+      for (double p = inicio + velocidade / 100.0; p <= 1200 && !pediu; p += velocidade / 100.0) {
         atomic_fetch_add(&relogio, 1000);
         quadro(p, 1); esperarFim();
+        pediu = posplay_pediu_episodio(&t, &e);
       }
-      assert(posplay_pediu_episodio(&t, &e) && t == 1 && e == 2);
-      assert(cacheProximo() == 2); // a resposta original expirou ha >30 s
+      assert(pediu && t == 1 && e == 2);
+      assert(cacheProximo() == 2);
       int antesBusca = pedidos;
       posplay_fechar(); buscarTitulo("tt42:1:2", "series");
       assert(pedidos == antesBusca && nLista == 2);
-      assert(pedidos == antes + 2); // so uma renovacao perto do fim, nao polling
+      assert(pedidos == antes + 1); // so o preparo, nao polling
     }
   }
   velocidade = 100; credito = 0;

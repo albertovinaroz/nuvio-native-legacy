@@ -13,7 +13,7 @@ if [ "$#" -gt 0 ] && [ "$1" != retomar ]; then "$dir/teste" "$@"; else
   for caso in concorrencia ordem identidade; do "$dir/teste" "$caso"; done
   fi
   cc "${flags[@]}" -Wno-deprecated-declarations tests/fontesmortas_torrent.c \
-    src/fontesmortas.c src/fontevolta.c -o "$dir/torrent"
+    src/fontesmortas.c src/fontevolta.c src/fontefalha.c src/fontesonda.c src/perfis.c src/sessao.c src/debrid.c -o "$dir/torrent"
   if [ "$#" -gt 0 ]; then "$dir/torrent" "$@"; else
     "$dir/torrent"
     "$dir/torrent" retomar

@@ -58,7 +58,7 @@ int ajustes_hist_conta(void) { return 1; }
 int ajustes_hero_ligado(void) { return 1; }
 int ajustes_trailer_hero(void) { return trailerSetting; }
 static int somSetting;
-int ajustes_trailer_hero_som(void) { return somSetting; }
+int ajustes_trailer_som(void) { return somSetting; }
 Uint32 ajustes_trailer_hero_espera_ms(void) { return NV_TRAILER_HERO_ESPERA_MS; }
 int ajustes_tmdb_trailers(void) { return 1; }
 int ajustes_home_layout(void) { return layoutSetting; }
@@ -87,6 +87,10 @@ static GfxRect lastRect;
 // cartaoVideoRect (LetterBox no cartao): quadro ainda sem tamanho = 16:9.
 int video_largura(void) { return 0; }
 int video_altura(void) { return 0; }
+// Scheduling fixture: the video backend accepts the card destination unchanged.
+void video_tpk_cartao_destino(float x,float y,float w,float h,float *ox,float *oy,float *ow,float *oh) {
+  if (ox) *ox=x; if (oy) *oy=y; if (ow) *ow=w; if (oh) *oh=h;
+}
 #endif
 static int lastNoCartao, rectCalls;
 void trailer_no_cartao(int sim) { lastNoCartao = sim; }
@@ -399,14 +403,37 @@ int main(void) {
   home_trailer_passo(1, 0.016f, start + NV_TRAILER_HERO_ESPERA_MS);
   rc |= check("na espera do ajuste abre", openedCount == 1);
 
-  // "Som do trailer no destaque" ligado: o destaque pede som (quem tira o
-  // som na Samsung e trailer_abrir, fora deste stub).
+  // "Som do trailer" ligado (#509: um ajuste para todo trailer): o destaque
+  // pede som (quem tira o som na Samsung e trailer_abrir, fora deste stub).
   resetState("tt0000015");
   somSetting = 1;
+  layoutSetting = HOME_LAYOUT_MODERNA;
   appleReady = 1;
   home_trailer_passo(1, 0.016f, start);
   home_trailer_passo(1, 0.016f, start + NV_TRAILER_HERO_ESPERA_MS);
   rc |= check("ajuste de som ligado: destaque pede som", openedCount == 1 && lastSom == 1);
+  playing = 1;
+  for (int q = 0; q < 60; q++) home_trailer_passo(1, 0.016f, start + NV_TRAILER_HERO_ESPERA_MS + q * 16);
+  rc |= check("destaque: cinema mode still follows the hero trailer", heroCinema.oculta && heroCinema.v > 0.5f);
+  playing = 0; trailercinema_zerar(&heroCinema);
+
+  // #500: opening uses last frame's artwork geometry. The next draw can
+  // expand the hero from a corner banner to fullscreen without a new title.
+  resetState("tt500rect");
+  appleReady = 1;
+  heroArteRect = (GfxRect){555, 0, 1365, 670};
+  home_trailer_passo(1, 0.016f, start);
+  home_trailer_passo(1, 0.016f, start + NV_TRAILER_HERO_ESPERA_MS);
+  rc |= check("hero opens in the current artwork rectangle", opened && lastRect.x == 555);
+  heroArteRect = (GfxRect){0, 0, 1920, 1080};
+  playing = 1;
+  int movesBefore = rectCalls;
+  home_trailer_passo(1, 0.016f, start + NV_TRAILER_HERO_ESPERA_MS + 1);
+  rc |= check("hero video follows expanded artwork without reopening",
+              lastRect.x == 0 && lastRect.w == 1920 && lastRect.h == 1080 && openedCount == 1);
+  home_trailer_passo(1, 0.016f, start + NV_TRAILER_HERO_ESPERA_MS + 2);
+  rc |= check("unchanged hero geometry does not reset the video plane", rectCalls == movesBefore + 1);
+  home_trailer_passo(0, 0.016f, start + 4000);
 
   for (int social=0; social<2; social++) {
     resetState(social ? "tt228social" : "tt228catalog");
@@ -435,11 +462,19 @@ int main(void) {
   rc|=check("focused poster waits for expansion delay",!opened&&heroTrailerGateAnterior==HERO_GATE_POSTER_WAIT);
   home_trailer_passo(1,.016f,start+500);
   home_trailer_passo(1,.016f,start+500+NV_TRAILER_HERO_ESPERA_MS);
-  rc|=check("focused content poster starts muted independently of hero setting",opened&&lastSom==0);
+  rc|=check("focused poster (tela cheia) opens muted with the sound switch off",opened&&lastSom==0);
   home_trailer_passo(0,.016f,start+4000);rc|=check("poster overlay closes Home trailer",!opened);
+  // #509: UM ajuste de som vale em qualquer lugar que o trailer toca.
+  resetState("tt228posterSom");
+  focoHero=0;posterSetting=AJ_TRAILER_CARTAZ_CHEIA;trailerSetting=0;somSetting=1;nFileiras=1;foco.fileira=0;
+  fileiras[0].tipo=FILEIRA_NORMAL;heroPendente=heroAtual;heroPendenteEm=start;appleReady=1;
+  home_trailer_passo(1,.016f,start+500);
+  home_trailer_passo(1,.016f,start+500+NV_TRAILER_HERO_ESPERA_MS);
+  rc|=check("tela cheia poster asks for sound with the switch on",opened&&lastSom==1);
 
-  // TRES MODOS (08/10/2026). No card: so com o cartaz que o desenho marcou,
-  // no retangulo dele, sem modo cinema; Tela cheia: no destaque, com cinema.
+  // TRES MODOS. No card: so com o cartaz que o desenho marcou,
+  // no retangulo dele, sem modo cinema; Tela cheia: no destaque, com a Home
+  // no lugar (#509: o modo cinema ficava para o trailer do destaque).
   { const GfxRect card = { 300.0f, 600.0f, 568.0f, 320.0f };
     resetState("tt-card");
     focoHero=0;posterSetting=AJ_TRAILER_CARTAZ_CARD;trailerSetting=0;nFileiras=1;foco.fileira=0;
@@ -455,7 +490,7 @@ int main(void) {
     rc|=check("no card: expanding portrait waits until fully open",!opened);
     cartaoTrailerServe=1;
     home_trailer_passo(1,.016f,start+700+NV_TRAILER_HERO_ESPERA_MS);
-    rc|=check("no card: opens muted inside the card rect",opened&&lastSom==0&&heroTrailerNoCartao&&lastNoCartao&&
+    rc|=check("no card: opens muted inside the card rect with the switch off",opened&&lastSom==0&&heroTrailerNoCartao&&lastNoCartao&&
               lastRect.x==card.x&&lastRect.y==card.y&&lastRect.w==card.w&&lastRect.h==card.h);
     playing=1;
     for (int q=0;q<60;q++) home_trailer_passo(1,.016f,start+800+NV_TRAILER_HERO_ESPERA_MS+q*16);
@@ -471,6 +506,15 @@ int main(void) {
     home_trailer_passo(1,.016f,start+2200+NV_TRAILER_HERO_ESPERA_MS);
     rc|=check("no card: card gone (focus left) stays closed",!opened);
 
+    resetState("tt-card-som");
+    focoHero=0;posterSetting=AJ_TRAILER_CARTAZ_CARD;trailerSetting=0;somSetting=1;nFileiras=1;foco.fileira=0;
+    layoutSetting=HOME_LAYOUT_MODERNA;trailercinema_zerar(&heroCinema);
+    fileiras[0].tipo=FILEIRA_NORMAL;heroPendente=heroAtual;heroPendenteEm=start;appleReady=1;
+    cartaoTrailerItem=heroAtual;cartaoTrailerRect=card;cartaoTrailerPode=cartaoTrailerServe=1;
+    home_trailer_passo(1,.016f,start+500);
+    home_trailer_passo(1,.016f,start+500+NV_TRAILER_HERO_ESPERA_MS);
+    rc|=check("no card asks for sound with the switch on",opened&&lastSom==1&&heroTrailerNoCartao&&lastNoCartao);
+
     resetState("tt-cheia");
     focoHero=0;posterSetting=AJ_TRAILER_CARTAZ_CHEIA;trailerSetting=0;nFileiras=1;foco.fileira=0;
     layoutSetting=HOME_LAYOUT_MODERNA;trailercinema_zerar(&heroCinema);heroTrailerNoCartao=0;
@@ -481,7 +525,7 @@ int main(void) {
     rc|=check("tela cheia: portrait poster plays in the hero rect",opened&&!heroTrailerNoCartao&&!lastNoCartao);
     playing=1;
     for (int q=0;q<60;q++) home_trailer_passo(1,.016f,start+600+NV_TRAILER_HERO_ESPERA_MS+q*16);
-    rc|=check("tela cheia: cinema mode like the hero trailer",heroCinema.oculta&&heroCinema.v>0.5f);
+    rc|=check("tela cheia: home stays visible, no cinema for the poster trailer",!heroCinema.oculta&&heroCinema.v<0.1f);
     trailercinema_zerar(&heroCinema);
   }
 

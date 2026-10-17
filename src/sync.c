@@ -4,6 +4,7 @@ void servidores_esquecer_todos(void);   // servidores.c: wipe every profile's to
 #include "sessao.h"
 #include "nuvem.h"
 #include "perfis.h"
+#include "perfisessao.h"
 #include "agenda.h"
 #include "lembrete.h"
 #include "dados.h"
@@ -125,6 +126,8 @@ static int  temTraktRem;
 // porque a RPC e a mesma e a linha aparece assim que o app web a escrever.
 static char tmdbKey[120], mdbKey[120];
 static int  temTmdb, temMdb;
+static DebridConta debridDoCiclo;
+static int temDebridRem;
 
 
 // Contagens do ultimo ciclo, para o resumo da tela de ajustes poder dizer a
@@ -221,14 +224,55 @@ static long copiaQuando;
 // Status HTTP da ultima puxarBlob (-2 quando nem perguntou: RPC ausente).
 static int  ultimoSt;
 static char usuarioDoCiclo[80];
+static char tokenDoCiclo[3000];
 static unsigned copiaGeracaoDoCiclo;
+static NvPerfilSessao sessaoDoCiclo;
 
 static int contaDoCicloAtual(void) {
   return sessao_logada() && !strcmp(usuarioDoCiclo, sessao_usuario()) &&
          copiaGeracaoDoCiclo == contacache_geracao();
 }
 static int perfilDoCicloAtual(void) {
-  return contaDoCicloAtual() && perfilDoCiclo == perfis_ativo();
+  return contaDoCicloAtual() && perfilDoCiclo == perfis_ativo() &&
+         nv_perfil_sessao_atual(sessaoDoCiclo);
+}
+
+// The worker keeps the identity captured before dispatch. Resolving a live
+// JWT here could send an old profile's settings under a newly logged-in user.
+static char *pedidoDoCiclo(const char *nome, const char *corpo, int tabela, int *st) {
+  char *r;
+  char usuario[80], token[3000];
+  int status = 0;
+  if (st) *st = 0;
+  // Empty token still reaches the transport: offline fixtures inject HTTP
+  // status there, and a real server answers 401 instead of looking offline.
+  if (!perfilDoCicloAtual()) return NULL;
+  r = tabela ? nuvem_tabela(nome, corpo, tokenDoCiclo, &status)
+             : nuvem_rpc_com(nome, corpo, tokenDoCiclo, &status);
+  // One renewal remains possible, but only for this unchanged session. The
+  // renewal API itself refuses a token belonging to a superseded login.
+  if (status == 401 && perfilDoCicloAtual()) {
+    sessao_token_recusado(tokenDoCiclo);
+    if (sessao_identidade_local_copiar(usuario, sizeof usuario, token, sizeof token) &&
+        !strcmp(usuario, usuarioDoCiclo) && perfilDoCicloAtual()) {
+      snprintf(tokenDoCiclo, sizeof tokenDoCiclo, "%s", token);
+      free(r);
+      r = tabela ? nuvem_tabela(nome, corpo, tokenDoCiclo, &status)
+                 : nuvem_rpc_com(nome, corpo, tokenDoCiclo, &status);
+    }
+    memset(token, 0, sizeof token);
+  }
+  if (!perfilDoCicloAtual()) { free(r); return NULL; }
+  if (st) *st = status;
+  return r;
+}
+
+static char *rpcDoCiclo(const char *nome, const char *corpo, int *st) {
+  return pedidoDoCiclo(nome, corpo, 0, st);
+}
+
+static char *tabelaDoCiclo(const char *nome, const char *consulta, int *st) {
+  return pedidoDoCiclo(nome, consulta, 1, st);
 }
 
 // #360 MAO UNICA: a pendencia de edicao local de addons deixou de existir —
@@ -291,43 +335,42 @@ static int ok2xx(const char *r, int st) { return r && st >= 200 && st < 300; }
 
 // ---------------------------------------------------------------- addons
 
-// Le a resposta da tabela `addons` (ou a copia dela) para addonsRem.
-static int lerAddons(const char *r) {
-  // static: so o fio do sync le a conta, e 8 KB nao pertencem a pilha dele.
-  static char url[SY_URL_LEITURA];
+// Destination and long-URL buffer belong to the caller. The drawing thread
+// can restore B's cache while A's account worker still owns its staged reply.
+static int lerAddonsPara(const char *r, AddonRemoto *saida, char *url) {
   const char *p;
   int k = 0, fora = 0;
   for (p = js_raiz_array(r); p && k < SY_ADD_MAX; p = js_prox(js_fim(p))) {
     const char *f = js_fim(p);
     char b[16];
-    memset(&addonsRem[k], 0, sizeof addonsRem[k]);
-    if (!js_texto(p, f, "url", url, sizeof url)) continue;
-    js_texto(p, f, "name", addonsRem[k].nome, sizeof addonsRem[k].nome);
+    memset(&saida[k], 0, sizeof saida[k]);
+    if (!js_texto(p, f, "url", url, SY_URL_LEITURA)) continue;
+    js_texto(p, f, "name", saida[k].nome, sizeof saida[k].nome);
     // A URL QUE NAO CABE NAO ENTRA CORTADA (#201). js_texto corta em silencio
     // no tamanho do destino, e era aqui que a URL do Comet (870) virava 599: o
     // addon recebia meia configuracao e respondia como se ela fosse valida.
     // #203: a que passa de NV_ADDON_URL_MAX (AIOLists tem 2 a 8 KB) vira
     // apelido; so some quando passa dos 16 KB da leitura ou a tabela enche.
-    if (strlen(url) >= sizeof url - 1 ||
-        !nv_addon_url_guardar(addonsRem[k].nome, url, addonsRem[k].url, sizeof addonsRem[k].url)) {
+    if (strlen(url) >= SY_URL_LEITURA - 1 ||
+        !nv_addon_url_guardar(saida[k].nome, url, saida[k].url, sizeof saida[k].url)) {
       fora++; continue;
     }
     // #360: a conta pode trazer o MESMO addon duas vezes (heranca do tempo em
-    // que o push da TV duplicava a lista dela). Dedupe por URL base
-    // normalizada (nv_addon_base, addonurl.h): fica a primeira ocorrencia,
+    // que o push da TV duplicava a lista dela). Dedupe pela chave do addon
+    // (nv_addon_chave, addonurl.h; B4: URL grande e host sem caixa): fica a primeira ocorrencia,
     // com a URL exata que a conta mandou.
     { int i; char base[NV_ADDON_URL_MAX], bi[NV_ADDON_URL_MAX];
-      nv_addon_base(addonsRem[k].url, base, sizeof base);
+      nv_addon_chave(saida[k].url, base, sizeof base);
       if (!base[0]) continue;
       for (i = 0; i < k; i++) {
-        nv_addon_base(addonsRem[i].url, bi, sizeof bi);
+        nv_addon_chave(saida[i].url, bi, sizeof bi);
         if (!strcmp(bi, base)) break;
       }
       if (i < k) continue;
     }
     // Ausente conta como LIGADO: e assim que o web le, e um addon que some por
     // causa de um campo que o servidor nao mandou e pior que um a mais.
-    addonsRem[k].ativo = js_bruto(p, f, "enabled", b, sizeof b)
+    saida[k].ativo = js_bruto(p, f, "enabled", b, sizeof b)
                          ? (strcmp(b, "false") != 0) : 1;
     k++;
   }
@@ -336,11 +379,16 @@ static int lerAddons(const char *r) {
   // conta — a diferenca entre "a conta mudou" e "nao coube".
   for (; p; p = js_prox(js_fim(p))) {
     const char *f = js_fim(p);
-    if (js_texto(p, f, "url", url, sizeof url)) fora++;
+    if (js_texto(p, f, "url", url, SY_URL_LEITURA)) fora++;
   }
   if (fora) printf("[sync] addons: %d da conta ficaram de fora (maximo %d, ou URL grande demais)\n",
                    fora, SY_ADD_MAX);
   return k;
+}
+
+static int lerAddons(const char *r) {
+  static char url[SY_URL_LEITURA]; // worker-only staging
+  return lerAddonsPara(r, addonsRem, url);
 }
 
 // A lista aplicada fica separada da resposta recebida: so aplicar confirma
@@ -393,9 +441,10 @@ static void addonsRestaurar(void) {
   if (addonsRestauradosPerfil == perfil && !strcmp(addonsRestauradosUsuario, sessao_usuario())) return;
   c = contacache_ler(CC_ADDONS_APLICADOS, perfil, sessao_usuario(), NULL);
   if (c) {
-    static AddonRemoto local[SY_ADD_MAX];
-    int n = addons_exportar(local, SY_ADD_MAX), k = lerAddons(c);
-    if (!addonsListaIgual(local, n, addonsRem, k)) addons_definir_lista(addonsRem, k);
+    static AddonRemoto local[SY_ADD_MAX], guardados[SY_ADD_MAX];
+    static char url[SY_URL_LEITURA]; // drawing-thread cache restoration
+    int n = addons_exportar(local, SY_ADD_MAX), k = lerAddonsPara(c, guardados, url);
+    if (!addonsListaIgual(local, n, guardados, k)) addons_definir_lista(guardados, k);
     addons_marcar_da_conta(perfis_ativo());
     free(c);
   }
@@ -409,7 +458,7 @@ static void addonsRestaurar(void) {
 static int puxarAddons(void) {
   char consulta[400], dono[80];
   char *r;
-  int st = 0, k, perfilAddons = perfis_ativo_addons();
+  int st = 0, k, perfilAddons = addonsPerfilCiclo;
 
   if (!perfis_dono()[0]) return 0;
   nuvem_url_escapar(perfis_dono(), dono, sizeof dono);
@@ -424,7 +473,7 @@ static int puxarAddons(void) {
            dono, perfilAddons);
   // Com a chave anonima o RLS responde 401 "permission denied for table
   // addons": ler as linhas de alguem exige o token de quem esta pedindo.
-  r = sessao_tabela("addons", consulta, &st);
+  r = tabelaDoCiclo("addons", consulta, &st);
   // O pedido pertence ao perfil/conta de antes da rede. Uma troca durante a
   // resposta nao pode guardar nem aplicar a lista antiga no novo perfil.
   if (!perfilDoCicloAtual() || perfilAddons != perfis_ativo_addons()) {
@@ -487,7 +536,7 @@ static void sincronizarPlugins(void) {
   static PlugRepo l[PLUG_REPOS_MAX];
   char consulta[400], dono[80];
   char *r;
-  int st = 0, k, perfil = perfis_ativo_addons();
+  int st = 0, k, perfil = addonsPerfilCiclo;
   if (!perfis_dono()[0]) return;
   plugins_retrato(&s);
   if (s.pendente) {
@@ -511,7 +560,7 @@ static void sincronizarPlugins(void) {
     }
     jsw_arr_fim(&w);
     jsw_obj_fim(&w);
-    r = sessao_rpc("sync_push_plugins", jsw_texto_final(&w), &st);
+    r = rpcDoCiclo("sync_push_plugins", jsw_texto_final(&w), &st);
     jsw_livre(&w);
     if (ok2xx(r, st) && perfilDoCicloAtual()) {
       int ok = plugins_confirmar(s.rev, s.geracao);
@@ -529,7 +578,7 @@ static void sincronizarPlugins(void) {
   nuvem_url_escapar(perfis_dono(), dono, sizeof dono);
   snprintf(consulta, sizeof consulta,
            "user_id=eq.%s&profile_id=eq.%d&select=*&order=sort_order.asc", dono, perfil);
-  r = sessao_tabela("plugins", consulta, &st);
+  r = tabelaDoCiclo("plugins", consulta, &st);
   if (!ok2xx(r, st) || !perfilDoCicloAtual() || perfil != perfis_ativo_addons()) {
     if (r && nuvem_erro_ausente(r)) printf("[sync] tabela plugins ausente\n");
     else if (st && !ok2xx(r, st)) printf("[sync] leitura de plugins: HTTP %d\n", st);
@@ -553,11 +602,13 @@ static void puxarCredenciais(void) {
 
   jsw_iniciar(&w);
   jsw_obj_ini(&w);
-  jsw_ci(&w, "p_profile_id", perfis_ativo());
+  jsw_ci(&w, "p_profile_id", perfilDoCiclo);
   jsw_obj_fim(&w);
-  r = sessao_rpc("sync_pull_provider_credentials", jsw_texto_final(&w), &st);
+  r = rpcDoCiclo("sync_pull_provider_credentials", jsw_texto_final(&w), &st);
   jsw_livre(&w);
-  if (!ok2xx(r, st)) { free(r); return; }
+  if (!ok2xx(r, st) || !perfilDoCicloAtual()) { free(r); return; }
+  debrid_conta_iniciar(&debridDoCiclo);
+  temDebridRem = 1;
 
   // Trakt, debrid e mdblist compartilham as MESMAS RPC, separados so pelo campo
   // `provider`. Uma leitura serve para os tres.
@@ -588,7 +639,7 @@ static void puxarCredenciais(void) {
       // a chave embutida na URL do addon nao e afetado: esses ja vem com url.
       char k[200];
       if (js_texto(cred, cred + strlen(cred), "api_key", k, sizeof k))
-        debrid_definir_chave(prov + 7, k);
+        debrid_conta_definir(&debridDoCiclo, prov + 7, k);
     }
   }
   free(r);
@@ -648,7 +699,7 @@ static int puxarBlob(const char *funcao, const char *corpo, char **destino) {
   const char *p;
   ultimoSt = -2;
   if (jaAusente(funcao)) return -1;
-  r = sessao_rpc(funcao, corpo, &st);
+  r = rpcDoCiclo(funcao, corpo, &st);
   ultimoSt = st;
   if (!ok2xx(r, st)) {
     if (r && nuvem_erro_ausente(r)) {
@@ -842,8 +893,8 @@ static int puxarAjustesPerfil(const char *corpo) {
   // tem o que reescrever e ficaria calado para sempre justamente na TV que
   // acabou de proteger os ajustes locais. O que a protecao decide agora e so se
   // o blob e APLICADO (temAjustesBlob abaixo), nao se ele e buscado.
-  r = sessao_rpc("sync_pull_profile_settings_blob", corpo, &st);
-  if (!ok2xx(r, st)) { free(r); return 0; }
+  r = rpcDoCiclo("sync_pull_profile_settings_blob", corpo, &st);
+  if (!ok2xx(r, st) || !perfilDoCicloAtual()) { free(r); return 0; }
   // A resposta e [{ "settings_json": { ... } }]; o que interessa e o objeto de
   // dentro, cru e INTEIRO.
   p = js_raiz_array(r);
@@ -862,13 +913,16 @@ static int puxarAjustesPerfil(const char *corpo) {
           if (novo) {
             memcpy(novo, v, n);
             novo[n] = 0;
-            free(ajustesBlob);
-            ajustesBlob = novo;
-            ajustesBlobGeracao++;
-            ajustesBlobPerfil = perfilDoCiclo;
-            temAjustesBlob = aplicarAjustes;
-            ok = 1;
-            printf("[sync] blob de ajustes: %d bytes\n", (int)n);
+            if (nv_perfil_sessao_travar(sessaoDoCiclo)) {
+              free(ajustesBlob);
+              ajustesBlob = novo;
+              ajustesBlobGeracao++;
+              ajustesBlobPerfil = perfilDoCiclo;
+              temAjustesBlob = aplicarAjustes;
+              ok = 1;
+              nv_perfil_sessao_destravar();
+              printf("[sync] blob de ajustes: %d bytes\n", (int)n);
+            } else free(novo);
           }
         } else {
           // O web aceita o blob tambem como STRING JSON serializada. Este
@@ -908,7 +962,9 @@ static void empurrarAjustes(void) {
   int st = 0;
   if (!sujoAjustes) return;
   if (jaAusente("sync_push_profile_settings_blob")) return;
+  if (!nv_perfil_sessao_travar(sessaoDoCiclo)) return;
   if (!ajustesBlob) {
+    nv_perfil_sessao_destravar();
     printf("[sync] ajustes locais pendentes, mas sem blob da conta para costurar: nada enviado\n");
     return;
   }
@@ -916,17 +972,20 @@ static void empurrarAjustes(void) {
     // Nada diferente do que a conta ja tem: pendencia resolvida sem viagem.
     free(mesclado);
     sujoAjustes = 0;
+    nv_perfil_sessao_destravar();
     return;
   }
+  nv_perfil_sessao_destravar();
   jsw_iniciar(&w);
   jsw_obj_ini(&w);
-  jsw_ci(&w, "p_profile_id", perfis_ativo());
+  jsw_ci(&w, "p_profile_id", perfilDoCiclo);
   jsw_cs(&w, "p_platform", "tv");
   jsw_chave(&w, "p_settings_json");
   jsw_bruto(&w, mesclado);
   jsw_obj_fim(&w);
-  r = sessao_rpc("sync_push_profile_settings_blob", jsw_texto_final(&w), &st);
+  r = rpcDoCiclo("sync_push_profile_settings_blob", jsw_texto_final(&w), &st);
   jsw_livre(&w);
+  if (!nv_perfil_sessao_travar(sessaoDoCiclo)) { free(r); free(mesclado); return; }
   if (ok2xx(r, st)) {
     sujoAjustes = 0;
     free(ajustesBlob);
@@ -952,6 +1011,7 @@ static void empurrarAjustes(void) {
     }
   }
   free(r);
+  nv_perfil_sessao_destravar();
 }
 
 // A resposta inteira e guardada, nao interpretada aqui: quem le e catordem.c,
@@ -962,7 +1022,7 @@ static int puxarCatHome(const char *corpo) {
   char *r;
   int st = 0;
   if (jaAusente("sync_pull_home_catalog_settings")) return 0;
-  r = sessao_rpc("sync_pull_home_catalog_settings", corpo, &st);
+  r = rpcDoCiclo("sync_pull_home_catalog_settings", corpo, &st);
   if (!ok2xx(r, st)) {
     // IMPRIME, como o contarRpc que estava aqui antes ja fazia. Sem esta linha
     // a RPC ausente e a resposta vazia ficam com o MESMO sintoma no log —
@@ -1076,8 +1136,8 @@ static void *rodar(void *u) {
   addonsCiclo = 0;
   copiaQuandoCiclo = 0;
   addonsLidosCiclo = 0;
-  perfis_puxar();
-  if (!contaDoCicloAtual()) {
+  perfis_puxar_sessao(sessaoDoCiclo, usuarioDoCiclo, tokenDoCiclo);
+  if (!perfilDoCicloAtual()) {
     estado = SYNC_PRONTO;
     PRONTO_PUBLICAR(fioPronto, 1);
     return NULL;
@@ -1112,9 +1172,9 @@ static void *rodar(void *u) {
     PRONTO_PUBLICAR(fioPronto, 1);
     return NULL;
   }
-  // Lido DEPOIS da porteira: quando a pessoa responde enquanto perfis_puxar
-  // ainda esta no ar, este ciclo ja segue com o perfil escolhido.
-  perfilDoCiclo = perfis_ativo();
+  // The profile pull may have refreshed primary-addon inheritance. Freeze
+  // that effective owner only after the same session's profiles are loaded.
+  addonsPerfilCiclo = perfis_ativo_addons();
   addonsLidosCiclo = puxouAddons = puxarAddons();
   if (puxouAddons < 0) {
     char d[32];
@@ -1148,18 +1208,17 @@ static void *rodar(void *u) {
   //
   if (temAddonsRem) PRONTO_PUBLICAR(addonsCedo, 1);
   puxarCredenciais();
-  syncprog_puxar();
+  syncprog_puxar_sessao(perfilDoCiclo, sessaoDoCiclo);
   puxarSoLeitura();
   // Empurrar DEPOIS de puxar, como o startupSyncService do web: puxar depois
   // de empurrar faria o aparelho sobrescrever com o que ele mesmo mandou.
   // O puxado NAO e aplicado aqui, e sim em sync_passo, no fio principal — e
   // la a regra e "pendente local vence": o que se assistiu entre o pull e o
   // push nao volta atras.
-  // A PESSOA TROCOU DE PERFIL NO MEIO DO CICLO: nada sobe. Cada push leva
-  // p_profile_id = perfis_ativo() (agora o perfil NOVO), mas a base da costura
-  // (o blob de ajustes, a lista de addons) veio do perfil ANTERIOR — subir
-  // seria escrever o perfil 1 dentro do 2 na conta. sync_passo descarta o que
-  // foi puxado e pede a volta certa.
+  // A PESSOA ABRIU OUTRA SESSAO NO MEIO DO CICLO: nada mais sobe. O perfil
+  // e o JWT foram capturados no despacho; a base da costura tambem pertence
+  // a esse ciclo. sync_passo descarta o resultado e pede a volta atual,
+  // inclusive quando a pessoa volta ao mesmo perfil.
   if (!perfilDoCicloAtual()) {
     printf("[sync] perfil trocado no meio do ciclo (%d -> %d): nada sobe\n",
            perfilDoCiclo, perfis_ativo());
@@ -1178,7 +1237,7 @@ static void *rodar(void *u) {
   // "Enviar histórico para a conta Nuvio" desligado neste perfil: o progresso
   // nao sobe (o pull continua, a conta pode ter coisa de outra TV).
   if (!ajustes_hist_conta()) sujoProgresso = 0;
-  else if (syncprog_empurrar() >= 0) sujoProgresso = 0;
+  else if (syncprog_empurrar_sessao(perfilDoCiclo, sessaoDoCiclo) >= 0) sujoProgresso = 0;
   // O JORNAL DA CONTA (vistos e Salvos marcados nesta TV): DEPOIS do pull,
   // como o resto. E a repeticao de quem falhou offline — cada ciclo tenta de
   // novo o que ainda nao teve 2xx.
@@ -1245,6 +1304,10 @@ void sync_iniciar(void) {
   // com ou sem login — elas nunca mais seriam lidas nem enviadas.
   addonsEsquecer();
   if (!sessao_logada()) return;
+  // Cached sources are private to this session and do not touch the worker's
+  // staging buffers. Restore them even while an old sync drains or backs off.
+  addonsRestaurar();
+  desc_sessao_preparada();
   // PEDIDO COM O FIO VIVO NAO SE PERDE. Voltar calado deixava um buraco: o
   // fio que estava no ar pode ser justamente o interrompido pela pergunta de
   // perfil, e ai o ciclo completo do perfil escolhido so partia com
@@ -1255,11 +1318,16 @@ void sync_iniciar(void) {
   pedidoComFioVivo = 0;
   if (nuvem_freio_ativo()) return;
   addonsPerfilCiclo = perfis_ativo_addons();
-  addonsRestaurar();
   cicloInterrompido = 0;
   perfilDoCiclo = perfis_ativo();
-  snprintf(usuarioDoCiclo, sizeof usuarioDoCiclo, "%s", sessao_usuario());
   copiaGeracaoDoCiclo = contacache_geracao();
+  sessaoDoCiclo = nv_perfil_sessao_ler();
+  if (!sessao_identidade_local_copiar(usuarioDoCiclo, sizeof usuarioDoCiclo,
+                                    tokenDoCiclo, sizeof tokenDoCiclo) ||
+      !perfilDoCicloAtual()) {
+    memset(tokenDoCiclo, 0, sizeof tokenDoCiclo);
+    return;
+  }
   estado = SYNC_RODANDO;
   __atomic_store_n(&fioPronto, 0, __ATOMIC_RELAXED);
   if (pthread_create(&fio, NULL, rodar, NULL) == 0) { pthread_detach(fio); fioVivo = 1; if (manualPedido) manualRodando = 1; }
@@ -1314,6 +1382,7 @@ static void spRelatar(void) {
 }
 
 void sync_passo(unsigned agoraMs) {
+  if (sessao_logada()) desc_sessao_passo();
   // ANTES DA PORTEIRA de `fioPronto`: ver o comentario em rodar(). O resto do
   // ciclo continua sendo aplicado de uma vez, no fim — so os addons saem na
   // frente, porque so eles mudam O QUE a descoberta vai buscar.
@@ -1358,13 +1427,14 @@ void sync_passo(unsigned agoraMs) {
   // 2 passava a ser o do 1 (medido na C9 do dono, 24/09: 103 linhas aceitas).
   // Descartar tudo e pedir a volta do perfil certo; o que ja estava na tela e
   // do perfil novo (invalidarPerfil em app.c).
-  if (!contaDoCicloAtual() || (!cicloInterrompido && !perfilDoCicloAtual())) {
+  if (!contaDoCicloAtual() || !nv_perfil_sessao_atual(sessaoDoCiclo) ||
+      (!cicloInterrompido && !perfilDoCicloAtual())) {
     printf("[sync] ciclo do perfil %d descartado: o perfil ativo agora e %d\n",
            perfilDoCiclo, perfis_ativo());
     fflush(stdout);
     temAddonsRem = 0;
     temTraktRem = 0; traktTok[0] = 0;
-    temTmdb = temMdb = 0;
+    temTmdb = temMdb = temDebridRem = 0;
     free(catHomeBlob); catHomeBlob = NULL; temCatHomeBlob = 0;
     free(colBlob);     colBlob = NULL;     temColBlob = 0;
     free(bibBlob);     bibBlob = NULL;     temBibBlob = 0;
@@ -1429,6 +1499,12 @@ void sync_passo(unsigned agoraMs) {
                           trakt_definir(traktTok, nuvem_trakt_cliente()); remontar = 1; } }
                       else printf("[sync] trakt: vinculo local mantido, credencial da conta ignorada\n");
                       temTraktRem = 0; }
+  if (temDebridRem) {
+    // A refused publish keeps the batch. The next cycle of this profile
+    // pulls it again; clearing here dropped keys that arrived mid-switch.
+    if (debrid_aplicar_chaves_conta(&debridDoCiclo, sessaoDoCiclo))
+      temDebridRem = 0;
+  }
   if (temTmdb)      { desc_tmdb_definir(tmdbKey);   temTmdb = 0; }
   if (temMdb)       { extras_definir_chave(mdbKey); temMdb = 0; }
   spMarcar(SP_CRED);
@@ -1727,16 +1803,32 @@ static int credJaRecusada(const char *provider) {
   return r;
 }
 
-int sync_empurrar_credencial(const char *provider, const char *credJson) {
+int sync_credencial_pedido(SyncCredencialPedido *pedido) {
+  if (!pedido || !sessao_logada()) return 0;
+  memset(pedido, 0, sizeof *pedido);
+  pedido->sessao = nv_perfil_sessao_ler();
+  pedido->perfil = perfis_ativo();
+  snprintf(pedido->usuario, sizeof pedido->usuario, "%s", sessao_usuario());
+  return pedido->usuario[0] && nv_perfil_sessao_atual(pedido->sessao);
+}
+
+static int credencialPedidoAtual(const SyncCredencialPedido *pedido) {
+  return pedido && sessao_logada() && pedido->perfil == perfis_ativo() &&
+         !strcmp(pedido->usuario, sessao_usuario()) &&
+         nv_perfil_sessao_atual(pedido->sessao);
+}
+
+int sync_empurrar_credencial_pedido(const SyncCredencialPedido *pedido,
+                                  const char *provider, const char *credJson) {
   Jsw w;
-  char *r;
+  char *r, token[3000];
   int st = 0, ok;
-  if (!sessao_logada() || !provider || !*provider || !credJson || !*credJson) return 0;
+  if (!credencialPedidoAtual(pedido) || !provider || !*provider || !credJson || !*credJson) return 0;
   // -1, como qualquer recusa 4xx: quem chamou encerra a pendencia.
   if (credJaRecusada(provider)) return -1;
   jsw_iniciar(&w);
   jsw_obj_ini(&w);
-  jsw_ci(&w, "p_profile_id", perfis_ativo());
+  jsw_ci(&w, "p_profile_id", pedido->perfil);
   jsw_cs(&w, "p_origin_client_id", dados_cliente_id());
   jsw_chave(&w, "p_credentials");
   jsw_arr_ini(&w);
@@ -1747,8 +1839,15 @@ int sync_empurrar_credencial(const char *provider, const char *credJson) {
   jsw_obj_fim(&w);
   jsw_arr_fim(&w);
   jsw_obj_fim(&w);
-  r = sessao_rpc("sync_push_provider_credentials", jsw_texto_final(&w), &st);
+  if (!sessao_token_copiar(token, sizeof token) || !credencialPedidoAtual(pedido)) {
+    memset(token, 0, sizeof token);
+    jsw_livre(&w);
+    return 0;
+  }
+  r = nuvem_rpc_com("sync_push_provider_credentials", jsw_texto_final(&w), token, &st);
+  memset(token, 0, sizeof token);
   jsw_livre(&w);
+  if (!credencialPedidoAtual(pedido)) { free(r); return 0; }
   ok = ok2xx(r, st) ? 1 : (st >= 400 && st < 500 ? -1 : 0);
   if (!ok2xx(r, st)) {
     printf("[sync] push de credencial %s falhou (HTTP %d): %.200s\n", provider, st, r ? r : "");
@@ -1768,6 +1867,12 @@ int sync_empurrar_credencial(const char *provider, const char *credJson) {
   return ok;
 }
 
+int sync_empurrar_credencial(const char *provider, const char *credJson) {
+  SyncCredencialPedido pedido;
+  return sync_credencial_pedido(&pedido)
+       ? sync_empurrar_credencial_pedido(&pedido, provider, credJson) : 0;
+}
+
 void sync_reaplicar_ajustes(void) {
   cat_historico_contexto(sessao_usuario(), perfis_ativo());
   // A conta ou o perfil ativo mudou: solta pins dos dois grupos para que cada
@@ -1783,9 +1888,12 @@ void sync_reaplicar_ajustes(void) {
   sujoAjustes = 0;
   // A base velha e do perfil velho. Solta-la aqui tambem evita que um push do
   // primeiro ciclo costure sobre o blob de outro perfil.
-  free(ajustesBlob);
-  ajustesBlob = NULL;
-  temAjustesBlob = 0;
+  if (nv_perfil_sessao_travar(nv_perfil_sessao_ler())) {
+    free(ajustesBlob);
+    ajustesBlob = NULL;
+    temAjustesBlob = 0;
+    nv_perfil_sessao_destravar();
+  }
   // Os idiomas da conta eram do perfil velho: ate o blob do novo chegar,
   // "Da conta" nao tem idioma (#378, revisao).
   ajustes_idiomas_da_conta(NULL);
@@ -1797,14 +1905,6 @@ static void nomeLocaisPerfil(char *dst, size_t tam, int perfil) {
   snprintf(dst, tam, "ajustes-locais-p%d.txt", perfil);
 }
 
-static int perfilPrincipal(void) {
-  int i;
-  for (i = 0; i < perfis_n(); i++) {
-    const ContaPerfil *p = perfis_item(i);
-    if (p && p->primario) return p->indice;
-  }
-  return 1;
-}
 
 void sync_trocar_perfil(int antes) {
   int depois = perfis_ativo();
@@ -1820,13 +1920,9 @@ void sync_trocar_perfil(int antes) {
   free(t);
   if (pendente) dados_gravar(nome, "1\n");
   else dados_apagar(nome);
-  // 2. O QUE ENTRA. Primeira visita nesta TV: parte do perfil principal. Quando
-  //    o principal e quem acabou de sair, os valores na memoria ja sao os dele;
-  //    quando ele nunca foi usado aqui, nao ha de onde partir e fica o que esta.
-  if (!ajustes_perfil_restaurar(depois)) {
-    int principal = perfilPrincipal();
-    if (principal != depois && principal != antes) ajustes_perfil_restaurar(principal);
-  }
+  // 2. Load this profile over independent defaults, including partial files.
+  ajustes_perfil_padrao();
+  ajustes_perfil_restaurar(depois);
   // 3. A conta manda de novo (blob do perfil novo), e a base e a pendencia do
   //    perfil anterior caem — ver sync_reaplicar_ajustes.
   sync_reaplicar_ajustes();
@@ -1846,6 +1942,36 @@ void sync_trocar_perfil(int antes) {
   free(t);
   dados_apagar(nome);
   perfilAplicado = 0;
+  syncprog_esquecer();
+}
+
+void sync_abrir_sessao(int antes) {
+  NvPerfilSessao sessao = nv_perfil_sessao_ler();
+  char *c;
+  if (antes > 0 && antes != perfis_ativo()) sync_trocar_perfil(antes);
+  // A fresh opening of the same profile also starts a new history map.
+  if (nv_perfil_sessao_travar(sessao)) {
+    contalib_esquecer();
+    vistoep_esquecer();
+    cat_historico_contexto("", 0);
+    cat_historico_contexto(sessao_usuario(), perfis_ativo());
+    nv_perfil_sessao_destravar();
+  }
+  perfilAplicado = 0;
+  syncprog_esquecer();
+  catordemCachePerfil = -1;
+  addonsRestauradosPerfil = 0;
+  addonsRestauradosUsuario[0] = 0;
+  extras_abrir_sessao();
+  desc_abrir_sessao();
+  // Validated account/profile envelopes restore only this profile's private
+  // data. They remain useful while a cancelled older worker finishes HTTP.
+  c = contacache_ler(CC_BIBLIOTECA, perfis_ativo(), sessao_usuario(), NULL);
+  if (c) { contalib_ler_biblioteca(c); free(c); }
+  c = contacache_ler(CC_VISTOS, perfis_ativo(), sessao_usuario(), NULL);
+  if (c) { contalib_ler_vistos(c); if (!trakt_ativo()) contalib_aplicar_vistos(); free(c); }
+  c = contacache_ler(CC_COLECOES, perfis_ativo(), sessao_usuario(), NULL);
+  if (c) { colfileiras_receber(c); free(c); }
 }
 
 int sync_perfil_pronto(void) {
@@ -1864,6 +1990,8 @@ void sync_proteger_ajustes_locais(void) {
 }
 
 void sync_esquecer_usuario(void) {
+  // Reject old worker publications before any private cache is purged.
+  perfis_invalidar_sessao();
   cat_historico_contexto("", 0);
   // A ordem importa pouco, mas o CONJUNTO nao: cada linha aqui corresponde a
   // uma coisa que sobrevivia ao logout.
@@ -1919,7 +2047,7 @@ void sync_esquecer_usuario(void) {
   // E AS RECOMENDACOES, pela mesma razao com um agravante proprio: elas trazem
   // o NOME de quem mandou. Sem esta linha a proxima pessoa a entrar abriria a
   // aba Social com a lista de amigos de quem saiu.
-  recomenda_esquecer();
+  recomenda_esquecer_conta();
   // E A FONTE LEMBRADA DE CADA TITULO. Ela nao chega a ser um segredo, mas diz
   // o que a pessoa assistiu e em que idioma — e, como a lista de salvos, ela
   // nao depende de conta nenhuma para existir, entao sem esta linha ela

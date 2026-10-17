@@ -659,13 +659,7 @@ void recenviar_atualizar(float dt, Uint32 agora) {
 // A ilha: o material da folha de Fontes e do menu do cartaz (vidro com a
 // opacidade e o Frost configurados, ou o solido equivalente).
 static void ilhaMaterial(GfxRect p, float a) {
-  float raio = RE_RAIO / (p.h > 1.0f ? p.h : 1.0f);
-  if (ajustes_vidro()) {
-    gfx_rect((GfxRect){p.x-18.0f,p.y-8.0f,p.w+36.0f,p.h+40.0f},
-             0,GFX_SOMBRA,1.0f,0,0,.5f,0,0,0,.38f*a);
-    gfx_vidro_folha(p,raio,a);
-    gfx_luz_canto(p, raio, p.w * .22f, -p.h * .40f, p.w * .62f, 1, 1, 1, .06f * a);
-  } else plrui_material(p, RE_RAIO, 1, a);
+  plrui_material(p, RE_RAIO, 1, a);
 }
 
 // O ROSTO de 52: a foto, ou o disco na cor do id com a inicial em 20/700

@@ -13,6 +13,7 @@
 // Nao entra na suite (precisa de janela GL, de rede e de olho humano):
 //   bash tests/gpunivel_shot.sh /tmp/nuvio-gpunivel
 #include "app.h"
+#include "nvtmp.h"
 #include "ajustes.h"
 #include "artehero.h"
 #include "catalogo.h"
@@ -103,7 +104,7 @@ static void capturar(const char *bmp) {
 
 int main(int argc, char **argv) {
   const char *dir = argv[1];
-  const char *saida = argc > 2 ? argv[2] : "/tmp/nuvio-gpunivel";
+  const char *saida = argc > 2 ? argv[2] : nvt("/nuvio-gpunivel");
   static CatItem itens[NT];
   CatFileira fil[2];
   SDL_Window *w;

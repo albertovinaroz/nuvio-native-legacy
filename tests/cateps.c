@@ -30,6 +30,7 @@ int ajustes_social(void) { return 1; }
 int ajustes_hist_conta(void) { return 1; }
 int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
+int ajustes_ocultar_filmes_vistos(void) { return 0; }    // #366: descoberta.c le o ajuste
 #include "../src/descoberta.c"
 #include "../src/progresso.h"
 #include <assert.h>
@@ -299,6 +300,25 @@ int main(void) {
   assert(cat_indice_titulo("tt1", 1) == 1);              // filme/sem lista: o proprio
   assert(cat_indice_titulo("tt9", 1) == -1);
   puts("ok  mesma serie em duas fileiras: a copia com episodios vence a do CW");
+
+  // #391: uma lista longa nao perde os episodios depois do antigo teto de 1200.
+  montarCatalogo();
+  {
+    CatEp *longa = calloc(2001, sizeof *longa);
+    assert(longa);
+    for (int i = 0; i < 2001; i++) {
+      longa[i].temporada = 1;
+      longa[i].episodio = i + 1;
+    }
+    cat_definir_episodios(0, longa, 2001);
+    free(longa);
+    assert(cat_n_episodios(0) == 2001);
+    for (int i = 0; i < 2001; i++) {
+      assert(cat_episodio(0, i)->temporada == 1);
+      assert(cat_episodio(0, i)->episodio == i + 1);
+    }
+  }
+  puts("ok  #391: catalogo preserva S1E1..S1E2001");
 
   // E) APPEND DE ARTE: o caminho unitário precisa registrar poster e fundo
   // exatamente como o lote e a publicação completa. Repetir o mesmo item é

@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # -DNV_DESC_MIN_MS=0ull: este teste e anterior ao minimo de 10 s entre voltas
 # (descdebounce.h, #319); confere a montagem, nao a regra de espera.
 # Trakt (watchlist/colecao) na tela sem esperar os addons; volta condenada para
@@ -15,6 +17,6 @@ cc ${flags[@]+"${flags[@]}"} -DNV_DESC_MIN_MS=0ull -DCAT_ESPERA_SILENCIO_MS=300 
   src/cwordem.c tests/montagem_cedo.c src/homeestado.c src/catalogo.c \
   src/progresso.c src/js.c src/metaprov.c src/colecoes.c src/redeurl.c src/catordem.c src/cotacat.c \
   -Isrc -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
-  -o /tmp/nuvio-montagem-cedo-tests -O1 -g -pthread \
+  -o ${TMPDIR:-/tmp}/nuvio-montagem-cedo-tests -O1 -g -pthread \
   -Wall -Wno-deprecated-declarations -Wno-macro-redefined -Wno-unused-function
-/tmp/nuvio-montagem-cedo-tests
+${TMPDIR:-/tmp}/nuvio-montagem-cedo-tests

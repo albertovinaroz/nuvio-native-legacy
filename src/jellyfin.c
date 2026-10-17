@@ -878,6 +878,7 @@ typedef struct {
   unsigned geracao;
   double pos;
   JfSessaoPlay s;
+  JfConta conta; // immutable original server/account at enqueue
 } Relato;
 
 typedef struct {
@@ -904,7 +905,7 @@ typedef struct JfInst {
   int iniciou;
   pthread_t fioCtl, fioRel;
   int fiosVivos, parar;
-  RedeGrupo *grupo;
+  RedeGrupo *grupo, *grupoRel;
   unsigned geracao;
   RedeJob *jobCtl;                // control job in flight (cancel on demand)
   unsigned cancelEntrada;         // bumps on "cancel sign-in"
@@ -975,6 +976,7 @@ static void *trabalharRel(void *u);
 
 static void iniciar(JfInst *I) {
   I->grupo = rede_grupo_criar();
+  I->grupoRel = rede_grupo_criar();
   if (pthread_create(&I->fioCtl, NULL, trabalharCtl, I) == 0) {
     if (pthread_create(&I->fioRel, NULL, trabalharRel, I) == 0) I->fiosVivos = 2;
     else I->fiosVivos = 1;
@@ -1102,13 +1104,18 @@ static void soltarSnapshotLocked(JfInst *I) {
     apagarSegredo(I->sessoes[i].s.url, sizeof I->sessoes[i].s.url);
     I->sessoes[i].ativo = 0;
   }
-  // Queued check-ins carry the previous token: drop them with the identity.
-  for (i = 0; i < JF_FILA_REL; i++) apagarSegredo(&I->filaRel[i], sizeof I->filaRel[i]);
-  I->nRel = 0;
+  // Queued reports own their original account. Opening another profile
+  // resets reads while its final stop still reaches the outgoing server.
 }
 
 // Under I->trava: new generation, every in-flight request of the old one is
 // cancelled at its next progress callback and its result fenced out.
+static void relatoriosDescartarLocked(JfInst *I) {
+  for (int i = 0; i < JF_FILA_REL; i++) apagarSegredo(&I->filaRel[i], sizeof I->filaRel[i]);
+  I->nRel = 0; I->iniRel = 0;
+  if (I->grupoRel) rede_grupo_avancar(I->grupoRel);
+}
+
 static void avancarLocked(JfInst *I) {
   I->geracao++;
   if (I->grupo) rede_grupo_avancar(I->grupo);
@@ -1165,6 +1172,7 @@ static void jfi_esquecer(JfInst *I) {
   // the task (base/token in b/a never touch logs). Queued AFTER advancing so
   // the new generation does not cancel it.
   avancarLocked(I);
+  relatoriosDescartarLocked(I);
   if (I->conta.token[0] && I->conta.base[0]) {
     char a[600];
     snprintf(a, sizeof a, "%s\n%s\n%s", I->conta.base, I->conta.token, I->conta.dispositivoId);
@@ -1185,6 +1193,7 @@ static void jfi_esquecer_todos(JfInst *I) {
   garantir(I);
   pthread_mutex_lock(&I->trava);
   avancarLocked(I);
+  relatoriosDescartarLocked(I);
   for (i = 1; i <= 32; i++) { arquivo(I, nome, sizeof nome, i); dados_apagar(nome); }
   apagarSegredo(&I->conta, sizeof I->conta);
   carregarLocked(I);
@@ -1196,6 +1205,7 @@ static void jfi_encerrar(JfInst *I) {
   pthread_mutex_lock(&I->trava);
   I->parar = 1;
   avancarLocked(I);
+  relatoriosDescartarLocked(I);
   vivos = I->fiosVivos;
   pthread_cond_broadcast(&I->sinalCtl);
   pthread_cond_broadcast(&I->sinalRel);
@@ -1207,6 +1217,7 @@ static void jfi_encerrar(JfInst *I) {
   free(I->snapItens); I->snapItens = NULL;
   free(I->fontesLista); I->fontesLista = NULL;
   if (I->grupo) { rede_grupo_cancelar(I->grupo); rede_grupo_soltar(I->grupo); I->grupo = NULL; }
+  if (I->grupoRel) { rede_grupo_cancelar(I->grupoRel); rede_grupo_soltar(I->grupoRel); I->grupoRel = NULL; }
   apagarSegredo(&I->conta, sizeof I->conta);
   pthread_mutex_unlock(&I->trava);
 }
@@ -1686,10 +1697,10 @@ static void *trabalharRel(void *u) {
     apagarSegredo(&I->filaRel[I->iniRel], sizeof I->filaRel[I->iniRel]);
     I->iniRel = (I->iniRel + 1) % JF_FILA_REL;
     I->nRel--;
-    if (r.geracao == I->geracao && I->grupo && I->conta.token[0]) {
-      c = I->conta;
-      j = rede_job_criar(I->grupo);
-      I->relEmVoo = 1;
+    if (I->grupoRel && r.conta.token[0]) {
+      c = r.conta;
+      j = rede_job_criar(I->grupoRel);
+      I->relEmVoo = j != NULL;
     }
     pthread_mutex_unlock(&I->trava);
     if (j) {
@@ -1736,7 +1747,7 @@ static void relatarLocked(JfInst *I, int evento, const Sessao *s, double pos) {
   r->evento = evento;
   r->geracao = s->geracao;
   r->pos = pos;
-  r->s = s->s;
+  r->s = s->s; r->conta = I->conta;
   I->nRel++;
   pthread_cond_signal(&I->sinalRel);
 }

@@ -54,6 +54,10 @@ void legenda_carregar(const char *url);
  * exatamente uma vez, inclusive em falha, e nao pode tocar a UI. */
 typedef void (*LegendaBaixada)(const char *corpo, unsigned geracao, int vigente, void *u);
 unsigned legenda_carregar_com(const char *url, LegendaBaixada pronto, void *u);
+// Um candidato por play; carregar_com adota pelo link, no mesmo fio/callback.
+void legenda_pre_baixar(const char *url);
+void legenda_pre_descartar(const char *motivo);
+void legenda_pre_reiniciar(void);
 void legenda_desligar(void);
 // Liga com um corpo ja em memoria (parser sincrono). Ver a nota em legenda.c.
 void legenda_definir_corpo(const char *corpo);

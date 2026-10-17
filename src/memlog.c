@@ -38,6 +38,15 @@ void memlog_amostra(char *sufixo, size_t tamanho) {
 #endif
 }
 
+int memlog_pouca_memoria(void) {
+#if defined(__linux__) && !defined(__EMSCRIPTEN__)
+  long kb = lerKB("/proc/meminfo", "MemAvailable:");
+  return kb >= 0 && kb < 150 * 1024;
+#else
+  return 0;
+#endif
+}
+
 void memlog_evento(const char *evento) {
   char sufixo[96];
   memlog_amostra(sufixo, sizeof sufixo);

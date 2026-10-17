@@ -97,6 +97,18 @@ int  dvtela_foco_botao(void);
 const char *dvtela_nome_passo(int passo);
 const char *dvtela_nome_saida(int saida);
 
+// A APRESENTACAO (#205): a tela tem duas caras sobre a MESMA maquina. Com a
+// abertura Detalhada fica o cartao de sempre; com a Cinema, a variante calma
+// (arte recuada, logo, marca Dolby Vision, trilho e uma linha) e Para cima /
+// Para baixo mostra o cartao, como abrecine_tecla na abertura normal.
+enum { DVT_VAR_DETALHADA = 0, DVT_VAR_CINEMA };
+// Pura: a cara pela regra do ajuste e pela tecla da pessoa.
+int  dvt_variante(int aberturaDetalhada, int detalheTecla);
+// Por quadro, do player: o ajuste, o logo do titulo ("" = so o nome em texto)
+// e a linha do episodio (so serie). Strings copiadas.
+void dvtela_apresentacao(int aberturaDetalhada, const char *logo, const char *titulo, const char *linhaEp);
+int  dvtela_variante(void);   // a cara de agora (DVT_VAR_*)
+
 // Desenho (dvtelaui.c), por cima de tudo do player e da ilha.
 void dvtela_desenhar(Uint32 agora);
 

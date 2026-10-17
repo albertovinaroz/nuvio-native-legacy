@@ -3,6 +3,7 @@
 #include "ajustes.h"
 #include "gfx.h"
 #include "text.h"
+#include "sinopse.h"
 #include "anim.h"
 #include "layout.h"
 #include "telefoneui.h"
@@ -224,7 +225,7 @@ static void pausao_desenharCorpo_(Uint32 agora, const PausaoCena *cena) {
   }
   if (c->meta[0]) { hMeta = 25.0f; alt += 12.0f + hMeta; }
   if (c->sinopse[0]) {
-    hSin = txt_bloco_corta(TXT_DET_META2, c->sinopse, 0, 0, 0, -1.0f, 0.0f,
+    hSin = sinopse_bloco_corta(TXT_DET_META2, c->sinopse, 0, 0, 0, -1.0f, 0.0f,
                            PAUSAO_LARG, PAUSAO_LD_SIN, 0.0f, PAUSAO_SIN_LINHAS);
     alt += 16.0f + hSin;
   }
@@ -246,7 +247,7 @@ static void pausao_desenharCorpo_(Uint32 agora, const PausaoCena *cena) {
   if (hMeta > 0.0f) { y += 12.0f; metaPontos(c->meta, PAUSAO_X, y, PAUSAO_LARG, a); y += hMeta; }
   if (hSin > 0.0f) {
     y += 16.0f;
-    txt_bloco_corta(TXT_DET_META2, c->sinopse, 243, 242, 239, PAUSAO_X, y, PAUSAO_LARG,
+    sinopse_bloco_corta(TXT_DET_META2, c->sinopse, 243, 242, 239, PAUSAO_X, y, PAUSAO_LARG,
                     PAUSAO_LD_SIN, a * 0.78f, PAUSAO_SIN_LINHAS);
     y += hSin;
   }

@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import vm from "node:vm";
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
-const fonte = readFileSync(join(AQUI, "..", "index.html"), "utf8").match(/<script>([\s\S]*)<\/script>/);
+const fonte = readFileSync(process.env.PUBLIC_RENDER ? join(process.env.PUBLIC_RENDER, "index.html") : join(AQUI, "..", "index.html"), "utf8").match(/<script>([\s\S]*)<\/script>/);
 if (!fonte) { console.log("FAIL nao achei o <script> do index.html"); process.exit(1); }
 
 let FALHAS = 0;
@@ -155,6 +155,62 @@ const ate = async (pred, ms = 3000) => {
   await ctx.preserva(() => new Promise((r) => setTimeout(() => { mexer(); r(); }, 5)));
   espera("dono mexeu: nao restaura scroll", 0, WIN.rolou.length);
   espera("dono mexeu: ouvintes soltos", 0, ouvintesVivos().length);
+
+  // Presentation must not turn closure or integrated code into a shipped fix.
+  espera("fechada não significa concluída", "Planejado", ctx.estadoPublico({status: "fechada-sem-resposta"})[0]);
+  espera("integrada ainda precisa testar", "Precisa testar", ctx.estadoPublico({status: "consertada-nao-lancada"})[0]);
+  espera("log pendente bloqueia diagnóstico", "Bloqueado", ctx.estadoPublico({status: "precisa-log"})[0]);
+  espera("lançada é concluída", "Concluído", ctx.estadoPublico({status: "lancada"})[0]);
+  espera("próximo patch sem roadmap", "2.0.6", ctx.proximaVersao());
+  ctx.D.roadmap = [{release:"2.0.5",situacao:"lançada"}, {release:"2.0.10",situacao:"planejada"}, {release:"2.0.6",situacao:"planejada"}];
+  espera("release lançada não é próxima; ordem numérica", "2.0.6", ctx.proximaVersao());
+  ctx.D.roadmap = [{release:"2.0.5",situacao:"planejada"}];
+  espera("release em preparação vem do roadmap", "2.0.5", ctx.proximaVersao());
+  ctx.D.roadmap = [];
+  ctx.D.meta = { branches: ["agente/teste", "agente/teste-extra"], commits: { abcdef12: "full" } };
+  const refs = ctx.referencias({notas: "agente/teste-extra abcdef12"});
+  espera("branch não casa por prefixo", "agente/teste-extra", refs.branches.join(","));
+  espera("hash citado preservado", "abcdef12", refs.commits.join(","));
+  const unsafe = ctx.tx('<img src=x onerror=alert(1)>');
+  espera("texto de terceiros continua texto", '<img src=x onerror=alert(1)>', unsafe.textContent);
+
+  // Public bootstrap and polling never touch the private API or expose mock roles.
+  MAPA = {meta:{repo:"https://github.com/example/project",publico:true},
+    itens:[{numero:12,titulo:"Public issue",estado_github:"aberta",status:"aberta",branches:[],commits:[]}],roadmap:[]};
+  CHAMADAS.length = 0;
+  await ctx.init(MAPA);
+  await ctx.recarrega();
+  espera("público: nenhuma chamada API", 0, CHAMADAS.filter(u => u.includes("respostas")).length);
+  const app = DOC.getElementById("app");
+  const descendants = [];
+  const visit = n => {descendants.push(n); n.children.forEach(visit);}; visit(app);
+  espera("público: sem seletor de papel", false, descendants.some(n => n.id === "mode"));
+  espera("público: sem áreas internas", false, descendants.some(n => n.className === "internal"));
+  ctx.MODE = "owner";
+  espera("público: dono bloqueado", false, ctx.ownerMode());
+  const card = ctx.issueCard(MAPA.itens[0], "");
+  const links = []; const scan = n => {if(n.tagName === "A") links.push(n); n.children.forEach(scan);}; scan(card);
+  espera("público: claim abre issue", "https://github.com/example/project/issues/12", links.find(n => n.textContent === "Work on this")?.getAttribute("href"));
+  espera("público: orientação para comentar", true, card.textContent.includes("Comment on the GitHub issue"));
+  espera("público: sem aviso API", false, app.textContent.includes("API"));
+
+  if (process.env.PUBLIC_RENDER) {
+    const dir = process.env.PUBLIC_RENDER;
+    const html = readFileSync(join(dir, "index.html"), "utf8");
+    espera("public HTML language", true, html.includes('lang="en"'));
+    MAPA = JSON.parse(readFileSync(join(dir, "data.json"), "utf8"));
+    await ctx.init(MAPA);
+    const rendered = Object.values(POR_ID).map(n => n.textContent).join("\n");
+    for (const forbidden of ["Quero pegar", "sem metadados", "Quero ajudar", "Planejado", "Concluído", "Bloqueado"]) {
+      espera("public render excludes " + forbidden, false, rendered.includes(forbidden));
+    }
+    const groups = []; const walk = n => {if (n.className === "rel") groups.push(n.children[0].textContent); n.children.forEach(walk);};
+    walk(DOC.getElementById("roadmap"));
+    espera("public release groups unique", groups.length, new Set(groups).size);
+    espera("public future group once", 1, groups.filter(g => g === "Future" || g === "futuro").length);
+    espera("public language", "en", DOC.documentElement.lang);
+    espera("public title", "Nuvio Legacy - issues and roadmap", DOC.title);
+  }
 
   console.log(FALHAS ? FALHAS + " falha(s)" : "TUDO OK");
   process.exit(FALHAS ? 1 : 0);

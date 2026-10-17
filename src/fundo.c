@@ -28,53 +28,14 @@ static int arte(GfxRect r, float raioPx, const char *c, float a, int veu) {
   gfx_tex_aspect_atual = 0;
   return feito;
 }
-// A cor de uma regiao da paleta com saturacao +35% e brilho 62%.
-#ifndef FUNDO_BRILHO
-#define FUNDO_BRILHO 1.0f
-#endif
-static void tingir(const float *q, float *o) {
-  float l = 0.2126f * q[0] + 0.7152f * q[1] + 0.0722f * q[2];
-  int k;
-  for (k = 0; k < 3; k++) {
-    float v = (l + (q[k] - l) * 1.35f) * FUNDO_BRILHO;
-    o[k] = v < 0 ? 0 : v > 1 ? 1 : v;
-  }
-}
 static int telaCheia(GfxRect r) {
   return r.x <= 0.5f && r.y <= 0.5f && r.w >= NV_TELA_W / gfx_escala() - 1 && r.h >= NV_TELA_H / gfx_escala() - 1;
-}
-// Assa (so assa) a arte borrada no quadro pequeno; pinta se alfa > 0. O mesmo
-// assado serve ao vidro fosco (gfx_vidro_fosco): a luz da arte, em tela.
-static void assar(const CorvivaPaleta *p, float alfa) {
-  float amb[4][3], forca = nv_ambiente_forca, tempo = nv_tempo_viva;
-  int i;
-  memcpy(amb, nv_ambiente_viva, sizeof amb);
-  for (i = 0; i < 4; i++) tingir(p->regiao[i], nv_ambiente_viva[i]);
-  nv_ambiente_forca = 1.0f; nv_tempo_viva = 0.0f;   // parado: o assado nao refaz
-  gfx_ambiente_preparar();
-  if (alfa > 0.0f) gfx_ambiente(alfa * 0.998f);   // < 1: pinta agora, nao fica pendente para o clear
-  memcpy(nv_ambiente_viva, amb, sizeof amb);
-  nv_ambiente_forca = forca; nv_tempo_viva = tempo;
-}
-// Fundo de arte nitida/Frost com "Vidro fosco" ligado: o assado existe so para
-// o vidro. Com a Imersiva a luz real ja e o assado, entao nada a fazer.
-static void foscoPreparar(GfxRect r, float raioPx, const char *c) {
-  CorvivaPaleta p;
-  if (!ajustes_vidro() || !ajustes_vidro_fosco() || nv_ambiente_forca > 0.001f ||
-      !telaCheia(r) || raioPx > 0.0f || !c || !c[0] || !corviva_paleta(c, &p) || !p.ok) return;
-  assar(&p, 0.0f);
-}
-void fundo_fosco_quadro(void) {
-  CorvivaPaleta p;
-  if (!ajustes_vidro() || !ajustes_vidro_fosco() || nv_ambiente_forca > 0.001f ||
-      !corviva_cena_paleta(&p)) return;
-  assar(&p, 0.0f);
 }
 // O FUNDO DE TELA CHEIA PELO CAMINHO DA LUZ IMERSIVA (gfx_luz_canal). O
 // desenho de sempre vai para um quadro pequeno so quando a chave muda — pelo
 // MESMO assado da luz imersiva, que a C9 mostra certo — e cada quadro paga UM
 // quad opaco (GFX_SNAP, a passada de tela da luz). O veu de 28% da "Arte
-// borrada" vai na mesma passada, e o quadro sem veu e a fonte do vidro fosco.
+// borrada" vai na mesma passada.
 // O Frost assa o desenho direto inteiro.
 //
 // ARTE BORRADA = A IMAGEM DO TITULO DESFOCADA (dono, C9, 05/10/2026: "a Arte
@@ -331,8 +292,11 @@ static int borrada(GfxRect r, float raioPx, const char *c, float a) {
     if (!b.d) {
       // A arte ainda nao chegou, ou a copia fica para o proximo quadro: o
       // quadro pequeno desta mesma arte, se ha; senao o fundo liso com o veu.
+      // PONTILHADO como o assado de sempre (abaixo): sem o ruido o degrade
+      // lento da arte desfocada sai em faixas de 8 bits no OLED (dono, 11/10,
+      // fotos1014/gradiente-banding.jpg).
       if (ultimo && ultimoH == h && glIsTexture(ultimo)) {
-        gfx_luz_canal_desenhar(ultimo, a, VEU_BORRADA, 0);
+        gfx_luz_canal_desenhar(ultimo, a, VEU_BORRADA, 1);
         return 1;
       }
       avisoBorrada(&avisoSemCopia, "sem a copia desfocada da arte ainda (arte nao decodificada?): fundo liso");
@@ -350,8 +314,12 @@ static int borrada(GfxRect r, float raioPx, const char *c, float a) {
       t = gfx_luz_canal(CANAL_BORRADA, k, 9, pintarBorrada, &b);
     }
     if (t) {
-      if (ajustes_vidro() && ajustes_vidro_fosco()) gfx_vidro_fosco_fonte(t);
-      gfx_luz_canal_desenhar(t, a, VEU_BORRADA, 0);
+      // PONTILHADO (uPar.x = 1 no GFX_SNAP, o nv_dither de gfx.c): o quadro
+      // pequeno de 320x180 esticado na tela e 8 bits, e o degrade escuro da
+      // arte desfocada quantizava em faixas largas no OLED — o mesmo caminho
+      // do Frost (pontilhar 1) e do Cinema (dfae93b2). Ruido +-1/255, parado,
+      // ~6 ALU: barato no GLES2 de webOS/Tizen/Android.
+      gfx_luz_canal_desenhar(t, a, VEU_BORRADA, 1);
       ultimo = t; ultimoH = h;
     } else {
       // DESENHO DIRETO: a copia em cover na tela e o veu por cima (uma tela
@@ -441,12 +409,10 @@ static void frostTela(GfxRect r, float raioPx, float a) {
 void fundo_desenhar_modo(int modo, GfxRect r, float raioPx, const char *c, float a) {
   if (r.w < 1 || r.h < 1 || a <= 0.003f) return;
   if (modo == FUNDO_FROST) {
-    foscoPreparar(r, raioPx, c);
     frostTela(r, raioPx, a);
     return;
   }
   if (modo == FUNDO_BORRADA && borrada(r, raioPx, c, a)) return;
-  foscoPreparar(r, raioPx, c);
   if (arte(r, raioPx, c, a, raioPx <= 0.0f)) return;
   if (raioPx > 0.0f) { gfx_cor(r, raioPx / r.h, 0, 0, 0, 0.42f * a); return; }
   // O veu do mockup: linear-gradient(90deg, 62%, 40% no meio, 50%). Um

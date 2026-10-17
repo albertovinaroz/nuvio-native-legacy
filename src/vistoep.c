@@ -1,4 +1,5 @@
 #include "vistoep.h"
+#include "perfisessao.h"
 #include "js.h"
 #include <limits.h>
 #include <math.h>
@@ -156,6 +157,16 @@ int vistoep_fonte(const char *imdb, int temporada, int episodio, int visto,
     c->vistos++;
     if (juiz < 0) c->venceu++;
   }
+  return ok;
+}
+
+int vistoep_fonte_se_sessao(const char *imdb, int temporada, int episodio,
+                          int visto, long long remotoMs, VistoFonte *c,
+                          uint64_t sessao) {
+  int ok;
+  if (!nv_perfil_sessao_travar(sessao)) return 0;
+  ok = vistoep_fonte(imdb, temporada, episodio, visto, remotoMs, c);
+  nv_perfil_sessao_destravar();
   return ok;
 }
 

@@ -42,6 +42,16 @@ static int   aberto;
 static float entrada;
 static AgItem itens[AV_MAX];
 static int    n;
+static Uint32 ultimaMontagem;
+
+void agendaviso_abrir_sessao(void) {
+  /* Abrir outro perfil nao confirma os lembretes copiados do anterior. */
+  aberto = 0;
+  entrada = 0.0f;
+  n = 0;
+  ultimaMontagem = 0;
+  memset(itens, 0, sizeof itens);
+}
 
 static float alturaItem(int i) {
   return AV_LINHA + (itens[i].sinopse[0] ? AV_SIN_H : 0.0f);
@@ -57,7 +67,6 @@ static float alturaCartao(void) {
 void agendaviso_mostrar_se_houver(void) {
   const AgItem *devidos[AV_MAX];
   int q, i;
-  static Uint32 ultimaMontagem;
   Uint32 agora;
   if (aberto) return;
   agenda_iniciar();
@@ -130,8 +139,8 @@ static void agendaviso_desenharCorpo_(Uint32 agora) {
     // aos cantos do cartao (GFX_LUZ; com a tesoura o canto saia quadrado).
     float ar, ag, ab, menor = h < AV_W ? h : AV_W;
     ajustes_acento(&ar, &ag, &ab);
-    gfx_cor(c, 28.0f / menor, 0.055f, 0.058f, 0.068f, 0.94f * a);
-    gfx_luz_canto(c, 28.0f / menor, AV_W * 0.05f, -AV_W * 0.15f, AV_W * 0.5f, ar, ag, ab, 0.22f * a);
+    gfx_vidro_ou_solido(c, 28.0f / menor, GFX_VIDRO_DENS_MODAL, a, 0.055f, 0.058f, 0.068f, 0.94f);
+    if (!ajustes_vidro()) gfx_luz_canto(c, 28.0f / menor, AV_W * 0.05f, -AV_W * 0.15f, AV_W * 0.5f, ar, ag, ab, 0.22f * a);
     gfx_recorte(x, y, AV_W, h); }
 
   { float tx = x + AV_PAD, ty = y + 44.0f;

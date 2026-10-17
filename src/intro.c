@@ -16,7 +16,7 @@
 #include <string.h>
 
 static pthread_mutex_t trava=PTHREAD_MUTEX_INITIALIZER;
-static IntroTrecho trechos[8];static int nTrechos;static int trechosAni; /* 1 = os trechos vieram do AniSkip */static unsigned geracao;
+static IntroTrecho trechos[8];static int nTrechos;static unsigned geracao;
 static IntroTrecho creditosLimitados[8];static int nCreditosLimitados;
 static int botaoIdx=-1;static double botaoDesde;
 static int botaoVis;static double botaoFim;static int botaoTipo;
@@ -69,10 +69,7 @@ int intro_extrair(const char *j,IntroTrecho *out,int max){
       if(a<0)a=0;
       if(b<0)b=-1000.0;             // marcador de "sem fim", tratado abaixo
       if(b>=0&&b<=a)continue;       // trecho invertido ou vazio: descarta
-      out[n].inicio=a/1000.0;
-      out[n].fim=(b<0)?0.0:b/1000.0;
-      out[n].tipo=CHAVES[k].tipo;
-      n++;
+      out[n++]=(IntroTrecho){a/1000.0,(b<0)?0.0:b/1000.0,CHAVES[k].tipo,0};
     }
   }
   return n;
@@ -113,10 +110,8 @@ int intro_extrair_aniskip(const char *j,double dur,IntroTrecho *out,int max){
       if(dur>1.0&&len>1.0&&dif>INTRO_ANISKIP_TOLERA)break;
       if(melhorIdx[k]<0||dif<melhorDif[k]){
         melhorIdx[k]=1;melhorDif[k]=dif;
-        cand[k].inicio=a;
         // fim no fim da midia (ED ate o ultimo segundo): "ate o fim".
-        cand[k].fim=(len>1.0&&b>=len-0.5)?0.0:b;
-        cand[k].tipo=T[k].tipo;
+        cand[k]=(IntroTrecho){a,(len>1.0&&b>=len-0.5)?0.0:b,T[k].tipo,1};
       }
       break;
     }
@@ -451,30 +446,51 @@ static int pedirAniskip(const Pedido *p,IntroTrecho *v,int max,int *falha){
   return n;
 }
 
+// COBERTURA POR TIPO: cada fonte so preenche o tipo que a anterior nao deu.
+int intro_tipos_completos(const IntroTrecho *v,int n){
+  int t,i,m=0;
+  for(i=0;i<n;i++)if(v[i].tipo>=INTRO_ABERTURA&&v[i].tipo<=INTRO_PREVIA)m|=1<<v[i].tipo;
+  for(t=INTRO_ABERTURA;t<=INTRO_PREVIA;t++)if(!(m&(1<<t)))return 0;
+  return 1;
+}
+int intro_completar(IntroTrecho *dst,int n,const IntroTrecho *src,int ns,int max){
+  int i,k,n0=n;
+  for(i=0;i<ns&&n<max;i++){
+    for(k=0;k<n0&&dst[k].tipo!=src[i].tipo;k++);
+    if(k==n0){dst[n]=src[i];dst[n++].ani=0;}
+  }
+  return n;
+}
+
 static void *baixar(void *u){
   Pedido*p=u;char*j=NULL;IntroTrecho v[8],limitados[8];
   int caps=0,total=0,falhaAni=0,n=pedirAniskip(p,v,8,&falhaAni),r=R_VAZIO,temCred=0,vale,deAni=n>0;
   int nl=0;
   int temIdOutro=p->tmdb>0||!strncmp(p->id,"tt",2);
-  if(n<=0&&temIdOutro){
-    r=pedirEp(p,p->t,p->e,p->dur,&j);
-    n=j?intro_extrair(j,v,8):0;
-    nl=j?creditosjson_extrair(j,limitados,8):0;
+  for(int i=0;i<n;i++)if(v[i].tipo==INTRO_CREDITOS)temCred=1;
+  if(temIdOutro&&!intro_tipos_completos(v,n)){
+    IntroTrecho w[8];int nw;
+    int rj=pedirEp(p,p->t,p->e,p->dur,&j);
+    nw=j?intro_extrair(j,w,8):0;
+    nl=j&&!temCred?creditosjson_extrair(j,limitados,8):0;
+    n=intro_completar(v,n<0?0:n,w,nw,8);
+    r=rj==R_FALHA?R_FALHA:n>0?R_OK:rj;
   }
   else if(n<=0&&falhaAni)r=R_FALHA;
   else if(n>0)r=R_OK;
   if(n<0)n=0;
   if(deAni)
     for(int i=0;i<n&&nl<8;i++)
-      if(v[i].tipo==INTRO_CREDITOS&&v[i].fim>v[i].inicio)limitados[nl++]=v[i];
+      if(v[i].ani&&v[i].tipo==INTRO_CREDITOS&&v[i].fim>v[i].inicio)limitados[nl++]=v[i];
   free(j);
   for(int i=0;i<n;i++)if(v[i].tipo==INTRO_CREDITOS)temCred=1;
   pthread_mutex_lock(&trava);
   vale=p->g==geracao;
   if(vale){
-    if(r==R_FALHA){falhou=1;falhouEm=(long)time(NULL);}
-    else{
-      falhou=0;memcpy(trechos,v,(size_t)n*sizeof *v);nTrechos=n;trechosAni=deAni;
+    falhou=r==R_FALHA;
+    if(falhou)falhouEm=(long)time(NULL);
+    if(!falhou||n>0){
+      memcpy(trechos,v,(size_t)n*sizeof *v);nTrechos=n;
       memcpy(creditosLimitados,limitados,(size_t)nl*sizeof *limitados);nCreditosLimitados=nl;
     }
     fundirCapitulos();caps=nCapTr;total=nTrechos;
@@ -495,7 +511,7 @@ static void disparar(const Pedido *base,double dur,int novo){
   p=malloc(sizeof*p);if(!p)return;
   *p=*base;p->dur=dur;
   pthread_mutex_lock(&trava);
-  if(novo){nTrechos=0;nCreditosLimitados=0;trechosAni=0;nCapTr=0;refeitos=0;tentativas=0;}
+  if(novo){nTrechos=0;nCreditosLimitados=0;nCapTr=0;refeitos=0;tentativas=0;}
   falhou=0;
   p->anime=animeDe(p->id,p->tmdb);
   p->g=++geracao;ultimo=*p;temUltimo=1;enviadoDur=dur;
@@ -549,7 +565,7 @@ void intro_definir_capitulos(const IntroTrecho *v,int n){
       ultimo.id,ultimo.t,ultimo.e,nTrechos);fflush(stdout);}
   pthread_mutex_unlock(&trava);
 }
-void intro_desligar(void){pthread_mutex_lock(&trava);geracao++;nTrechos=nCreditosLimitados=0;trechosAni=0;nCapTr=0;botaoVis=0;botaoIdx=-1;temUltimo=0;falhou=0;pthread_mutex_unlock(&trava);}
+void intro_desligar(void){pthread_mutex_lock(&trava);geracao++;nTrechos=nCreditosLimitados=0;nCapTr=0;botaoVis=0;botaoIdx=-1;temUltimo=0;falhou=0;pthread_mutex_unlock(&trava);}
 
 // DURACAO DA MIDIA E O TIPO (filme/serie), para recusar janelas absurdas.
 static double durMidia;static int ehFilme;
@@ -747,9 +763,11 @@ int intro_botao_visivel(double*fim,int*tipo){
 // 2.0.3: so os trechos que a guarda de janela ACEITA (valido). Um marcador de
 // creditos recusado para o botao (meio do episodio, outro corte) tambem nao
 // pode abrir o cartao do proximo episodio.
-// 1 quando os trechos atuais vieram do AniSkip, 0 quando do TheIntroDB.
+// 1 quando o trecho de creditos atual veio do AniSkip, 0 quando do TheIntroDB.
 int intro_creditos_aniskip(void){
-  int r;pthread_mutex_lock(&trava);r=trechosAni;pthread_mutex_unlock(&trava);return r;
+  int r=0;pthread_mutex_lock(&trava);
+  for(int i=0;i<nTrechos;i++)if(trechos[i].tipo==INTRO_CREDITOS&&trechos[i].ani)r=1;
+  pthread_mutex_unlock(&trava);return r;
 }
 double intro_creditos_seg(void){
   double s=0.0;pthread_mutex_lock(&trava);

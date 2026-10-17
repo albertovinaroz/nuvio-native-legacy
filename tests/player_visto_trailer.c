@@ -29,6 +29,7 @@
 #include "vistoep.h"
 #include <SDL2/SDL.h>
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -42,6 +43,23 @@
 #include "progresso.h"
 #include "intro.h"
 #include "perfis.h"
+#include "descoberta.h"
+
+// Episode metadata stays under host-test control, without background HTTP.
+static int carregando;
+void desc_episodios(int idx, int temporada) { (void)idx; (void)temporada; }
+void desc_episodios_garantir(int idx) { (void)idx; }
+void desc_episodios_pendente(void) {}
+int desc_episodios_carregando(int idx) { (void)idx; return carregando; }
+#include "rede.h"
+
+// Keep background marker lookups offline too.
+int rede_pedir(const RedePedido *pedido, RedeResposta *resposta) {
+  (void)pedido;
+  memset(resposta, 0, sizeof *resposta);
+  resposta->erro = REDE_INDISPONIVEL;
+  return 0;
+}
 
 // Relogio monotono controlado: seek/retomada nao ganham tempo assistido.
 static double agoraMono;
@@ -303,22 +321,21 @@ int main(void) {
   tocar(2350, 1); player_encerrar();
   assert(nTrakt == 1 && nVisto == 1 && cat_item(0)->progresso == 100);
 
-  // O mesmo, saindo a 100 s do fim (o cenario da revisao): o fim ainda nao
-  // chegou, mas a POSICAO tem de ser gravada — ficava nos 60% de antes. Sem o
-  // fim nao ha visto, entao o Trakt recusa a saida (>= 90% sem visto).
+  // O mesmo, saindo a 100 s do fim (o cenario da revisao). PARIDADE COM O
+  // NUVIOTV OFICIAL: 98% passa dos 90% (WatchProgress.isCompleted) — visto, e
+  // o Trakt/Simkl recebem o stop de conclusao.
   sessao("tt90000014", 60, 6000);
   tocar(2300, 1); player_encerrar();
-  assert(nTrakt == 1 && nVisto == 0 && cat_item(0)->progresso == 98);
-  assert(tkPos == 5900 && !tkAssistiu);
+  assert(nTrakt == 1 && nVisto == 1 && cat_item(0)->progresso == 100);
+  assert(tkPos == tkDur && tkAssistiu);
 
   // SEEK ATE O FIM (log do C9, Dexter S1E2): 99 s tocados, busca, mais 34 s e
-  // sai a 19 s do fim. Nao viu — mas esta ali: grava a posicao REAL (nem os
-  // 100% do arredondamento, nem nada), e o Trakt recebe a saida sem prova,
-  // que e o que ele recusa (tests/trakt_contracts.c).
+  // sai a 19 s do fim. PARIDADE COM O NUVIOTV OFICIAL: a conclusao e pela
+  // POSICAO (99%), mesmo depois de um seek — visto, e stop de conclusao.
   sessao("tt90000015", 0, 2843);
   tocar(99, 1); pos = 2790; quadro(); tocar(34, 1); player_encerrar();
-  assert(nVisto == 0 && cat_item(0)->progresso > 90 && cat_item(0)->progresso < 100);
-  assert(nTrakt == 1 && tkPos == 2824 && !tkAssistiu);
+  assert(nVisto == 1 && cat_item(0)->progresso == 100);
+  assert(nTrakt == 1 && tkPos == tkDur && tkAssistiu);
 
   // RETOMADA PERTO DO FIM (terceira revisao): 85% de 2700 s, mais 285 s ate os
   // creditos em 2580 s e aceita o proximo. A prova media metade ate o FIM DO
@@ -328,10 +345,11 @@ int main(void) {
   tocar(285, 1); player_encerrar();
   assert(nTrakt == 1 && nVisto == 1 && cat_item(0)->progresso == 100);
   assert(tkPos == tkDur);
-  // A mesma retomada buscando o fim: o credito dos creditos nao vira prova.
+  // A mesma retomada buscando o fim (98,7%): paridade com o oficial, visto
+  // pela posicao.
   sessao("tt90000017", 85, 2700); creditos = 2400;
   tocar(10, 1); pos = 2660; quadro(); tocar(5, 1); player_encerrar();
-  assert(nVisto == 0 && cat_item(0)->progresso < 100 && tkPos < tkDur);
+  assert(nVisto == 1 && cat_item(0)->progresso == 100 && tkPos == tkDur);
 
   // Sem minutagem, duracao falsa de 129 s, 70 s reais: o resto ate o fim
   // (59 s) nao pode ser creditado como assistido — gravava 100% e visto.
@@ -346,35 +364,26 @@ int main(void) {
   assert(nVisto == 0 && cat_item(0)->progresso < 100);
   assert(tkPos < tkDur && !tkAssistiu && prog_tocou("tt90000019") == 0);
 
-  // Filme sem historico: 133 s tocados, busca e sai em 2824/2843 s. Sem prova
-  // o progresso gravado nao pode acender o selo de visto (cat_visto >= 90%) —
-  // mas a posicao gravada e a REAL: truncar em 89% (2530 s) fazia a retomada
-  // voltar quase cinco minutos (sexta revisao).
+  // Filme sem historico: 133 s tocados, busca e sai em 2824/2843 s (99%).
+  // PARIDADE COM O NUVIOTV OFICIAL: concluido pela POSICAO — visto, 100% e o
+  // stop de conclusao, mesmo com o fim alcancado por um seek.
   sessao("tt90000020", 0, 2843);
   tocar(133, 1); pos = 2824; quadro(); player_encerrar();
-  assert(nVisto == 0 && !cat_visto(cat_item(0)));
-  assert(cat_item(0)->progresso == 99 && tkPos == 2824);
-  { ProgRegistro r;   // a posicao REAL tambem na pendencia do sync
-    assert(prog_por_chave("tt90000020", &r) && r.pendente && r.posSeg == 2824 && r.tocou == 0); }
-
-  // O mesmo selo depois de reiniciar o app (ou trocar de perfil e voltar): o
-  // progresso volta do disco a 99%, sem historico. A prova esta no disco junto
-  // com a posicao — nada em memoria segura o selo.
-  prog_invalidar();
-  { CatItem c = {0}; strcpy(c.imdb, "tt90000020"); strcpy(c.tipo, "movie");
-    c.progresso = 99; cat_definir(&c, 1); }
-  assert(cat_historico_estado_id("tt90000020", "movie") < 0 && !cat_visto(cat_item(0)));
-  perfis_definir_ativo(2); prog_invalidar(); assert(prog_tocou("tt90000020") == -1);
-  perfis_definir_ativo(1); prog_invalidar();
-  assert(!cat_visto(cat_item(0)) && prog_tocou("tt90000020") == 0);
-  { ProgRegistro r; assert(prog_por_chave("tt90000020", &r) && r.posSeg == 2824); }
-
-  // E assistir o filme inteiro depois disso marca, selo inclusive: a conclusao
-  // real substitui a falta de prova (sem conta vinculada nenhum historico vem).
-  sessao("tt90000020", 99, 2843); assert(pos == 0);
-  tocar(2843, 1); player_encerrar();
   assert(nVisto == 1 && cat_item(0)->progresso == 100 && cat_visto(cat_item(0)));
-  assert(prog_tocou("tt90000020") == 1);
+  assert(nTrakt == 1 && tkPos == tkDur && tkAssistiu);
+
+  // O SELO SEM PROVA continua regra do catalogo: um registro de 99% que NAO foi
+  // alcancado tocando (vindo de outra fonte) nao acende o visto — nem depois de
+  // reiniciar o app ou trocar de perfil e voltar.
+  assert(prog_gravar_local("tt90000029", 0, 0, 2824, 2843, 0));
+  prog_invalidar();
+  { CatItem c = {0}; strcpy(c.imdb, "tt90000029"); strcpy(c.tipo, "movie");
+    c.progresso = 99; cat_definir(&c, 1); }
+  assert(cat_historico_estado_id("tt90000029", "movie") < 0 && !cat_visto(cat_item(0)));
+  perfis_definir_ativo(2); prog_invalidar(); assert(prog_tocou("tt90000029") == -1);
+  perfis_definir_ativo(1); prog_invalidar();
+  assert(!cat_visto(cat_item(0)) && prog_tocou("tt90000029") == 0);
+  { ProgRegistro r; assert(prog_por_chave("tt90000029", &r) && r.posSeg == 2824); }
 
   // Sem minutagem, retomada em 1% da duracao falsa de 129,036 s, 70 s reais e
   // sai: a cauda (57 s) completava os 120 s minimos — 100%, visto e stop. A
@@ -394,11 +403,9 @@ int main(void) {
   tocar(105, 1); player_encerrar();
   assert(nTrakt == 1 && nVisto == 1 && cat_item(0)->progresso == 100 && tkPos == tkDur);
 
-  // O mesmo com 95% de 6000 s e mais 90 s ate os creditos (marcador em 5790 s).
+  // 95% de 6000 s assistidos, saindo antes dos creditos (marcador em 5790 s).
+  // PARIDADE COM O NUVIOTV OFICIAL: >= 90% ja conclui na PRIMEIRA sessao.
   sessao("tt90000023", 0, 6000); creditos = 5790; tocar(5700, 1); player_encerrar();
-  assert(nVisto == 0 && cat_item(0)->progresso == 95);
-  concluido = 98; sessao("tt90000023", 95, 6000); creditos = 5790; assert(pos == 5700);
-  tocar(90, 1); player_encerrar(); concluido = 90;
   assert(nTrakt == 1 && nVisto == 1 && cat_item(0)->progresso == 100 && tkPos == tkDur);
 
   // S1 COM REGISTRO: 133 s reais de 2843 s gravados numa sessao; na seguinte o
@@ -425,7 +432,7 @@ int main(void) {
   // S8: suspender e retomar (Manter o video pronto) duas vezes. A suspensao
   // grava o progresso; a base continua a da abertura e os segundos tocados
   // nao sao contados de novo. Base 600 s tocados; 510 s tocados e busca ao
-  // fim (650 s de trecho): nao chegou tocando.
+  // fim (1250 s de 1300, 96%): paridade com o oficial, concluido pela posicao.
   sessao("tt90000025", 0, 1300); tocar(600, 1); player_encerrar();
   assert(prog_tocou("tt90000025") == 1 && cat_item(0)->progresso == 46);
   sessao("tt90000025", 46, 1300); assert(pos == 598);
@@ -437,7 +444,7 @@ int main(void) {
     video_pausar(0);
   }
   tocar(170, 1); pos = 1250; quadro(); player_encerrar(); manter = 0;
-  assert(nVisto == 0 && !tkAssistiu && prog_tocou("tt90000025") == 0);
+  assert(nVisto == 1 && tkAssistiu && prog_tocou("tt90000025") == 1);
 
   // O PULO OFICIAL da abertura conta como tocado: 30 s, pula 150 s sozinho
   // (#329) e toca ate o fim — sem o credito do pulo faltariam 21 s nos 90%.
@@ -448,6 +455,89 @@ int main(void) {
   intro_definir_capitulos(NULL, 0);
   assert(nVisto == 1 && tkAssistiu);
 
-  puts("PASS: trailer, seek, pausa e buffer nao marcam; reproducao real grava progresso e visto");
+  // #379: EOF sai do filme/ultimo episodio, nunca da pausa ou do canal.
+  for (int caso = 0; caso < 4; caso++) {
+    CatItem c = {0}; CatEp eps[2] = {{0}};
+    strcpy(c.imdb, "tt90000379");
+    strcpy(c.tipo, caso == 0 ? "movie" : caso == 3 ? "channel" : "series");
+    cat_definir(&c, 1);
+    eps[0].temporada = eps[0].episodio = 1;
+    eps[1].temporada = 1; eps[1].episodio = 2;
+    if (caso == 1 || caso == 2) cat_definir_episodios(0, eps, caso == 2 ? 2 : 1);
+    dur = 3600; player_abrir(0, fonte);
+    if (caso == 1 || caso == 2) player_definir_episodio(1, 1);
+    quadro(); quadro();
+    pos = 3599; pausado = 1; quadro();
+    assert(!player_quer_sair()); // pausa no ultimo segundo nao e EOF
+    terminou = 1; quadro();
+    assert(player_quer_sair() == (caso < 2));
+    if (caso < 2) {
+      for (int i = 0; i < 120 && player_aberto(); i++) quadro();
+      assert(!player_aberto() && player_quer_sair());
+      assert(!player_suspender()); // EOF nao conserva o decoder para retomada
+    }
+    player_encerrar();
+    assert(!video_ativo());
+  }
+
+  // EOF de trailer enquanto o titulo espera uma fonte nao pede saida.
+  player_abrir(0, NULL);
+  trailer_abrir(fonte, (GfxRect){0,0,100,100}, 0, 0);
+  terminou = 1; quadro();
+  assert(!player_quer_sair());
+  player_encerrar(); trailer_fechar();
+
+  // CONTINUAR ASSISTINDO DURANTE A SESSAO (o relato: ~16% assistidos, seek
+  // ate ~94%). Antes o ponto so ia para o registro na SAIDA; agora vai ~0,7 s
+  // depois de soltar o seek (scheduleProgressSyncAfterSeek do oficial) e ao
+  // pausar — sem esperar o Voltar.
+  sessao("tt90000030", 0, 1449);
+  tocar(232, 1);
+  { ProgRegistro r;
+    player_shot_buscando(1); quadro();
+    pos = 1364; player_shot_buscando(0);
+    for (int i = 0; i < 20; i++) quadro();   // 0,32 s: debounce ainda armado
+    assert(!prog_por_chave("tt90000030", &r) || r.posSeg < 1300);
+    for (int i = 0; i < 40; i++) quadro();   // passou dos 0,7 s
+    assert(prog_por_chave("tt90000030", &r) && fabs(r.posSeg - 1364) < 1.0);
+    // Pausa grava o ponto (>= 5 s depois do ultimo).
+    tocar(10, 1);
+    { SDL_Event e = {0}; e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_PAUSE; player_evento(&e); }
+    quadro(); quadro();
+    assert(prog_por_chave("tt90000030", &r) && fabs(r.posSeg - 1374) < 1.0); }
+  player_encerrar();
+  assert(nVisto == 1 && cat_item(0)->progresso == 100);   // 95%: concluido na saida
+
+  // Credits beyond the reported duration disprove percentage completion.
+  sessao("tt90000032", 0, 536); creditos = 1335;
+  tocar(500, 1);
+  { SDL_Event e = {0}; e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_PAUSE; player_evento(&e); }
+  quadro(); quadro();
+  assert(cat_item(0)->progresso == 93 && !cat_visto(cat_item(0)));
+  assert(prog_tocou("tt90000032") == 0);
+  player_encerrar();
+  assert(nVisto == 0 && nTrakt == 0 && cat_item(0)->progresso == 93);
+  assert(!cat_visto(cat_item(0)) && prog_tocou("tt90000032") == 0);
+  // Reconstruct the catalogue from the saved record, as after a reload.
+  { ProgRegistro r;
+    assert(prog_por_chave("tt90000032", &r) && r.tocou == 0);
+    CatItem c = {0};
+    strcpy(c.imdb, "tt90000032"); strcpy(c.tipo, "movie");
+    c.progresso = (int)(100.0 * r.posSeg / r.durSeg);
+    cat_definir(&c, 1);
+    assert(c.progresso == 93 && !cat_visto(cat_item(0))); }
+
+  // A pause during buffering must persist once buffering clears, before exit.
+  sessao("tt90000031", 0, 1449);
+  tocar(232, 1);
+  buffer = 1; quadro();
+  { SDL_Event e = {0}; e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_PAUSE; player_evento(&e); }
+  quadro();
+  buffer = 0; quadro(); quadro();
+  { ProgRegistro r;
+    assert(prog_por_chave("tt90000031", &r) && fabs(r.posSeg - 232) < 1.0); }
+  player_encerrar();
+
+  puts("PASS: trailer, pausa, buffer e seek sem reproducao nao marcam; >= 90% pela posicao conclui (oficial)");
   return 0;
 }

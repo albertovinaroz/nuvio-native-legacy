@@ -31,10 +31,14 @@
 // F6 e "abrir pela voz": onde ha ditado (Android), o ditado ja comeca. F5 e
 // "abrir": so a caixa.
 //
-// DITADO E TECLADO DO SISTEMA: so no Android, por sistexto.h (SpeechRecognizer
+// DITADO E TECLADO DO SISTEMA: no Android, por sistexto.h (SpeechRecognizer
 // dentro do app com RECORD_AUDIO pedida no primeiro uso; reserva na tela de voz
 // do sistema e no teclado do sistema, que tem o proprio microfone). O texto
 // entra no campo enquanto a pessoa fala ou digita.
+// Na Samsung (.tpk e .wgt) a UNICA via de voz e o botao de microfone ao lado de
+// "Digitar pelo celular": ele abre o teclado da Samsung para o microfone do
+// controle (entrada_texto.h, docs/plans/microfone-busca.md). A nota abaixo
+// sobre webapis.voiceinteraction ficou como pesquisa: nao foi usada.
 //
 // LG E O TECLADO DO SISTEMA (pesquisa de 01/10/2026, NAO ligado):
 //   O app usa o libSDL2 DO APARELHO (nenhum .so vai no .ipk). Na C9 (webOS
@@ -84,6 +88,8 @@
 // `voz` = 1 quando quem abriu foi o botao de microfone: com ditado disponivel
 // ele comeca na hora.
 void spot_abrir(int voz);
+// Abre sem pedir o teclado do sistema (demonstracao das Dicas do controle).
+void spot_abrir_demo(void);
 // Busca somente preferencias locais, sem consultas de catalogo/pessoas nem historico.
 void spot_abrir_ajustes(int voz);
 // "Buscar no guia" (Guia de uso): os recursos do guia e os ajustes que casam.

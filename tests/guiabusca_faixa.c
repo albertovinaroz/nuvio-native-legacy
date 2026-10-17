@@ -6,6 +6,7 @@
 // Contrato: com `out`, o retorno e min(total, cap); sem `out`, e o total.
 // Roda com SANITIZE=1 (ASan): antes do conserto, stack-buffer-overflow.
 #include "../src/xtepg.c"
+#include "nvtmp.h"
 #include "../src/epg.h"
 #include "../src/rede.h"
 #include <assert.h>
@@ -26,7 +27,7 @@ void  dados_fs_travar(void)           {}
 void  dados_fs_liberar(void)          {}
 char *dados_caminho(char *d, unsigned t, const char *n) { (void)d;(void)t;(void)n; return 0; }
 int   dados_apagar(const char *n)     { (void)n; return 0; }
-const char *dados_dir(void)           { return "/tmp"; }
+const char *dados_dir(void)           { return nvt(""); }
 int xtream_e_id(const char *id) { return id && !strncmp(id, "xtream:", 7); }
 int xtream_ultimo_retry_after(void) { return 0; }
 int xtream_epg_curto(const char *id, XtreamProg *out, int cap, int *st) {

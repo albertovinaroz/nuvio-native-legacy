@@ -23,8 +23,12 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
+// A entrega real tem o harness watchstate_poda.sh; aqui nao ha diario.
+void wsenvio_podar(void) {}
+void wsenvio_podar_addon(const char *base) { (void)base; }
 #include <string.h>
 #include <unistd.h>
+#include "stub_perfisessao.h"
 #include "../src/fontecache.c"
 
 void ondever_pedir(const char *id, int series, long tmdb) {
@@ -96,6 +100,7 @@ void stream_definir_lista_idade(const Stream *l, int n, Uint32 idade) {
   nLista = n;
   snprintf(listaAlvo, sizeof listaAlvo, "%s", pedidoAlvo);   // streams.c:476
 }
+void stream_preparar_dica_p2p(const Stream *l, int n) { (void)l; (void)n; }
 void stream_definir_lista(const Stream *l, int n) { stream_definir_lista_idade(l, n, 0); }
 void stream_lista_acrescentar(const Stream *l, int n, int o) {
   Stream *t;

@@ -3,6 +3,7 @@
 // outra referencia, seek, troca de fonte, troca de dono e teardown.
 //   bash tests/legsync.sh     SANITIZE=1 / SANITIZE=thread
 #include "legsync.h"
+#include "nvtmp.h"
 #include "legenda2.h"
 #include "autosync.h"
 #include "legref.h"
@@ -190,7 +191,8 @@ static void pilula_sequencia(int fim, int ok, int cancela) {
   now += 500; r = legsync_pil_passo(&p, &v, now, "OS", t, sizeof t);
   assert((r & LEGSYNC_PIL_FINAL_TARDE) && p.estado == LEGSYNC_PIL_APLICADA && !p.espera);
   assert(p.final == (ok ? 1 : 0));
-  assert(ok ? strstr(t, "sincronizada") && strstr(t, "+2") : strstr(t, "n\xc3\xa3o sincronizada"));
+  // lookup +2500 (earlier) is shown in the user's delay sign: -2,50 s
+  assert(ok ? strstr(t, "sincronizada") && strstr(t, "-2") : strstr(t, "n\xc3\xa3o sincronizada"));
   // o aviso fica o tempo normal e some; sem nova abertura
   unsigned dur = ok ? LEGSYNC_PIL_APLICADA_MS : LEGSYNC_PIL_SEMSYNC_MS;
   now += dur - 10; r = legsync_pil_passo(&p, &v, now, "OS", t, sizeof t); assert(!(r & LEGSYNC_PIL_ZERAR));
@@ -207,7 +209,7 @@ static void regressaoTcl(int caso) {
     legsync_primaria_externa("ext://0/ext_mais2500.srt", "pt", "Escolhida");
     v = esperarFase(MKV, LEGSYNC_PRONTA);
     for (int k = 0; k < 80; k++) passo(MKV, 0);
-    assert(!v.autoFase && pedidosLeitor == 0 && trocas == 0 && legsync_offset_ms(320) == 320);
+    assert(!v.autoFase && pedidosLeitor == 0 && trocas == 0 && legsync_offset_ms(320) == -320);
     assert(prov.acoes(0, rot, 8, prov.u) >= 2); // menu manual continua acessível
     assert(legsync_pil_passo(&p, &v, 22000, "P", texto, sizeof texto) & LEGSYNC_PIL_ZERAR);
     assert(legsync_acao(LEGSYNC_ACAO_RAPIDA));
@@ -232,7 +234,7 @@ static void regressaoTcl(int caso) {
     cand[0] = "ext_menos1200.srt"; nCand = 1;
     legsync_primaria_externa("ext://0/ext_mais2500.srt", "pt", "Escolhida");
     v = esperarAuto(sparse, 3);
-    assert(trocas == 0 && voltou == 0 && legsync_offset_ms(300) == 300);
+    assert(trocas == 0 && voltou == 0 && legsync_offset_ms(300) == -300);
     assert(v.fase == LEGSYNC_RECUSADA); conferirNaTela(2500);
     // Se só a EXTERNA tem poucas falas, trocar por uma boa continua permitido.
     legsync_iniciar(MKV); trocas = 0;
@@ -290,7 +292,7 @@ static LegendaDocumento *janelaLocal(const char *url, uint64_t sessao, const int
 
 int main(int argc, char **argv) {
   LegSyncVisao v; int casos = 0;
-  DIR = argc > 1 ? argv[1] : "/tmp/nv-legref-fx";
+  DIR = argc > 1 ? argv[1] : nvt("/nv-legref-fx");
   legsync_teste_leitor(lerMkv, NULL);
   if (getenv("AUTOSYNC_PGS")) {
     const char *pgs = "local:/pgs.mkv";
@@ -300,7 +302,7 @@ int main(int argc, char **argv) {
     const char *texto = prov.estado(0, prov.u);
     assert(texto && !strcmp(texto, "Sem legenda de texto neste arquivo para usar como refer\xc3\xaancia"));
     char manual[200]; legsync_texto(&v, manual, sizeof manual); assert(!strcmp(manual, texto));
-    assert(legsync_offset_ms(320) == 320 && trocas == 0);
+    assert(legsync_offset_ms(320) == -320 && trocas == 0);
     puts("PASS: so PGS, sem audio, motivo curto na linha de sync e no modo manual");
     legsync_destruir(); return 0;
   }
@@ -309,7 +311,7 @@ int main(int argc, char **argv) {
 
   // Antes de criar e no slot 1: honesto.
   assert(legsync_visao(0).fase == LEGSYNC_INDISPONIVEL);
-  assert(legsync_offset_ms(250) == 250);
+  assert(legsync_offset_ms(250) == -250);
   legsync_iniciar(MKV);
   // Slot 1 sem segunda legenda: indisponivel, sem fingir.
   assert(legsync_visao(1).fase == LEGSYNC_INDISPONIVEL && legsync_visao(1).motivo == LEGSYNC_M_SEM_EXTERNA);
@@ -320,14 +322,15 @@ int main(int argc, char **argv) {
   // 1. Externa +2,5 s; Rapida le a faixa embutida e aceita +2500.
   legsync_primaria_externa("ext://0/ext_mais2500.srt", "pt", "Provedor");
   v = esperarFase(MKV, LEGSYNC_PRONTA);
-  assert(legsync_offset_ms(250) == 250);          // nada aceito ainda: so o manual
+  assert(legsync_offset_ms(250) == -250);          // nada aceito ainda: so o manual
   assert(legsync_acao(LEGSYNC_ACAO_RAPIDA));
   v = esperarFase(MKV, LEGSYNC_ACEITA);
   assert(abs(v.offsetAutoMs - 2500) <= 25);
   assert(!strcmp(v.idiomaRef, "eng"));
-  // Offset total = manual + automatico, UMA vez; o manual muda, o automatico fica.
-  assert(legsync_offset_ms(250) == 250 + v.offsetAutoMs);
-  assert(legsync_offset_ms(-500) == -500 + v.offsetAutoMs);
+  // Offset de busca = automatico - manual da pessoa (positivo atrasa, negativo
+  // adianta), UMA vez; o manual muda, o automatico fica.
+  assert(legsync_offset_ms(250) == -250 + v.offsetAutoMs);
+  assert(legsync_offset_ms(-500) == 500 + v.offsetAutoMs);
   assert(legsync_offset_ms(0) == v.offsetAutoMs);
   conferirNaTela(legsync_offset_ms(0));            // a fala certa no instante certo
   casos++;
@@ -335,7 +338,7 @@ int main(int argc, char **argv) {
   // 2. Desfazer: so o manual volta a valer.
   assert(legsync_acao(LEGSYNC_ACAO_DESFAZER));
   v = legsync_visao(0); assert(v.fase == LEGSYNC_DESFEITA && v.offsetAutoMs == 0);
-  assert(legsync_offset_ms(250) == 250); casos++;
+  assert(legsync_offset_ms(250) == -250); casos++;
 
   // 3. Completa com a mesma referencia (sem reler o arquivo): aceita de novo.
   { int p0 = pedidosLeitor; assert(legsync_acao(LEGSYNC_ACAO_COMPLETA));
@@ -359,7 +362,7 @@ int main(int argc, char **argv) {
   // 5. Outra referencia: ff.mkv so tem uma faixa de texto -> sem outra, offset zerado.
   assert(legsync_acao(LEGSYNC_ACAO_OUTRA));
   v = esperarFase(MKV, LEGSYNC_INDISPONIVEL);
-  assert(v.motivo == LEGSYNC_M_SEM_OUTRA && v.acoes == 0 && legsync_offset_ms(100) == 100); casos++;
+  assert(v.motivo == LEGSYNC_M_SEM_OUTRA && v.acoes == 0 && legsync_offset_ms(100) == -100); casos++;
 
   // 6. Troca de fonte no meio da sessao (mm.mkv): geracao nova, a escolha fica,
   //    o automatico zera; a outra faixa (ASS) serve de referencia.
@@ -380,7 +383,7 @@ int main(int argc, char **argv) {
   assert(legsync_acao(LEGSYNC_ACAO_RAPIDA));
   v = esperarFase(MKV2, LEGSYNC_ACEITA); assert(abs(v.offsetAutoMs + 1200) <= 25);
   legenda_desligar();
-  assert(legsync_offset_ms(300) == 300 && legsync_visao(0).motivo == LEGSYNC_M_SEM_EXTERNA); casos++;
+  assert(legsync_offset_ms(300) == -300 && legsync_visao(0).motivo == LEGSYNC_M_SEM_EXTERNA); casos++;
 
   // 8. Download atrasado de uma escolha antiga nao vira a principal.
   legsync_primaria_externa("ext://300/ext_mais2500.srt", "pt", "Lenta");
@@ -442,7 +445,7 @@ int main(int argc, char **argv) {
       passo(caso == 1 ? MKV2 : MKV, 0);
       v = legsync_visao(0);
       assert(v.fase != LEGSYNC_ACEITA && v.fase != LEGSYNC_LENDO && v.fase != LEGSYNC_ANALISANDO);
-      assert(legsync_offset_ms(40) == 40);
+      assert(legsync_offset_ms(40) == -40);
       usleep(1000);
     }
     if (caso == 0) assert(v.fase == LEGSYNC_INDISPONIVEL && v.motivo == LEGSYNC_M_SEM_EXTERNA);
@@ -546,7 +549,8 @@ int main(int argc, char **argv) {
     for (int k = 0; k < 200; k++) passo(MKV, 0);
     v = legsync_visao(0);
     assert(trocas == 1 && voltou == 0 && v.autoFase == 3 && v.autoTrocou && legsync_offset_ms(0) == 0);
-    assert(!strcmp(prov.estado(0, prov.u), "N\xc3\xa3o deu para sincronizar"));
+    assert(v.motivo == LEGSYNC_M_REGION_DISAGREEMENT);
+    assert(strstr(prov.estado(0, prov.u), "N\xc3\xa3o deu para sincronizar"));
     assert(prov.acoes(0, rot, 8, prov.u) == 0);
 
     // 12c2. Candidata com menos da metade das falas da original: volta a original.
@@ -601,7 +605,7 @@ int main(int argc, char **argv) {
       v = esperarAuto(MKV, 2);
       pthread_mutex_lock(&LM); assert(pedidosLeitor > p0); pthread_mutex_unlock(&LM);   // leu a referencia
       assert(v.fase == LEGSYNC_ACEITA && abs(v.offsetAutoMs - 2000) <= 150);
-      assert(legsync_offset_ms(0) == v.offsetAutoMs && legsync_offset_ms(300) == v.offsetAutoMs + 300);
+      assert(legsync_offset_ms(0) == v.offsetAutoMs && legsync_offset_ms(300) == v.offsetAutoMs - 300);
       assert(legsync_posicao(123.0) == 123.0);                                       // offset puro: sem mapa
       assert(legsync_pilula_final(&v, "OpenSubtitles", t, sizeof t));
       { long n; char *b = arquivo("ext_traduzida_mais2000.srt", &n);
@@ -653,7 +657,7 @@ int main(int argc, char **argv) {
       assert(v.autoFase == 2 && v.fase == LEGSYNC_ACEITA && abs(v.offsetAutoMs - 2500) <= 25);
       assert(legsync_offset_ms(0) == v.offsetAutoMs);
       conferirFilme(legsync_offset_ms(0));                      // a fala certa no instante certo
-      assert(legsync_pilula_final(&v, "OpenSubtitles", t, sizeof t) && strstr(t, "sincronizada \xc2\xb7 OpenSubtitles \xc2\xb7 +2."));
+      assert(legsync_pilula_final(&v, "OpenSubtitles", t, sizeof t) && strstr(t, "sincronizada \xc2\xb7 OpenSubtitles \xc2\xb7 -2."));   // user sign
       legsync_encerrar(); }
     casos++; }
   legsync_teste_auto(0); legsync_definir_trocador(NULL);
@@ -666,8 +670,32 @@ int main(int argc, char **argv) {
   v = esperarAuto(MKV, 3);
   printf("janela insuficiente: trocas=%d fase=%d manual=%d\n", trocas, v.autoFase, legsync_offset_ms(320));
   assert(trocas == 0 && voltou == 0 && !v.autoTrocou && v.fase == LEGSYNC_RECUSADA);
-  assert(v.offsetAutoMs == 0 && legsync_offset_ms(320) == 320);
+  assert(v.offsetAutoMs == 0 && legsync_offset_ms(320) == -320);
   legsync_encerrar(); legref_fonte_local(NULL); legsync_definir_trocador(NULL); legsync_teste_auto(0); casos++;
+
+  // 12h. PROXIMO EPISODIO (Discord 13/10): player_encerrar + player_abrir sem URL
+  //      (legsync_iniciar("")), a legenda do ep2 escolhida antes OU depois da
+  //      URL real chegar. O sync do ep2 comeca do zero e vale como o de uma
+  //      abertura pela pagina do titulo.
+  legsync_teste_auto(1); legsync_auto_habilitar(1); legsync_audio_habilitar(0);
+  legsync_iniciar(MKV2);                               // controle: abrir o ep2 direto
+  legsync_primaria_externa("ext://0/ext_menos1200.srt", "pt", "P");
+  v = esperarAuto(MKV2, 2); esperarFase(MKV2, LEGSYNC_ACEITA);
+  { int ref = legsync_visao(0).offsetAutoMs; legsync_encerrar();
+    for (int antes = 0; antes < 2; antes++) {
+      legsync_iniciar(MKV);                            // ep1 sincronizado
+      legsync_primaria_externa("ext://0/ext_mais2500.srt", "pt", "P");
+      esperarAuto(MKV, 2);
+      legsync_encerrar(); legsync_iniciar("");         // app.c: proximo episodio
+      if (antes) legsync_primaria_externa("ext://200/ext_menos1200.srt", "pt", "P");   // baixa depois da URL chegar
+      for (int k = 0; k < 5; k++) passo(MKV2, 0);      // URL do ep2 chega
+      if (!antes) legsync_primaria_externa("ext://0/ext_menos1200.srt", "pt", "P");
+      v = esperarAuto(MKV2, 2); v = esperarFase(MKV2, LEGSYNC_ACEITA);
+      printf("[12h] proximo episodio (legenda %s da URL): offset %d (controle %d)\n", antes ? "antes" : "depois", v.offsetAutoMs, ref);
+      assert(abs(v.offsetAutoMs - ref) <= 25 && legsync_offset_ms(0) == v.offsetAutoMs);
+      legsync_encerrar();
+    } }
+  legsync_teste_auto(0); casos++;
 
   // 13. SEGUNDA LEGENDA (slot 1, 2.1): a mesma engine contra a mesma faixa
   //     embutida, sozinha, mesmo com a principal embutida. Offset puro vai
@@ -709,7 +737,7 @@ int main(int argc, char **argv) {
   legsync_primaria_externa("ext://200/ext_menos1200.srt", "en", "P");   // download no ar
   legsync_destruir();
   travar = 0;
-  assert(legsync_offset_ms(77) == 77 && legsync_visao(0).fase == LEGSYNC_INDISPONIVEL);
+  assert(legsync_offset_ms(77) == -77 && legsync_visao(0).fase == LEGSYNC_INDISPONIVEL);
   usleep(400000);    // o download pendente termina depois do destruir: sem efeito
   casos++;
 

@@ -41,7 +41,7 @@ int main(void) {
   assert(SDL_Init(SDL_INIT_TIMER) == 0);
   dados_iniciar(""); perfis_definir_ativo(1);
   // Old local episode; newer remote playback has ONLY a percentage.
-  assert(prog_gravar_local(SERIE, 2, 3, 600, 1800));
+  assert(prog_gravar_local(SERIE, 2, 3, 600, 1800, -1));
   ProgRegistro r;
   assert(prog_por_chave(SERIE "_s2e3", &r));
   publicar(2, 3, 33, r.lastWatchedMs);

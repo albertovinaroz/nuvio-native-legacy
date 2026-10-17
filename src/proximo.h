@@ -152,4 +152,7 @@ int prox_seguinte(const CatItem *ci, const CatEp *eps, int n, int limiarPct,
 // O cartao (posplay.c) e a janela (player.c) usam esta mesma regra: antes cada
 // um tinha a sua e podiam discordar.
 int prox_indice_seguinte(const CatEp *eps, int n, int temporada, int episodio);
+// Predecessor estrito, pela mesma ordem e politica de especiais do seguinte.
+// Nao depende de a ancora estar na lista, de contiguidade ou de numeros sem buracos.
+int prox_indice_anterior(const CatEp *eps, int n, int temporada, int episodio);
 #endif

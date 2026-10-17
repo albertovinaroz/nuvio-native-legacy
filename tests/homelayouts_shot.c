@@ -18,6 +18,7 @@
 // o numero de retangulos do quadro — o que da para medir no Mac do custo de
 // desenho; o custo em ms de GPU so existe na TV.
 #include "ajustes.h"
+#include "nvtmp.h"
 #include "artehero.h"
 #include "catalogo.h"
 #include "colecoes.h"
@@ -27,6 +28,8 @@
 #include "fileiras.h"
 #include "gfx.h"
 #include "home.h"
+#include "homevazio.h"
+#include "addons.h"
 #include "layout.h"
 #include "menu.h"
 #include "tex_cache.h"
@@ -187,6 +190,7 @@ static void ajusta(int layout, int vidro) {
   if (getenv("NV_AJ")) fprintf(a, "%s\n", getenv("NV_AJ"));   // ex.: "heroSectionEnabled 1"
   fclose(a);
   ajustes_dir(dirDados);
+  ajustes_teste_vidro_env();   // NUVIO_SHOT_VIDRO_OPAC / _FOSCO
   // O roteamento de app.c (app_atualizar), que este teste nao roda.
   artehero_fundo_addon(ajustes_fundo_addon());
   posterprov_preferir_addon(ajustes_poster_addon());
@@ -194,7 +198,7 @@ static void ajusta(int layout, int vidro) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nv-home-layouts-shots/h";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nv-home-layouts-shots/h");
   const char *camadas = argc > 2 ? argv[2] : "012";
   static CatItem itens[200];
   static CatFileira fils[8];
@@ -241,6 +245,28 @@ int main(int argc, char **argv) {
   ajusta(0, 0);
   assert(home_iniciar("deploy/app/art"));
 
+  if (getenv("NV_HOME_VAZIA")) {
+    SDL_Event e = {0};
+    addons_esquecer();
+    assert(homevazio_ativo(0));
+    ajusta(0, 1);
+    tecla(SDLK_DOWN); tecla(SDLK_RIGHT); tecla(SDLK_UP);
+    tecla(SDLK_LEFT);
+    assert(home_pediu_menu());
+    e.type = SDL_KEYDOWN; e.key.keysym.sym = SDLK_RETURN;
+    home_evento(&e);
+    e.type = SDL_KEYUP; home_evento(&e);
+    assert(!home_pediu_abrir() && !home_pediu_tocar());
+    quadros(90, NULL);
+    snprintf(bmp, sizeof bmp, "%s-empty-glass.bmp", saida);
+    quadros(1, bmp);
+    SDL_Quit();
+    return 0;
+  }
+
+  // A Home exige um addon ligado mesmo quando o catalogo e um fixture local.
+  AddonRemoto addon = { .nome = "Fixture", .url = "http://127.0.0.1:1/manifest.json", .ativo = 1 };
+  assert(addons_definir_lista(&addon, 1));
   memset(itens, 0, sizeof itens);
   memset(fils, 0, sizeof fils);
   for (k = 0; k < NF; k++) {
@@ -282,6 +308,15 @@ int main(int argc, char **argv) {
       if (getenv("NV_ARTE_ADDON")) {
         snprintf(c->origem, sizeof c->origem, "%s", "xperience");
         snprintf(c->backdropTmdb, sizeof c->backdropTmdb, "deploy/app/art/%02d.jpg", (a + 17) % NA);
+      }
+      // NV_PESSOAS=<png>: os catalogos viram uma fileira de diretores, todos com o
+      // retrato do pacote Xperience (nome assado embaixo) como poster.
+      if (FILS[k].catalogo && getenv("NV_PESSOAS")) {
+        static const char *DIR[] = { "Quentin Tarantino", "Christopher Nolan", "Greta Gerwig",
+          "Denis Villeneuve", "Martin Scorsese", "Bong Joon-ho", "Ava DuVernay", "Wes Anderson" };
+        snprintf(c->titulo, sizeof c->titulo, "%s", DIR[i % 8]);
+        snprintf(c->poster, sizeof c->poster, "%s", getenv("NV_PESSOAS"));
+        c->logo[0] = 0;
       }
       c->nota = 68 + (ini + i) % 25;
       if (k == 0) { c->progresso = 20 + i * 12; c->restanteMin = 90 - i * 10; }
@@ -372,6 +407,36 @@ int main(int argc, char **argv) {
       printf("[shot] tipo %s=%s ok=%d\n", p, ig + 1, fil_definir_tipo(p, atoi(ig + 1)));
     }
     quadros(60, NULL);
+  }
+
+  // NV_PALCO=N (com NV_TIPOS="pop_movie=13"): desce N fileiras ate a Palco e
+  // fotografa o foco andando para a direita — a prova visual de que o cartaz
+  // grande segue a fileira em vez de ficar parado no lugar.
+  if (getenv("NV_PALCO")) {
+    int r, desce = atoi(getenv("NV_PALCO"));
+    for (r = 0; r < 14; r++) tecla(SDLK_UP);
+    for (r = 0; r < desce; r++) { tecla(SDLK_DOWN); quadros(90, NULL); }
+    snprintf(bmp, sizeof bmp, "%s-palco-1-foco-inicial.bmp", saida);
+    quadros(1, bmp);
+    for (r = 0; r < 3; r++) { tecla(SDLK_RIGHT); quadros(30, NULL); }
+    quadros(60, NULL);
+    snprintf(bmp, sizeof bmp, "%s-palco-2-foco-andou.bmp", saida);
+    quadros(1, bmp);
+    for (r = 0; r < 5; r++) { tecla(SDLK_RIGHT); quadros(30, NULL); }
+    quadros(60, NULL);
+    snprintf(bmp, sizeof bmp, "%s-palco-3-foco-rolou.bmp", saida);
+    quadros(1, bmp);
+  }
+
+  // NV_HEROI=N (com NV_TIPOS="pop_movie=<FilTipo>"): desce N fileiras e
+  // fotografa a fileira em foco — a prova da fileira de um cartão só (#205).
+  if (getenv("NV_HEROI")) {
+    int r, desce = atoi(getenv("NV_HEROI"));
+    for (r = 0; r < 14; r++) tecla(SDLK_UP);
+    quadros(60, NULL);
+    for (r = 0; r < desce; r++) { tecla(SDLK_DOWN); quadros(30, NULL); }
+    snprintf(bmp, sizeof bmp, "%s-heroi.bmp", saida);
+    quadros(1, bmp);
   }
 
   // NV_SO_CTX=1: pula a volta pelos layouts e vai direto ao menu do cartaz

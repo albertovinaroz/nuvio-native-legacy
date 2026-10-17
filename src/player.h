@@ -51,6 +51,10 @@ int  player_pediu_ajustes_fonte(void);
 // Ha quantos ms o player abriu (o Play); 0 fechado. Para o log do inicio (#202).
 Uint32 player_aberto_ha_ms(void);
 int player_pediu_proximo(int *temporada, int *episodio);
+int player_transporte_pedido_pendente(void);
+// Libera somente uma troca ja consumida que o roteador cancelou; preserva a fila.
+void player_episodio_pedido_liberar(void);
+const CatEp *player_anterior_episodio(void);
 const CatEp *player_proximo_episodio(void);
 // A REGRA DO CARTAO DE PROXIMO EPISODIO, isolada do estado do player para
 // poder ser exercitada por teste. `cred` e o segundo em que os creditos
@@ -123,6 +127,9 @@ int  player_carregando(void);
 int  player_controles_visiveis(void);
 // Idem, para #121: foco na barra de tempo e a posicao que ela mostra.
 int   player_foco_na_barra(void);
+// 1 quando o CIMA e do player (controles na tela, "Pular abertura", cartao de
+// abertura, painel de pausa): as estatisticas fixadas cedem a tecla.
+int   player_cima_dele(void);
 // #128: 1 na busca que comecou com os controles escondidos, quando so a barra
 // e o tempo estao na tela.
 int   player_so_barra(void);
@@ -191,6 +198,7 @@ int  player_retido_so_voo(void);
 int  player_retomar_retido(const char *imdb, int temporada, int episodio);
 void player_validar_retido(Uint32 agora);
 void player_descartar_retido(void);
+void player_ciclo_evento(Uint32 tipo);
 
 // --- MINI-PLAYER (PiP) DE CANAL ---------------------------------------------
 // Sair de um canal para a home nao mata a transmissao: o destino do plano de
@@ -278,7 +286,13 @@ void        player_aspecto_ciclar(void);       // proximo modo + aviso na tela
 // preferencia do APARELHO e nao do titulo. A folha de faixas edita a struct e
 // chama player_leg_estilo_mudou(), que aplica no pipeline e grava.
 VideoLegendaEstilo *player_leg_estilo(void);
+// The same persisted style, before the first playback as well.
+void player_leg_estilo_carregar(void);
 void player_leg_estilo_mudou(void);
+// Settings commits a complete draft only after confirmation. A failed write
+// leaves both the playing style and its authored-ASS override flags intact.
+int player_leg_estilo_definir(const VideoLegendaEstilo *estilo, int tocou);
+const VideoLegendaEstilo *player_leg_estilo_padrao(void);
 
 // QUAIS CAMPOS A PESSOA MEXEU DE FATO.
 //
@@ -290,15 +304,16 @@ void player_leg_estilo_mudou(void);
 //
 // "Restaurar padrao" LIMPA a marca (PLR_LEG_NADA): voltar ao padrao e dizer
 // "quero o comportamento normal do app", e o normal do app e respeitar o
-// arquivo. Tamanho, fonte e borda nao entram nesta conta — eles vencem o ASS
-// SEMPRE, porque tamanho de legenda numa TV e acessibilidade, nao estilo.
-//
-// Tudo isto vale para o parser REDUZIDO (legenda.c). Com o libass desenhando,
-// o arquivo manda em cor, fonte, fundo, posicao e borda (decisao do dono em
-// 25/09/2026, alinhada ao app web 1.2.0): trocar a cor apagava karaoke e
-// placas. O tamanho continua da pessoa, como escala proporcional do libass.
+// arquivo. Authored ASS overrides only the marked fields; size remains a
+// proportional libass scale. These bits match PLAIN_ASS_* in plainass.h.
 #define PLR_LEG_NADA  0
 #define PLR_LEG_COR   1
+#define PLR_LEG_FONTE 2
+#define PLR_LEG_COR_BORDA 4
+#define PLR_LEG_BORDA 8
+#define PLR_LEG_FUNDO 16
+#define PLR_LEG_POSICAO 32
+#define PLR_LEG_NEGRITO 64
 void player_leg_estilo_tocou(int campos);  // PLR_LEG_NADA zera
 int  player_leg_estilo_tocado(int campo);
 // Diretorio de DADOS (nao de arte) onde art/player.txt e gravado. Chamada por

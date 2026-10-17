@@ -47,7 +47,7 @@ const char *nuvem_simkl_app(void);
 char *nuvem_post(const char *caminho, const char *corpoJson,
                  const char *bearer, int *status);
 
-// Falha de transporte do ultimo nuvem_post/nuvem_tabela deste fio ("curl 35: ..."), "" se nao houve.
+// Falha de transporte do ultimo nuvem_post/nuvem_tabela deste fio ("curl 35"), "" se nao houve.
 const char *nuvem_ultimo_erro(void);
 
 // Atalho para /rest/v1/rpc/<funcao>.

@@ -8,6 +8,9 @@ int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
 static int ocultar;
 int ajustes_ocultar_nao_lancados(void) { return ocultar; }
+static int ocultarVistos;
+int ajustes_ocultar_filmes_vistos(void) { return ocultarVistos; }
+unsigned cat_revisao_itens(void) { return 0; }               // #366: a projecao le a revisao
 #include "../src/descoberta.c"
 // descoberta.c passou a traduzir os rotulos que monta ("Filme", "Serie", a
 // data por extenso) e este teste nao linka idioma.c: linkar puxaria
@@ -37,6 +40,16 @@ int addons_base_desligada(const char *b) { (void)b; return 0; }   // 203-desliga
 const char *addons_base(int i) { (void)i; return ""; }
 const char *addons_id_manifesto(int i) { (void)i; return ""; }
 void cat_trocar_continuar(const CatItem *l, int q) { (void)l; (void)q; }
+static int vistoId;
+int cat_visto(const CatItem *c) { return c && vistoId && !strcmp(c->imdb, "tt2"); }
+int cat_copiar_por_id(const char *id, const char *tipo, CatItem *s) { (void)id; (void)tipo; (void)s; return 0; }
+static ColFolder pasta;
+static ColSource fontePasta;
+int col_n(void) { return 1; }
+const ColFolder *col_folder(int i) { return i == 0 ? &pasta : NULL; }
+const char *addons_base_por_id(const char *id) { (void)id; return ""; }
+#define LST_SO_ITENS
+#include "../src/listas.c"
 
 char *rede_baixar(const char *url,int timeout) {
   (void)timeout;
@@ -64,6 +77,21 @@ int main(void) {
   assert(desc_vertudo_n()==1&&!desc_vertudo_fim());   /* pagina 2: so futuro */
   desc_vertudo_mais();waitDone();
   assert(desc_vertudo_n()==2&&tem("tt4")&&!tem("tt3"));
+  /* Biblioteca: o mesmo buffer, mas a lista mostra o filme visto. */
+  ocultarVistos = 1; vistoId = 1;
+  memset(&pasta, 0, sizeof pasta); memset(&fontePasta, 0, sizeof fontePasta);
+  snprintf(pasta.id, sizeof pasta.id, "pasta"); pasta.nSources = 1; pasta.sources = &fontePasta;
+  snprintf(fontePasta.base, sizeof fontePasta.base, "https://bib.invalid");
+  snprintf(fontePasta.type, sizeof fontePasta.type, "movie");
+  snprintf(fontePasta.catId, sizeof fontePasta.catId, "rank");
+  { LstLista l; CatItem it; memset(&l, 0, sizeof l); l.fonte = LST_NUVIO;
+    snprintf(l.colId, sizeof l.colId, "pasta");
+    lst_abrir(&l, NULL); waitDone();
+    assert(lst_itens_n() == desc_vertudo_n_bruto() && lst_itens_n() == 2);
+    { int i, achou = 0;
+      for (i = 0; i < lst_itens_n(); i++)
+        if (lst_item(i, &it) && !strcmp(it.imdb, "tt2")) achou = 1;
+      assert(achou && !tem("tt2")); } }
   puts("colfiltro: PASS (home e ver tudo escondem o de 2099; pagina so de futuros nao encerra)");
   return 0;
 }

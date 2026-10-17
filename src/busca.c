@@ -384,7 +384,8 @@ static void montarSugestoes(void) {
   for (r = 0; r < nCat && nFil < 2; r++) {
     const CatFileira *cf = cat_fileira(r);
     int achou = 0, i;
-    if (!cf || !cf->titulo[0] || !strcmp(cf->tipo, "channel") || !strcmp(cf->tipo, "tv")) continue;
+    if (!cf || !cf->titulo[0] || !strcmp(cf->tipo, "channel") || !strcmp(cf->tipo, "tv") ||
+        !strcmp(cf->tipo, "channels") || !strcmp(cf->tipo, "live") || !strcmp(cf->tipo, "iptv")) continue;
     for (i = 0; i < cf->n && achou < BU_MAX_POR_FIL; i++) {
       const CatItem *ci = cat_item(cf->ini + i);
       if (!ci || !ci->titulo[0] || (!ci->poster[0] && !ci->backdrop[0])) continue;
@@ -726,10 +727,10 @@ static void recentesEntrar(void) {
 }
 
 // Cima/baixo: a pilula da linha vizinha cujo CENTRO em x esta mais perto.
-static void recentesVertical(int dy) {
+static int recentesVertical(int dy) {
   int alvoLin, i, melhorI = -1;
   float cx, melhor = 1e9f;
-  if (focoRec >= nRecLayout) return;
+  if (focoRec >= nRecLayout) return 0;
   alvoLin = recLin[focoRec] + dy;
   cx = recRect[focoRec].x + recRect[focoRec].w * 0.5f;
   for (i = 0; i < nRecLayout; i++) {
@@ -739,7 +740,7 @@ static void recentesVertical(int dy) {
     if (d < 0) d = -d;
     if (d < melhor) { melhor = d; melhorI = i; }
   }
-  if (melhorI >= 0) focoRec = melhorI;
+  if (melhorI >= 0) { focoRec = melhorI; return 1; }
   // Abaixo da ultima linha de pilulas: a fileira de Populares, na coluna mais
   // proxima. Acima da primeira, nada (o teclado fica a esquerda).
   else if (dy > 0 && sugestao && nFil > 0) {
@@ -748,9 +749,11 @@ static void recentesVertical(int dy) {
     if (c < 0) c = 0;
     if (c >= fil[0].n) c = fil[0].n - 1;
     painel = 1; focoRes.fileira = 0; focoRes.coluna = c;
+    return 1;
   } else if (dy < 0 && buTecladoNativo()) {
-    painel = 0; campoFoco = 1;
+    painel = 0; campoFoco = 1; return 1;
   }
+  return 0;
 }
 
 // OK curto: refaz a busca com o termo (e ele sobe para o topo), ou, no
@@ -910,6 +913,12 @@ int busca_iniciar(void) {
   focoRec = 0; nRecLayout = 0;
   okPress = okLongo = 0; okDesde = 0;
   campoFoco = buTecladoNativo() ? 1 : 0; animFocoCampo = animMic = 0.0f;
+  // "Do sistema" no ajuste Teclado: abre o IME logo ao entrar na busca.
+  if (st_ime_disponivel() && st_teclado_modo() != 1 &&
+      (st_abre_sozinho() || buTelefone() || st_teclado_modo() == 2)) {
+    campoFoco = 1;
+    st_ime_abrir(ST_BUSCA, consulta, BU_MAX_CONSULTA - 1);
+  }
   refiltrar();
   return 1;
 }
@@ -917,6 +926,16 @@ int busca_iniciar(void) {
 void busca_encerrar(void) { temItemFoco = 0; st_fechar(ST_BUSCA); celb_fechar_dono(CELB_BUSCA); }
 const char *busca_consulta(void) { return consulta; }
 int busca_foco_campo(void) { return painel == 0 ? campoFoco : 0; }
+#ifdef NV_TESTE
+void busca_teste_layout_recentes(void) {
+  int n = buscasrec_n();
+  nRecLayout = n + 1 < BU_REC_ITENS ? n + 1 : BU_REC_ITENS;
+  for (int i = 0; i < nRecLayout; i++) {
+    recRect[i] = (GfxRect){ BU_RES_X + i * 180.0f, BU_REC_Y, 160.0f, BU_REC_H };
+    recLin[i] = 0;
+  }
+}
+#endif
 int  busca_quer_sair(void) { return sair; }
 
 int busca_pediu_abrir(int *indiceCatalogo) {
@@ -1060,7 +1079,9 @@ void busca_evento(const SDL_Event *e) {
           if (focoRec + 1 < nRecLayout && recLin[focoRec + 1] == recLin[focoRec])
             focoRec++;
           break;
-        case SDLK_UP:   recentesVertical(-1); break;
+        case SDLK_UP:
+          if (!recentesVertical(-1) && ajustes_menu_topo()) sair = 1;
+          break;
         case SDLK_DOWN: recentesVertical(1);  break;
         default: break;
       }
@@ -1087,6 +1108,9 @@ void busca_evento(const SDL_Event *e) {
         else if (campoFoco >= 2 && st_ime_disponivel()) campoFoco = 1;
         else if (campoFoco >= 2) campoFoco = 0;
         else { registrarConsulta(); sair = 1; }
+        return;
+      case SDLK_UP:
+        if (ajustes_menu_topo()) sair = 1;
         return;
       case SDLK_RETURN: case SDLK_KP_ENTER: if (!e->key.repeat) campoOk(); return;
       default: break;
@@ -1125,11 +1149,14 @@ void busca_evento(const SDL_Event *e) {
       // salto para uma letra aleatoria ao subir ou descer no teclado.
       // CIMA da primeira fileira: o campo, onde ha teclado do sistema.
       case SDLK_UP:
-        // Sem teclado do sistema (LG, Samsung) o campo nao e alvo: cima vai
-        // direto ao botao do celular.
+        // Sem teclado do sistema o campo nao e alvo: cima vai ao microfone
+        // da Samsung, ou ao celular onde nao ha voz. Sem esses alvos,
+        // a primeira fileira abre a barra do topo.
         if (!focus_mover_grade(&focoKb, 0, -1)) {
           if (st_ime_disponivel()) campoFoco = 1;
+          else if (st_voz_disponivel()) campoFoco = 2;
           else if (celb_disponivel()) campoFoco = 3;
+          else if (ajustes_menu_topo()) sair = 1;
         }
         break;
       case SDLK_DOWN:   focus_mover_grade(&focoKb, 0,  1); break;
@@ -1172,6 +1199,7 @@ void busca_evento(const SDL_Event *e) {
         }
         recentesAjustarFoco();
       } else if (!moveu && buTecladoNativo()) { painel = 0; campoFoco = 1; }
+      else if (!moveu && ajustes_menu_topo()) sair = 1;
       break;
     }
     case SDLK_DOWN: focus_mover(&focoRes, 0,  1); break;
@@ -1608,9 +1636,11 @@ static void desenhaTeclado(void) {
         s = rotulo;
       } else s = (c == 0) ? i18n("espaço") : (c == 1 ? i18n("apagar")
                : (c == 2 ? i18n("limpar") : (layoutCir ? "ABC" : "\xd0\x90\xd0\x91\xd0\x92")));
-      int tom = (int)anim_mistura(243.0f, (float)ajustes_tinta_foco(), k);
-      TxtLinha l = txt_linha(f < kbFil ? TXT_G26B : TXT_AJ_SEG, s, tom, tom, tom, 255);
-      txt_desenhar(l, t.x + (t.w - l.w) * 0.5f, t.y + (t.h - l.h) * 0.5f);
+      // The tone eases every frame while focus moves: tint the cached white
+      // line at draw time instead of rasterizing one line per tone.
+      float tom = anim_mistura(243.0f, (float)ajustes_tinta_foco(), k) / 255.0f;
+      TxtLinha l = txt_linha(f < kbFil ? TXT_G26B : TXT_AJ_SEG, s, 255, 255, 255, 255);
+      txt_desenhar_tom(l, t.x + (t.w - l.w) * 0.5f, t.y + (t.h - l.h) * 0.5f, tom, tom, tom, 1.0f);
     }
   }
   // Dicas do controle, 16 px a 16 abaixo da ilha (o texto mudo do mockup).

@@ -38,6 +38,9 @@ void guia_focar_id(const char *id);
 // Dispara a carga de canais sem abrir nada — o CH+/- do controle funciona
 // mesmo com o guia nunca aberto, e precisa da lista para saber quem vem depois.
 void guia_carregar(void);
+// Nova abertura de perfil: fecha a tela e invalida a carga anterior sem
+// esperar rede. O cache persistido do perfil novo continua disponivel.
+void guia_abrir_sessao(void);
 
 // ZAP: o canal `dir` posicoes depois (1) ou antes (-1) de `idAtual` na ordem do
 // guia, ja como CatItem pronto para tocar. 0 = lista ainda nao carregada —
@@ -70,6 +73,9 @@ int  guia_pediu_canal(CatItem *saida);
 // Base do addon que publicou o canal recem-pedido ("" para portal Stalker).
 // app.c passa a addons_definir_origem antes de buscar a fonte.
 const char *guia_canal_origem(void);
+// O tipo de catalogo declarado do canal do ultimo pedido ("tv", "channel",
+// "live"...), para /stream/<tipo>/ — ver guia_canal_tipo em guia.c.
+const char *guia_canal_tipo(void);
 
 // O id do canal em foco, ou "" — o player usa para saber se o overlay esta
 // apontando para o canal que esta no ar.

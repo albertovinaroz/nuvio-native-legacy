@@ -30,6 +30,7 @@
 //
 //   bash tests/detail_eps_shot.sh /tmp/nuvio-deteps
 #include <SDL2/SDL.h>
+#include "nvtmp.h"
 #include <SDL2/SDL_image.h>
 #include <assert.h>
 #include <stdio.h>
@@ -466,7 +467,9 @@ static void abrir(int i, int tc) {
   detail_abrir(&hi);
   nivel = 1;
   foco.fileira = SEC_TEMPORADAS;
-  foco.coluna = tc;
+  // O botao de episodio aleatorio abriu a fileira (#205): temporada t mora na
+  // coluna t+1; em filme a fileira nao existe e a coluna fica onde estava.
+  foco.coluna = secaoN(SEC_TEMPORADAS) > 0 ? tc + 1 : tc;
   quadros(120);
 }
 
@@ -478,7 +481,7 @@ static void nosEpisodios(int col) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-deteps";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-deteps");
   char nome[600];
   SDL_GLContext gl;
 
@@ -522,6 +525,9 @@ int main(int argc, char **argv) {
     // da release (0 pt ... 7 es; ver idiomacod.h): serve a conferir traducao.
     fprintf(f, "idioma %d\n", getenv("NUVIO_SHOT_IDIOMA") ? atoi(getenv("NUVIO_SHOT_IDIOMA")) : 0);
     if (getenv("NV_APPLE_EP")) fprintf(f,"homeLayoutLocal %d\n",HOME_LAYOUT_DINAMICA);
+    // #205: NV_EP_TAMANHO=0/1/2 captura os tres tamanhos dos cards de episodio
+    // da Moderna (Pequeno/Medio/Grande).
+    if (getenv("NV_EP_TAMANHO")) fprintf(f,"epTamanhoLocal %d\n",atoi(getenv("NV_EP_TAMANHO")));
     fclose(f);
     ajustes_dir(dados_dir()); }
 

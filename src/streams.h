@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include "streamfit.h"
 #include "fontefalha.h"
+#include "fontefiltro.h"
 
 // A lista cresce conforme a resposta dos addons; a UI virtualiza as linhas.
 
@@ -39,6 +40,11 @@ typedef struct Stream {
   int  altura;          // 2160, 1080, 720...
   int  dolbyVision;
   int  dolbyAtmos;
+  // AV1: so consultado pela tabela de pontuacao da VIDAA (streams.c, pontos())
+  // — a Hisense nao decodifica AV1 (nem hardware nem software no navegador
+  // dela). Detectado direto no texto do stream em stream_parse.c, do MESMO
+  // jeito que dolbyVision/mp4 logo abaixo (nao a partir de badges_detectar).
+  int  av1;
   uint64_t badges;     // classificados uma vez, nunca regex no desenho
   int  mp4;             // 1 = MP4 progressivo; 0 = HLS ou outro
   long tamanhoMB;       // 0 quando desconhecido
@@ -51,6 +57,10 @@ typedef struct Stream {
   // Legendas anexadas pelo addon tambem contam, sem afirmar que sao embutidas.
   char audioIdiomas[512];
   char legendaIdiomas[512];
+  // Metadados canonicos para as exclusoes compartilhadas. Independentes dos
+  // badges importados e do tamanho exato exigido pelo StreamFit.
+  FonteFiltroDados filtro;
+  int filtroLido;       // 1 = classificado pelo parser; 0 = origem sintetica
   char descricao[2048];
   char arquivo[512];
   // O QUE O ADDON DECLARA COMO "a mesma fonte" entre episodios:
@@ -108,10 +118,23 @@ typedef struct Stream {
   // poe estas no fim e o automatico as exclui; a escolha manual avisa que esta
   // baixando. Nao exclui nada: escolhida a dedo, toca como na 1.3.5.
   int  foraCache;
+  // Pronta no debrid: declaracao positiva do addon ou resolucao nativa que
+  // ja confirmou a disponibilidade. Zero tambem pode ser DESCONHECIDO; nao
+  // inferir cache de URL direta, nome do provedor ou ausencia de foraCache.
+  // So serve ao indicador/filtro da folha, nao a politica de reproducao.
+  int  emCache;
+  // isCached:false tambem pode vir com URL direta ainda tocavel. A negativa
+  // e visual: nao muda a elegibilidade operacional de foraCache. Uma consulta
+  // nativa que confirme a disponibilidade limpa esta declaracao anterior.
+  int  cacheNegado;
+  // Uma resposta nativa pronta e mais recente que a negativa antiga do addon.
+  // So atualiza a exibicao; nao limpa foraCache nem muda as tentativas.
+  int  cacheNativo;
   // A SONDA VIU A URL RESPONDER PAGINA (HTML/JSON/texto) e nao video (2.0.2,
   // naovideo.h): linha de aviso do addon. A folha a mostra apagada ("Nao e
   // video") e o automatico a pula. Marcada na verificacao, nunca no parser.
   int  naoVideo;
+  int  notWebReady;     // behaviorHints: so oferecer quando P2P esta ativo
   // PACOTE DE SELOS ATIVO (selospacote.h): os filtros que casaram com esta
   // fonte, calculados UMA vez (quando a lista chega, ou quando o pacote muda;
   // `selosPacoteVer` != selospacote_versao() manda recalcular), nunca no
@@ -133,6 +156,9 @@ int stream_bandeira_desenhar(const char *idioma, float cx, float cy, float h, fl
 int stream_extrair(const char *json, const char *provedor, Stream **saida);
 // Idiomas declarados para exibicao, sem rotulo. 0 = nenhum informado.
 int stream_faixas_texto(const Stream *fonte, int legendas, char *saida, unsigned tam);
+void stream_filtro_dados(const Stream *fonte, FonteFiltroDados *saida);
+int stream_filtro_permite(const Stream *fonte);
+int stream_filtro_bloqueou(void);
 void stream_definir_atual(int indice);
 int stream_atual(void);
 void stream_folha_contexto(const char *texto);
@@ -166,6 +192,8 @@ void stream_definir_lista_idade(const Stream *lista, int n, Uint32 idade);
 // mesma da lista inteira de antes. Com a folha aberta, o foco fica no mesmo
 // cartao e a rolagem compensa as linhas que entraram acima dele.
 void stream_lista_acrescentar(const Stream *lista, int n, int ordemAddon);
+// No trabalhador, antes de publicar: pode carregar o motor P2P do pacote.
+void stream_preparar_dica_p2p(const Stream *lista, int n);
 // O addon (ordemAddon) de cada fonte, como entrou; 0 na lista inteira.
 int  stream_ordem_addon(int i);
 // A escolha automatica ja pode sair com a lista parcial? Ver
@@ -366,6 +394,9 @@ unsigned stream_lista_geracao(void);
 // Quantos torrents SEM url (so infoHash) ha na lista: os que so o P2P ou o
 // debrid tocam. Serve ao cartao "nenhuma fonte serve" dizer que ha P2P.
 int  stream_qtd_torrents(void);
+// Torrents descartados (sem debrid nem P2P) que o P2P deste pacote tocaria se
+// ligado; 0 com debrid, P2P ligado ou sem P2P no pacote (#486).
+int  stream_torrents_para_p2p(void);
 int  stream_resolver_escolhida(int i, unsigned geracao, char *url, unsigned nu,
                                char *servico, unsigned ns, int *pct);
 
@@ -432,4 +463,7 @@ void stream_folha_desenhar(Uint32 agora);
 // Devolve 1 uma vez quando o usuario escolheu, com o indice em *escolhido.
 int  stream_folha_escolheu(int *escolhido);
 
+// Captured at dispatch, so a delayed worker cannot adopt another profile's list.
+int stream_canal_primeira_viva_sessao(int tentativas, uint64_t sessao);
+int stream_verificar_proxima_vod_sessao(int atualIdx, int tentativas, int *conferidas, uint64_t sessao);
 #endif

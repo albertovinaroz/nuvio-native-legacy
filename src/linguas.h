@@ -70,22 +70,33 @@ int ling_afinidade(const char *cod, const char *pref);
 const char *ling_legenda(void);
 const char *ling_legenda2(void);
 const char *ling_audio(void);
+// Segundo idioma de audio (audioescolha.h): ling_legenda2, a mesma regra.
+const char *ling_audio2(void);
+
+// Optional source-sheet audio filter. Explicit audio language wins; otherwise
+// use the resolved interface/device language supplied by the caller. "All"
+// stays unfiltered and local "Original" still resolves only from this title.
+// This does not change playback's automatic track-selection preferences.
+const char *ling_audio_fonte(const char *padrao);
 
 // So a parte da CONTA, sem a escolha local por cima (para o log, #378).
 const char *ling_conta_legenda_valor(void);
 const char *ling_conta_legenda2_valor(void);
 const char *ling_conta_audio_valor(void);
+const char *ling_conta_audio2_valor(void);
 
 // Vindas da CONTA (blob de ajustes). Nao sobrescrevem escolha local.
 void ling_conta_legenda(const char *v);
 void ling_conta_legenda2(const char *v);
 void ling_conta_audio(const char *v);
+void ling_conta_audio2(const char *v);
 
 // Vindas dos AJUSTES desta TV. "" volta a seguir a conta.
 void ling_local_legenda(const char *v);
 // Second subtitle language chosen on THIS TV (F04). "" = follow the account.
 void ling_local_legenda2(const char *v);
 void ling_local_audio(const char *v);
+void ling_local_audio2(const char *v);   // "" = segue a conta
 
 // Lista fixa oferecida em Ajustes. O indice 0 e "seguir a conta" e o 1 e "sem
 // filtro"; do 2 em diante sao codigos ISO.
@@ -99,12 +110,12 @@ void ling_local_audio(const char *v);
 void        ling_definir_original(const char *cod);
 const char *ling_original(void);
 
-// Indice de "Original do titulo" dentro da lista de opcoes. E o ULTIMO item de
-// proposito: o ajustes.txt grava indice, nao codigo, entao inserir no meio
-// reinterpreta o arquivo de quem ja tem ajuste salvo (ver a nota em linguas.c).
-// FORK: o indice e a posicao NA TELA (ver ORDEM_UI em linguas.c); no disco o
-// "Original" continua 30.
-#define LING_OPC_ORIGINAL 32
+// Indice de "Original do titulo" dentro da lista de opcoes. No DISCO e FIXO
+// (LING_DISCO_ORIGINAL, 30, upstream 2.0.6): o ajustes.txt grava indice, nao
+// codigo, entao mover o "~" troca a lingua de quem ja tem ajuste salvo, e
+// idiomas novos entram DEPOIS dele (ver a nota em linguas.c).
+// FORK: este aqui e a posicao NA TELA (ver ORDEM_UI abaixo), a ultima.
+#define LING_OPC_ORIGINAL 35
 int         ling_opcao_n(void);
 const char *ling_opcao_codigo(int i);   // "" para conta, "*" para sem filtro
 // POSICAO NA TELA <-> INDICE GRAVADO no ajustes.txt (que nunca muda de
@@ -112,16 +123,17 @@ const char *ling_opcao_codigo(int i);   // "" para conta, "*" para sem filtro
 // gravacao do arquivo convertem. Aqui, e nao em linguas.c, para ajustes.c nao
 // passar a depender de linguas.c no link (varios testes o linkam sem ela).
 // Os numeros sao indices de OPCOES_COD: 2 pt, 3 en, 4 es, 5..29 o resto,
-// 30 "~", e as variantes de depois dele, 31 "es-419" e 32 "pt-br", na tela
-// ao lado da familia.
+// 30 "~", 31..33 hr/sr/bs (upstream 2.0.6) e as variantes do fork, 34 "es-419"
+// e 35 "pt-br", na tela ao lado da familia. O "Original" fica por ultimo.
 #define LING_DISCO_ORIGINAL 30
-#define LING_OPC_N 33
+#define LING_OPC_N 36
 static inline int ling_opcao_para_disco(int i) {
   static const unsigned char ORDEM_UI[LING_OPC_N] = {
     0, 1,
-    2, 32, 3, 4, 31,
+    2, 35, 3, 4, 34,
     5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
     17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    31, 32, 33,
     LING_DISCO_ORIGINAL
   };
   return (i >= 0 && i < LING_OPC_N) ? ORDEM_UI[i] : i;

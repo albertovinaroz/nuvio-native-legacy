@@ -24,13 +24,25 @@ int ajustes_hist_conta(void) { return 1; }
 int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
 int ajustes_ocultar_nao_lancados(void) { return 0; }   // #369: descoberta.c le o ajuste
+int ajustes_ocultar_filmes_vistos(void) { return 0; }    // #366: descoberta.c le o ajuste
 #include "../src/descoberta.c"
+#include "nvtmp.h"
 Uint32 SDL_GetTicks(void) { return 0; }
 #include "../src/progresso.h"
 #include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
 #include "jellyfin_stub.inc"
+// Manifest loading is outside this metadata harness.
+void addons_lista_travar(void) {}
+void addons_lista_destravar(void) {}
+void ws_destino(const char *b, const char *u, int p, char out[20]) {
+  (void)b; (void)u; (void)p; out[0] = 0;
+}
+void addons_manifesto_lido_base(int i, const char *b, const char *d,
+                               unsigned v, const char *c) {
+  (void)i; (void)b; (void)d; (void)v; (void)c;
+}
 
 // --- DUBLES: nenhum participa da regra, so fazem descoberta.c linkar ---------
 // (o conjunto e o de tests/colfileiras.c, menos os cat_* — que catalogo.c ja
@@ -153,6 +165,17 @@ int   simkl_continuar(CatItem *s, int m)   { (void)s; (void)m; return 0; }
 int   simkl_e_a_seguir(const char *id)     { (void)id; return 0; }
 int   simkl_plantowatch(CatItem *s, int m) { (void)s; (void)m; return 0; }
 int   ajustes_salvos_no_simkl(void)        { return 0; }
+uint64_t perfis_sessao_geracao(void) { return 1; }
+int perfis_sessao_atual(uint64_t s) { return s == 1; }
+int perfis_sessao_travar(uint64_t s) { return s == 1; }
+void perfis_sessao_destravar(void) {}
+int ajustes_ocultar_filmes_vistos(void) { return 0; }
+int trakt_enfeitar_lote_sessao(CatItem *s, int n, uint64_t sessao) {
+  (void)sessao; (void)s; (void)n; return 0;
+}
+int recomenda_social_mesclar_sessao(CatItem *i, int n, int max, uint64_t sessao) {
+  (void)sessao; (void)i; (void)max; return n;
+}
 int   trakt_enfeitar_lote(CatItem *s, int n) { (void)s; (void)n; return 0; }
 int   trakt_lista(const char *q, CatItem *s, int m) { (void)q; (void)s; (void)m; return 0; }
 int   trakt_lista_cresc(const char *q, CatItem **s, int m) { (void)q; (void)s; (void)m; return 0; }
@@ -349,6 +372,26 @@ static void abrir(void) {
 }
 
 int main(void) {
+  // #524: provider mappings and nested IDs must not replace catalog identity.
+  {
+    const char *json =
+      "{\"_provider\":{\"imdb_id\":\"tt1629757\",\"id\":\"tt1629757\"},"
+      "\"id\":\"kitsu:41402\",\"imdb_id\":\"tt9054364\",\"type\":\"series\","
+      "\"name\":\"That Time I Got Reincarnated as a Slime\",\"poster\":\"https://p/anime.jpg\"}";
+    CatItem d;
+    assert(deMeta(json, json + strlen(json), "series", &d));
+    assert(!strcmp(d.imdb, "kitsu:41402"));
+    assert(!strcmp(d.tipo, "series"));
+    json = "{\"name\":\"Legacy movie\",\"poster\":\"https://p/movie.jpg\","
+           "\"imdb_id\":\"tt1629757\"}";
+    assert(deMeta(json, json + strlen(json), "movie", &d));
+    assert(!strcmp(d.imdb, "tt1629757"));
+    json = "{\"name\":\"Movie\",\"poster\":\"https://p/movie.jpg\","
+           "\"id\":\"tt1629757\"}";
+    assert(deMeta(json, json + strlen(json), "movie", &d));
+    assert(!strcmp(d.imdb, "tt1629757"));
+    puts("ok  catalog identity stays at the root; legacy IMDb fallback preserved");
+  }
   // 1) deMeta: o `type` do item vence o "anime" do catalogo; o "type" de
   //    trailers[] (aninhado, e vem ANTES) nao conta.
   { const char *js =
@@ -937,8 +980,7 @@ int main(void) {
       assert(cat_id_stream(0, 1, 2, id, sizeof id) && !strcmp(id, "tt13293588:1:2")); }
     puts("ok  mescla: a base manda; o Cinemeta so preenche elenco e episodios que faltavam");
 
-    // 25) Base COMPLETA com lista propria: a lista dela fica (2 episodios contra
-    //     3 do Cinemeta) e o Cinemeta so completa o campo vazio de cada um.
+    // 25) Addon menor: conserva os 3 pares do Cinemeta e o texto do addon.
     limparCacheMeta(); nRotas = 0;
     rota("xp.test/SEGREDO/meta/series/tt13293588.json",
          "{\"meta\":{\"id\":\"tt13293588\",\"type\":\"series\",\"name\":\"Mushoku do Xperience\","
@@ -947,7 +989,7 @@ int main(void) {
          "{\"season\":1,\"episode\":2,\"name\":\"Dois\",\"thumbnail\":\"https://xp/2.jpg\"}]}}");
     catalogoDe("tt13293588", "series", "Mushoku Tensei", "org.xp");
     abrir();
-    assert(cat_n_episodios(0) == 2);
+    assert(cat_n_episodios(0) == 3);
     assert(!strcmp(cat_episodio(0, 0)->nome, "Nome do Xperience"));
     assert(cat_item(0)->nElenco == 1 && !strcmp(cat_item(0)->elenco[0].nome, "Ator do Xperience"));
     puts("ok  mescla: lista e elenco da base ficam; Cinemeta so preenche campos vazios");
@@ -1149,7 +1191,7 @@ int main(void) {
 
     // 31c) O QUE FOI LOCALIZADO VAI AO DISCO, e a abertura seguinte pinta o
     //      Continuar ja no idioma, sem rede (o ingles de 1-2 s do relato).
-    { char dir[] = "/tmp/nuvio-loc-XXXXXX", arq[600];
+    { char dir[NVT_MAX], arq[600]; nvt_set(dir, sizeof dir, "/nuvio-loc-XXXXXX");
       CatItem it[1];
       FILE *f;
       assert(mkdtemp(dir));

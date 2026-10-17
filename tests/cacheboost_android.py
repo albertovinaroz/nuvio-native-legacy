@@ -66,7 +66,8 @@ with tempfile.TemporaryDirectory(prefix="nuvio-cacheboost-android-", dir=os.envi
     deps.append(guava)
     sources = [kt / n for n in ("NvPlayer.kt", "ParaleloDataSource.kt", "PassivoMedidor.kt", "NuvioActivity.kt",
                                 "CacheSessao.kt", "CacheMidia.kt", "GanhoMath.kt", "GanhoAudioProcessor.kt",
-                                "AudioSyncTap.kt", "AudioSyncSink.kt", "RecriaHdr.kt", "ArranqueVigia.kt")]
+                                "AudioSyncTap.kt", "AudioSyncSink.kt", "RecriaHdr.kt", "ArranqueVigia.kt",
+                                "TouchViewport.kt", "Tombstone.kt")]
     java_roots = []
     if sdl.is_dir():
         java_roots = ["-Xjava-source-roots=" + str(sdl)]
@@ -136,6 +137,23 @@ fun main() {
     check(CacheSessao.limparSobras(File(raiz, "missing"), "bnow") == 0)
     check(CacheSessao.apagar(atual) && !atual.exists())
     raiz.deleteRecursively(); fora.deleteRecursively()
+
+    // Warm resume: actual disk bytes survive close and the very same cache is reused.
+    run {
+        val raizWarm = Files.createTempDirectory("nv-warm").toFile()
+        val f = File(raizWarm, "part.exo"); f.writeText("downloaded bytes")
+        val vaga = CacheSessao.Vaga<File> { CacheSessao.apagar(it) }
+        fun guardar() { f.writeText("downloaded bytes"); check(vaga.guardar(f, "title", "url", 256, 100, 768 * MB)) }
+        guardar()
+        check(f.exists() && vaga.pegar("", "trailer", 0, 101) == null && f.exists())
+        check(vaga.pegar("title", "url", 256, 102) === f && f.readText() == "downloaded bytes")
+        guardar(); check(vaga.pegar("other", "url", 256, 102) == null && !f.exists())
+        guardar(); check(vaga.largar() && !f.exists()) // profile switch / toggle off
+        guardar(); check(vaga.vencer(100 + CacheSessao.LIMITE_MS, 768 * MB) && !f.exists())
+        guardar(); check(vaga.vencer(101, 512 * MB - 1) && !f.exists())
+        guardar(); check(vaga.pegar("title", "different source", 256, 102) == null && !f.exists())
+        raizWarm.deleteRecursively()
+    }
 
     // --- ENOSPC recognition (Android wraps ErrnoException in IOException)
     check(CacheSessao.semEspaco(IOException("write failed", IOException("write failed: ENOSPC (No space left on device)"))))

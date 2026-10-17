@@ -134,6 +134,14 @@ void col_chave_pasta(const ColFolder *pasta, char *dst, unsigned n);
 int col_grupo_chave(const char *chave, int *indices, int max);
 int col_grupo_forma_chave(const char *chave);
 int col_grupo(const char *nome, int *indices, int max);
+// A ORDEM DAS PASTAS da fileira de um grupo, pela escolha da fileira
+// (fil_ordem, fileiras.h): recebe os indices como col_grupo_chave os devolve e
+// os ordena NO LUGAR. FIL_ORD_LISTA nao mexe em nada. O ANO e o do TITULO da
+// pasta (nv_ano_meta) — a pasta nao tem campo de data; sem ano vai para o fim,
+// na ordem que ja estava. A semente fixa o embaralhado: a montagem da home
+// passa a dela e o teste a sua, para o aleatorio ser estavel de um quadro para
+// o outro e reproduzivel.
+void col_ordenar_pastas(int *indices, int n, int ordem, unsigned semente);
 // addonId dominante do grupo (1) ou "" quando as fontes sao de addons
 // diferentes / nao sao de addon (0). Ver a definicao.
 int col_grupo_addon(const char *nome, char *dst, unsigned n);

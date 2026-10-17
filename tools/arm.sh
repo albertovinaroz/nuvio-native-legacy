@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # Compila para ARM e instala na TV por COPIA DIRETA. Ciclo completo (~30s).
 #
 #   bash tools/arm.sh            # compila, copia, confere e lanca
@@ -266,7 +268,7 @@ ARQ_DE_PESSOA="trakt.txt addons.txt tmdb.txt mdblist.txt ajustes.txt
 # trakt-p*/trakt-fluxo*/simkl*: o vinculo do Trakt e do Simkl passou a ser um
 # arquivo POR PERFIL (traktauth.c, simklauth.c) — o trakt.txt da lista de nomes
 # acima deixou de alcancar o token quando a pasta de dados cai na da arte.
-GLOB_DE_PESSOA="stalker-p*.txt xtream-p*.txt listas-p*.txt trakt-p*.txt trakt-fluxo*.txt simkl*.txt conta-*.txt conta-*.txt.tmp discord-p*.txt discord-p*.txt.tmp jellyfin-p*.txt jellyfin-p*.txt.tmp emby-p*.txt emby-p*.txt.tmp plex-p*.txt plex-p*.txt.tmp"
+GLOB_DE_PESSOA="stalker-p*.txt xtream-p*.txt listas-p*.txt trakt-p*.txt trakt-fluxo*.txt simkl*.txt conta-*.txt conta-*.txt.tmp discord-p*.txt discord-p*.txt.tmp jellyfin-p*.txt jellyfin-p*.txt.tmp emby-p*.txt emby-p*.txt.tmp plex-p*.txt plex-p*.txt.tmp debrid-*.txt provider-scope-*.txt fontefalha*.txt* fontesmortas-*.txt catalogo-*.bin catalogo-*.bin.tmp* guia-*-p*.txt* guia-cache*.bin* epg-extra.* epg-extra-p*.* recomendacoes*.txt recomendacoes*.json amigos-vistos*.txt"
 
 # O ACERVO DE QUEM EMPACOTOU, que nao e credencial de login e vaza igual.
 #
@@ -366,6 +368,7 @@ if [ "$1" = "--ipk" ]; then
     printf '%s\n' "$LISTA" | grep -qE "art/$pre[0-9]+\.txt$" && VAZOU="$VAZOU $pre*.txt"
   done
   printf '%s\n' "$LISTA" | grep -qE "art/(trakt-fluxo|simkl)\.txt$" && VAZOU="$VAZOU trakt-fluxo.txt/simkl.txt"
+  printf '%s\n' "$LISTA" | grep -qE '(^|/)(debrid|provider-scope|fontefalha|fontesmortas|catalogo-|guia-(fav|modo|preview|cache|addons|lembretes)|epg-extra|recomendacoes|amigos-vistos)[^/]*\.(txt|json|bin|ts|id)(\.tmp[^/]*)?$' && VAZOU="$VAZOU private profile files"
   printf '%s\n' "$LISTA" | grep -qE '(^|/)conta-[^/]*\.txt(\.tmp)?$' && VAZOU="$VAZOU conta-*.txt/conta-*.txt.tmp"
   printf '%s\n' "$LISTA" | grep -qE '(^|/)discord-p[^/]*\.txt(\.tmp)?$' && VAZOU="$VAZOU discord profile tokens"
   printf '%s\n' "$LISTA" | grep -qE '(^|/)(jellyfin|emby|plex)-p[^/]*\.txt(\.tmp)?$' && VAZOU="$VAZOU media-server profile tokens"
@@ -483,10 +486,10 @@ STAMP=${STAMP:0:8}
 #
 # A conferencia de verdade continua sendo /proc/<pid>/exe: o app manager cacheia
 # o appinfo ate reinstalar, e ja aconteceu de o titulo mostrar a build anterior.
-sed "s/\(\"title\": \"[^\"]*\)\"/\1 ($STAMP)\"/" deploy/app/appinfo.json > /tmp/appinfo.stamped.json
-cp /tmp/appinfo.stamped.json deploy/app/appinfo.json.stamped
+sed "s/\(\"title\": \"[^\"]*\)\"/\1 ($STAMP)\"/" deploy/app/appinfo.json > ${TMPDIR:-/tmp}/appinfo.stamped.json
+cp ${TMPDIR:-/tmp}/appinfo.stamped.json deploy/app/appinfo.json.stamped
 
-$SCP /tmp/appinfo.stamped.json "root@$TV_IP:$APPDIR/appinfo.json"
+$SCP ${TMPDIR:-/tmp}/appinfo.stamped.json "root@$TV_IP:$APPDIR/appinfo.json"
 
 echo "==> sincronizando arte"
 # --exclude art/cache: e CACHE DE EXECUCAO, nao arte do pacote. Com ele o tar

@@ -18,6 +18,7 @@
 //      filme-relacionados filme-colecao filme-fim serie-topo serie-ep
 //      serie-temp serie-baixo
 #include <SDL2/SDL.h>
+#include "nvtmp.h"
 #include <SDL2/SDL_image.h>
 #include <assert.h>
 #include <stdio.h>
@@ -82,6 +83,7 @@
 #include "dados.h"
 #include "ilha.h"
 #include "salvospainel.h"
+#include "vidro_telas.h"
 
 #define IMDB_SERIE "tt12637874"
 #define IMDB_FILME "tt33612209"
@@ -302,6 +304,7 @@ static void quadros(int n) {
   for (int i = 0; i < n; i++) {
     SDL_PumpEvents();
     tex_bombear(3);
+    vt_antes();
     detail_atualizar(1.0f / 60.0f, SDL_GetTicks());
     txt_novo_quadro();
     tex_novo_quadro();
@@ -320,6 +323,9 @@ static void quadros(int n) {
       spainel_atualizar(1.0f / 60.0f, SDL_GetTicks());
       if (spainel_visivel()) spainel_desenhar(SDL_GetTicks());
     }
+    // The sources sheet over the page, as app.c draws it.
+    if (stream_folha_aberta()) { stream_folha_atualizar(1.0f / 60.0f, SDL_GetTicks()); stream_folha_desenhar(SDL_GetTicks()); }
+    vt_depois();
     if (i < n - 1) SDL_GL_SwapWindow(janela);
   }
 }
@@ -352,7 +358,7 @@ static int quer(int argc, char **argv, const char *id) {
 int main(int argc, char **argv) {
   SDL_GLContext gl;
   const char *dd;
-  saida = argc > 1 ? argv[1] : "/tmp/nuvio-detglass";
+  saida = argc > 1 ? argv[1] : nvt("/nuvio-detglass");
   assert(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) == 0);
   IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
@@ -392,6 +398,7 @@ int main(int argc, char **argv) {
     if (getenv("NUVIO_SHOT_FUNDO")) fprintf(f, "fundoLocal %d\n", atoi(getenv("NUVIO_SHOT_FUNDO")));
     fclose(f);
     ajustes_dir(dd); }
+  if (vt_ligado()) vt_vidro();
   // As marcas das notas (IMDb, Rotten Tomatoes, Trakt) vem da pasta de arte.
   { char ar[1024]; if (realpath("deploy/app/art", ar)) extras_carregar(ar); }
   montarCatalogo();
@@ -426,6 +433,30 @@ int main(int argc, char **argv) {
     { SvPerfil p; memset(&p, 0, sizeof p);
       p.gostoPct = 82; p.gostoTotal = 11; p.estado = SV_PERFIL_OK;
       socialvis_definir_perfil_extra("nuvio:mari", &p); }
+  }
+
+  // NUVIO_VIDRO_TELAS=<dir> (tests/vidro_telas.sh): glass budget with the
+  // sources sheet open and with the Trakt comments row focused.
+  if (vt_ligado()) {
+    static const char *JSON = "{\"streams\":["
+      "{\"url\":\"https://x.invalid/1.mkv\",\"name\":\"AIO 4K\",\"description\":\"2160p WEB-DL DV HDR10\"},"
+      "{\"url\":\"https://x.invalid/2.mkv\",\"name\":\"Torrentio 1080p\",\"title\":\"Movie.1080p.WEB-DL.mkv\"},"
+      "{\"url\":\"https://x.invalid/3.mkv\",\"name\":\"Comet 720p\",\"description\":\"720p WEB\"}]}";
+    Stream *v = NULL;
+    int n = stream_extrair(JSON, "AIOStreams", &v);
+    SDL_Event e;
+    abrir(1, 1, SEC_COMENTARIOS, 0);
+    vt_zerar(); quadros(30); vt_png("detalhe-comentarios"); vt_relatar("detail-comments", 1);
+    memset(&e, 0, sizeof e); e.type = SDL_KEYDOWN;
+    for (int k = 0; k < 4; k++) { e.key.keysym.sym = k & 1 ? SDLK_LEFT : SDLK_RIGHT; detail_evento(&e); quadros(5); }
+    vt_relatar("detail-comments", 0);
+    stream_definir_alvo(IMDB_FILME); stream_definir_lista(v, n);
+    stream_folha_nome("O Diabo Veste Prada 2"); stream_folha_abrir();
+    quadros(20);
+    vt_zerar(); quadros(60); vt_png("detalhe-fontes"); vt_relatar("detail-sources", 1);
+    for (int k = 0; k < 4; k++) { e.key.keysym.sym = k & 1 ? SDLK_UP : SDLK_DOWN; stream_folha_evento(&e); quadros(5); }
+    vt_relatar("detail-sources", 0);
+    return vtFalhas ? 1 : 0;
   }
 
   if (quer(argc, argv, "filme-topo")) { abrir(1, 0, 0, 0); gravar("filme-topo"); }
@@ -490,8 +521,21 @@ int main(int argc, char **argv) {
   if (quer(argc, argv, "filme-fim")) { abrir(1, 1, SEC_DETALHES, 0); gravar("filme-fim"); }
   if (quer(argc, argv, "serie-topo")) { abrir(0, 0, 0, 0); gravar("serie-topo"); }
   if (quer(argc, argv, "serie-ep")) { abrir(0, 1, SEC_EPISODIOS, 2); gravar("serie-ep"); }
-  if (quer(argc, argv, "serie-temp")) { abrir(0, 1, SEC_TEMPORADAS, 0); gravar("serie-temp"); }
+  if (quer(argc, argv, "serie-temp")) { abrir(0, 1, SEC_TEMPORADAS, 1); gravar("serie-temp"); }
   if (quer(argc, argv, "serie-baixo")) { abrir(0, 1, SEC_ELENCO, 0); gravar("serie-baixo"); }
+  // O botao "Assistir do comeco" (temInicio + layout agrupado, o da TV)
+  // ganhando o foco: TRES QUADROS NO MEIO da animacao. A pilula abre
+  // primeiro e o rotulo entra DEPOIS, inteiro — nunca cortado palavra por
+  // palavra pela largura em crescimento (anim_expande). Sem o SDL_DELAY o
+  // quadro e rapido demais e a animacao assenta antes da captura.
+  if (quer(argc, argv, "serie-inicio")) {
+    abrir(0, 0, 0, 0);                     // assenta com o foco no botao primario
+    botao = 1;                             // foco vai para o "Assistir do comeco"
+    SDL_Delay(80);  quadros(1); gravar("serie-inicio-1");   // largura no meio
+    SDL_Delay(80);  quadros(1); gravar("serie-inicio-2");   // largura no fim, sem rotulo
+    SDL_Delay(60);  quadros(1); gravar("serie-inicio-3");   // rotulo entrando
+    quadros(30); gravar("serie-inicio-fim");
+  }
 
   SDL_GL_DeleteContext(gl);
   SDL_DestroyWindow(janela);

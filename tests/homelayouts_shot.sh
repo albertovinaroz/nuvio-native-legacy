@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # Home nos tres layouts (Moderna, Padrao, Dinamica), em BMP e PNG, sem rede
 # (artes de deploy/app/art). Nao entra na suite (testa-tudo.sh pula *_shot.sh):
 # precisa de janela GL e de olho humano.
@@ -9,7 +11,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-saida="${1:-/tmp/nv-home-layouts-shots}"
+saida="${1:-${TMPDIR:-/tmp}/nv-home-layouts-shots}"
 mkdir -p "$saida"
 NUVIO_DADOS=$(mktemp -d "${TMPDIR:-/tmp}/nuvio-homelayouts-shot.XXXXXX")
 export NUVIO_DADOS

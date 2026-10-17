@@ -1365,7 +1365,7 @@ static void desenhaPainel(void) {
         xd = RP_X + RP_W - 30; if (xd > NV_TELA_W - 200.0f) xd = NV_TELA_W - 200.0f;
         yc = 64.0f;
         // over the wallpaper, not the panel: a dark backing keeps it legible
-        gfx_cor((GfxRect){ xd - pw, yc - 20, pw, 40 }, 0.5f, 0.05f, 0.055f, 0.067f, 0.82f);
+        gfx_cor((GfxRect){ xd - pw, yc - 20, pw, 40 }, 0.5f, 0.05f, 0.055f, 0.067f, 0.82f); // vidro-ok: legibility backing over wallpaper
       }
       gfx_cor((GfxRect){ xd - pw, yc - 20, pw, 40 }, 0.5f, ar, ag, ab, 0.20f);
       rgIconeCor("aj_pause", xd - pw + 16, yc - 9, 18, ar, ag, ab, 1);
@@ -1515,7 +1515,7 @@ static void desenhaAviso(void) {
         GfxRect k = { kx + i * 100, ky, 86, 40 };
         if (!i) {
           gfx_cor((GfxRect){ k.x - 7, k.y - 7, k.w + 14, k.h + 14 }, 0.5f, 1, 1, 1, 0.85f);
-          gfx_cor((GfxRect){ k.x - 4, k.y - 4, k.w + 8, k.h + 8 }, 0.5f, 0.055f, 0.059f, 0.071f, 0.9f);
+          gfx_cor((GfxRect){ k.x - 4, k.y - 4, k.w + 8, k.h + 8 }, 0.5f, 0.055f, 0.059f, 0.071f, 0.9f); // vidro-ok: knob ring
           gfx_cor(k, 0.5f, C[i][0], C[i][1], C[i][2], 1);
           { TxtLinha l = rgT(TXT_G14B, "Registro"); txt_desenhar(l, k.x + (86 - l.w) * 0.5f, k.y + 40 + 10); }
         } else gfx_cor(k, 0.5f, C[i][0], C[i][1], C[i][2], 0.38f);

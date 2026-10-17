@@ -85,6 +85,12 @@ void ling_conta_audio(const char *code) { (void)code; }
 const char *ling_legenda(void) { return ""; }
 const char *ling_audio(void) { return ""; }
 const char *ling_conta_audio_valor(void) { return ""; }
+const char *ling_audio2(void) { return ""; }
+const char *ling_conta_audio2_valor(void) { return ""; }
+void ling_conta_audio2(const char *code) { (void)code; }
+void ling_local_audio2(const char *code) { (void)code; }
+int perfis_ativo(void) { return 1; }
+void legenda2_atualizar_offset_manual(int ms) { (void)ms; }
 const char *ling_conta_legenda_valor(void) { return ""; }
 const char *ling_conta_legenda2_valor(void) { return ""; }
 

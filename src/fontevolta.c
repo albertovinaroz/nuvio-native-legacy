@@ -28,6 +28,12 @@ void fontevolta_guardar(const char *alvo, const char *conta, int perfil,
   fflush(stdout);
 }
 
+int fontevolta_toca_guardada(int escolherManual, int falhaAtiva,
+                              int canal, int playerAberto) {
+  if (escolherManual || falhaAtiva || canal || !playerAberto) return 0;
+  return 1;
+}
+
 int fontevolta_pegar(const char *alvo, const char *conta, int perfil,
                      Uint32 agora, Stream *saida) {
   const char *por = NULL;

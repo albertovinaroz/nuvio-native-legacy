@@ -8,6 +8,7 @@
 // atualizacoes, corviva_quadro (UMA vez, antes do desenho) e so entao o
 // desenho — que e quem pede a cor do quadro seguinte.
 #include "ajustes.h"
+#include "nvtmp.h"
 #include "artehero.h"
 #include "catalogo.h"
 #include "corviva.h"
@@ -108,7 +109,7 @@ static void tema(int t) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nuvio-corviva";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nuvio-corviva");
   static CatItem itens[NT];
   CatFileira fil;
   SDL_GLContext gl;

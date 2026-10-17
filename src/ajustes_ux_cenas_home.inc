@@ -84,8 +84,9 @@ static void ajcHDestaque(int op) {
 // Espaco entre fileiras / entre titulos: o valor real, com a regua no vao.
 static void ajcHEspaco(int op) {
   int fil = op == AJ_ESPACO_FILEIRAS, i, j;
-  float f = valor[op] > 0 ? (valor[op] < 50 ? 50 : valor[op] > 150 ? 150 : valor[op]) / 100.0f : 1.0f;
-  float g = (fil ? 6.0f + 24.0f * (f - 0.5f) : 6.0f + 28.0f * (f - 0.5f)) + 3.0f * (ajc_onda(2.4f) - 0.5f);
+  float f = valor[op] > 0 ? ajustes_espaco_fator(valor[op]) : 1.0f;
+  // 50..300 % cabe na tela da previa: 3 fileiras ate 34 px, 5 cartazes ate 49.
+  float g = (fil ? 4.0f + 12.0f * (f - 0.5f) : 4.0f + 18.0f * (f - 0.5f)) + 3.0f * (ajc_onda(2.4f) - 0.5f);
   char b[16];
   ajcHTela(60, 24, 520, 280, 1);
   if (fil) {
@@ -111,7 +112,7 @@ static void ajcHEspaco(int op) {
     ajc_icone("aj_move-horizontal", 86 + w + g * 0.5f, 52 + 14 + 42, g > 20 ? 18 : 12, 1);
   }
   snprintf(b, sizeof b, "%d%%", (int)(f * 100.0f + 0.5f));
-  ajcHNum(b, 22, 270, 322, 1);
+  ajcTextoVivo(b, 22, 1, 270, 322, 1);
 }
 // Barra lateral moderna: icones pequenos (antiga) contra ladrilhos grandes.
 static void ajcHRailModerna(int op) {
@@ -217,6 +218,81 @@ static void ajcHRailBlur(int op) {
   }
   ajcHSeta(320, 164);
   ajcChaveCanto(ajcLig(op));
+}
+// Botao de microfone na busca (.tpk): a barra da busca (a da cena do Cinemeta)
+// com o microfone no acento ao lado do celular. O laco mostra o que ele faz: o
+// teclado da Samsung aparece, o microfone do controle ouve, o texto chega no
+// campo e o teclado some. Os valores ficam no seletor da propria tela, por
+// cima do canto de baixo: Automatico ganha o selo de "a TV tem microfone";
+// Desligado tira o botao (fica a vaga vazia) e o laco, e o controle apaga.
+static void ajcHMicBusca(int op) {
+  int p = ajc_passo(1.2f, 4), letras, i;
+  float t = ajc_passo_t(1.2f);
+  float tem = ajcHK(2.0f - ajcValor(op));    // 1 com o botao (Automatico, Ligado), 0 Desligado
+  float autoK = ajcHK(1.0f - ajcValor(op));  // 1 so no Automatico
+  float sobe = p == 1 ? t : p == 2 ? 1.0f : p == 3 ? 1.0f - t : 0.0f;
+  float ouve = p == 2 ? tem : 0.0f, ctl = 0.3f + 0.7f * tem;
+  letras = tem > 0.5f && p == 3 ? 1 + (int)(t * 6.0f) : 0;
+
+  // A barra da busca: lupa, o que chegou (ou o texto apagado do vazio) e o
+  // cursor; no fim, microfone e celular, o mesmo par da tela de verdade.
+  ajc_painel(40, 30, 560, 56, 28, 1);
+  ajc_icone("aj_search", 74, 58, 22, 0.9f);
+  if (letras) { for (i = 0; i < letras; i++) ajc_ret(100 + i * 18, 50, 12, 16, 3, 1, 1, 1, 0.8f); }
+  else ajc_barra(100, 54, 170, 0.22f);
+  ajc_ret(100 + letras * 18, 46, 2, 24, 1, 1, 1, 1, ajc_onda(0.8f) > 0.5f ? 0.9f : 0.1f);
+  ajc_bolinha(566, 58, 40, 0.18f, 0.185f, 0.205f, 1);
+  ajc_icone("aj_smartphone", 566, 58, 19, 0.85f);
+  if (tem < 0.99f) {   // Desligado: a vaga do botao, vazia
+    gfx_anel(ajc_r(492, 38, 40, 40), 0.5f, ajc_px(1.5f), 1, 1, 1, 0.22f * (1 - tem) * C.a);
+    ajc_icone("aj_eye-off", 512, 58, 16, 0.45f * (1 - tem));
+  }
+  if (tem > 0.01f) {
+    ajc_bolinha(512, 58, 40, C.ar, C.ag, C.ab, tem);
+    ajc_icone_tinta("aj_mic", 512, 58, 19, tem);
+    ajc_foco(492, 38, 40, 40, 20, tem * (0.5f + 0.5f * ajc_onda(2.4f)));
+  }
+
+  // O controle: o botao do microfone no alto (no acento enquanto ouve, com as
+  // ondas), o direcional e dois botoes. No Automatico, o selo de que a TV tem
+  // microfone.
+  ajc_ret(70, 132, 48, 186, 24, 0.10f, 0.105f, 0.12f, ctl);
+  gfx_anel(ajc_r(70, 132, 48, 186), 24.0f / 186.0f, ajc_px(1.5f), 1, 1, 1, 0.14f * ctl * C.a);
+  ajc_bolinha(94, 160, 24, 0.18f, 0.185f, 0.205f, ctl * (1 - ouve));
+  ajc_bolinha(94, 160, 24, C.ar, C.ag, C.ab, ouve);
+  if (ouve > 0.5f) ajc_icone_tinta("aj_mic", 94, 160, 13, ouve);
+  else ajc_icone("aj_mic", 94, 160, 13, 0.85f * ctl);
+  for (i = 0; i < 3 && ouve > 0.01f; i++) {
+    float ph = fmodf(ajc_fase(1.2f) + i / 3.0f, 1.0f);
+    gfx_anel_fora(ajc_r(82, 148, 24, 24), 0.5f, ajc_px(4 + ph * 22), ajc_px(2), C.ar, C.ag, C.ab,
+                  (1 - ph) * 0.5f * ouve * C.a);
+  }
+  gfx_anel(ajc_r(77, 206, 34, 34), 0.5f, ajc_px(2), 1, 1, 1, 0.30f * ctl * C.a);
+  ajc_bolinha(94, 223, 12, 1, 1, 1, 0.30f * ctl);
+  ajc_bolinha(83, 268, 10, 1, 1, 1, 0.22f * ctl);
+  ajc_bolinha(105, 268, 10, 1, 1, 1, 0.22f * ctl);
+  if (autoK * tem > 0.01f) {
+    ajc_bolinha(116, 136, 22, C.ar, C.ag, C.ab, autoK * tem);
+    ajc_icone_tinta("aj_check", 116, 136, 13, autoK * tem);
+  }
+
+  // O teclado da Samsung, so durante o laco: aparece subindo um pouco (sem
+  // chegar ao seletor de valores do canto de baixo), tres fileiras de teclas e
+  // a de baixo com o espaco e o microfone dele (no acento enquanto ouve).
+  if (sobe * tem > 0.01f) {
+    float kx = 168, ky = 156 - 20 * sobe, ka = sobe * tem;
+    ajc_painel(kx, ky, 330, 140, 18, ka);
+    ajc_vidro(kx, ky, 330, 140, 18, 0.5f * ka);
+    ajc_icone("aj_keyboard", kx + 22, ky + 18, 16, 0.6f * ka);
+    for (i = 0; i < 27; i++)
+      ajc_neutro(kx + 16 + (i % 9) * 34, ky + 32 + (i / 9) * 26, 28, 20, 5, ka);
+    ajc_neutro(kx + 50, ky + 110, 196, 22, 6, ka);
+    ajc_ret(kx + 254, ky + 108, 60, 26, 8, 0.17f, 0.18f, 0.21f, ka * (1 - ouve));
+    ajc_acento_ret(kx + 254, ky + 108, 60, 26, 8, ka * ouve);
+    if (ouve > 0.5f) ajc_icone_tinta("aj_mic", kx + 284, ky + 121, 14, ka);
+    else ajc_icone("aj_mic", kx + 284, ky + 121, 14, 0.85f * ka);
+  }
+  if (ouve > 0.01f) ajc_icone("aj_audio-lines", 143, 160, 18, (0.4f + 0.5f * ajc_onda(0.6f)) * ouve);
 }
 // Relogio na tela: o canto de cima, em close.
 static void ajcHRelogio(int op) {
@@ -346,6 +422,24 @@ static void ajcHSelo(int op) {
     }
   }
   ajc_icone("aj_eye", 320, 282, 22, 0.5f + 0.5f * k);
+  ajcChaveCanto(k);
+}
+// Ocultar filmes assistidos: o cartaz marcado sai da descoberta e fecha o vao.
+static void ajcHOcultarVistos(int op) {
+  float k = ajcLig(op), p = k * ajc_onda(3.0f);
+  int i;
+  ajcHTela(60, 24, 520, 280, 1);
+  ajc_barra(86, 52, 80, 0.5f);
+  for (i = 0; i < 5; i++) {
+    float x = 86 + i * 94 - (i > 2 ? p * 94 : 0);
+    float a = i == 2 ? 1 - p : 1;
+    ajcHBloco(x, 72, 82, 130, i, a);
+    if (i == 2) {
+      ajc_bolinha(x + 66, 88, 24, C.ar, C.ag, C.ab, a);
+      ajc_icone_tinta("aj_check", x + 66, 88, 15, a);
+    }
+  }
+  ajc_icone("aj_eye-off", 330, 250, 30, 0.3f + 0.7f * p);
   ajcChaveCanto(k);
 }
 // Rotulos: o nome escrito abaixo do cartaz.
@@ -717,13 +811,11 @@ static void ajcHVidroOpac(void) {
   }
   ajc_progresso(40, 308, 560, (float)at / 4.0f, 1);
 }
-// Tamanho da interface: o player e seus avisos crescem de 100 a 150 por cento.
+// Preview every size, using the same factors as the actual interface.
 static void ajcHTamanhoUi(void) {
-  static const float E[4] = { 1.0f, 1.2f, 1.3f, 1.5f };
-  static const char *const T[4] = { "100%", "120%", "130%", "150%" };
-  float v = ajcHK(ajcValor(AJ_TAMANHO_UI) / 3.0f) * 3.0f, e, by;
-  int m0 = (int)v, m1 = m0 < 3 ? m0 + 1 : 3;
-  e = ajcHMix(E[m0], E[m1], v - m0);
+  float v = ajcHK(ajcValor(AJ_TAMANHO_UI) / 8.0f) * 8.0f, e, by;
+  int m0 = (int)v, m1 = m0 < 8 ? m0 + 1 : 8;
+  e = ajcHMix(ui_size_choice(m0, tamanhoUiAutomatico()), ui_size_choice(m1, tamanhoUiAutomatico()), v - m0);
   by = 334 - 12 * e - 34 * e;
   ajc_video(0, 0, 640, 360, 0, 1);
   ajc_veu(0, 200, 640, 160, 0, 0.8f);
@@ -738,7 +830,7 @@ static void ajcHTamanhoUi(void) {
   ajc_icone("aj_rotate-ccw-clock", 320 - 80 * e, by, 28 * e, 0.9f);
   ajc_icone("aj_volume-2", 320 + 80 * e, by, 28 * e, 0.9f);
   ajc_icone("aj_captions", 320 + 124 * e, by, 28 * e, 0.9f);
-  ajcSelo(T[(int)(v + 0.5f)], 28, 62, 16, 1.0f, 1);
+  ajcSelo(i18n(V_TAMANHO_UI[(int)(v + 0.5f)]), 28, 62, 16, 1.0f, 1);
 }
 // Tamanho dos ajustes: a lista e o painel dos proprios Ajustes, menores ou maiores.
 static void ajcHTamanhoAj(void) {
@@ -826,6 +918,7 @@ static int ajcNovaHome(int sec, int op) {
     case AJ_MENU_AGENDA: ajcHMenuItem(op, "aj_calendar"); return 1;
     case AJ_MENU_PERFIL: ajcHMenuItem(op, "aj_user-round"); return 1;
     case AJ_RAIL_BLUR: ajcHRailBlur(op); return 1;
+    case AJ_MIC_BUSCA: ajcHMicBusca(op); return 1;
     case AJ_RELOGIO: ajcHRelogio(op); return 1;
     case AJ_RELOGIO_12H: ajcHRelogio12(op); return 1;
     case AJ_FIL_ORDEM: ajcHOrdem(); return 1;
@@ -834,6 +927,7 @@ static int ajcNovaHome(int sec, int op) {
     case AJ_OCULTAR_NLANC: ajcHNaoLancados(op); return 1;
     case AJ_NOTAS_HOME: ajcHNotas(op); return 1;
     case AJ_SELO_VISTO: ajcHSelo(op); return 1;
+    case AJ_OCULTAR_FILMES_VISTOS: ajcHOcultarVistos(op); return 1;
     case AJ_ROTULOS: ajcHRotulos(op); return 1;
     case AJ_ROTULO_POS: ajcHRotuloPos(); return 1;
     case AJ_LOGO_CARDS: ajcHLogoCards(); return 1;

@@ -37,6 +37,10 @@ enum { ILHA_INFO = 0, ILHA_OK, ILHA_ERRO, ILHA_ACENTO };
 // "abre" na ponta direita.
 void ilha_avisar(const char *chave, int tipo, const char *icone,
                  const char *texto, unsigned ms, int tecla);
+// Fecha a abertura anterior: tira avisos, cartoes, atividade e pedidos
+// privados. Mantem avisos identificados do aparelho (atualizacao/queda/rede)
+// e a configuracao de posicao do relogio. Nao cancela a atualizacao em curso.
+void ilha_abrir_sessao(void);
 // Tira o aviso desta chave da tela e da fila (ex.: a central foi aberta).
 void ilha_retirar(const char *chave);
 // 1 enquanto o aviso desta chave esta na tela ou na fila.
@@ -235,6 +239,7 @@ typedef struct {
   char avisoId[72];      // ILHA_ESTREIA: id do aviso em avisos.c
   char pessoa[64], rosto[256];   // ILHA_AMIGO: nome e avatar de quem esta vendo
 } IlhaCartao;
+int ilha_retomar_focado(IlhaCartao *c);
 // NULL tira o cartao. A copia e da ilha; quem chama pode descartar o seu.
 void ilha_cartao(int qual, const IlhaCartao *c);
 // Troca de identidade: apaga este cartao e suas copias no modal, no pedido e
@@ -284,6 +289,8 @@ int  ilha_minimizando(void);
 // quadro: e de onde o painel de Salvos nasce e para onde ele recolhe. 0 quando
 // a ilha nao esta na tela.
 int  ilha_rect(float *x, float *y, float *w, float *h);
+// Largura do relogio em pixels reais, incluindo recuos e ponto de enquete.
+float ilha_relogio_largura(void);
 // 1 = outra superficie nasceu da pilula e esta no lugar dela (o painel de
 // Salvos): a ilha continua medindo, mas nao se desenha. Vale um quadro.
 void ilha_coberta(int coberta);

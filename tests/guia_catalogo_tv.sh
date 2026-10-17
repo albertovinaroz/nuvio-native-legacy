@@ -1,7 +1,9 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-work=$(mktemp -d /tmp/nuvio-guia-catalogo-tv.XXXXXX)
+work=$(mktemp -d ${TMPDIR:-/tmp}/nuvio-guia-catalogo-tv.XXXXXX)
 trap 'rm -rf "$work"' EXIT
 flags=(-ffunction-sections -fdata-sections)
 if [ "$(uname -s)" = Darwin ]; then flags+=(-Wl,-dead_strip); else flags+=(-Wl,--gc-sections); fi

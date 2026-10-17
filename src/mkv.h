@@ -134,6 +134,16 @@ double mkv_creditos_ultimo(const MkvCap *caps, int n);
 int mkv_capitulos_alem(const char *url, const unsigned char *cab, long cabN,
                        MkvCap *caps, int maxCaps, int *status);
 
+// O Tracks que a sonda NAO alcancou (#483): remux remontado (mkvpropedit)
+// com Attachments grande ou o primeiro Cluster na frente deixa o Tracks fora
+// do trecho, toda legenda sai "codec=?" e a faixa ASS volta ao renderizador
+// da TV — texto simples, falas caindo. Quando o SeekHead do cabecalho diz
+// onde o Tracks mora, UM pedido busca o elemento inteiro. Le DEPOIS de
+// mkv_faixas_e_caps / mkv_faixas_do_trecho (usa o SeekHead que elas leram);
+// devolve 0 sem tocar a rede quando o SeekHead nao aponta ou o Tracks ja veio
+// inteiro. BLOQUEIA: chamar de fio proprio.
+int mkv_tracks_alem(const char *url, MkvFaixa *saida, int max, int *status);
+
 // Capitulo de ABERTURA pelo nome ("Opening", "OP", "Intro", "Abertura"): [ini,
 // fim) vai ate o inicio do capitulo seguinte. 0 = nao ha.
 int mkv_intro_nomeada(const MkvCap *caps, int n, double *ini, double *fim);

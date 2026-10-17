@@ -524,6 +524,8 @@ void contalib_esquecer(void) {
   free(vistos);
   vistos = NULL;
   nVistos = 0;
+  vistosPuxadoEm = 0;
+  vistosRev++;
   pthread_mutex_unlock(&vistosTrava);
   temConta = 0;
   aplicado = 0;

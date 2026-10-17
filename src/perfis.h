@@ -41,6 +41,8 @@ typedef struct {
 // Devolve quantos achou. Zero NAO e erro: conta nova pode nao ter perfil
 // nenhum criado, e nesse caso o app opera com o perfil 1 implicito.
 int perfis_puxar(void);
+// Dispatch-time identity: responses from an older visit are discarded.
+int perfis_puxar_sessao(uint64_t sessao, const char *usuario, const char *jwt);
 
 int           perfis_n(void);
 const ContaPerfil *perfis_item(int i);
@@ -55,14 +57,18 @@ int  perfis_ativo(void);                // profile_index; 1 quando nada escolhid
 // perfil herda os do primario (uses_primary_plugins), e ai e 1.
 int  perfis_ativo_addons(void);
 void perfis_definir_ativo(int indice);
-// Visita ao perfil/conta: reconfirmar o mesmo indice tambem abre outra visita.
-// O hook encerra o preparo antigo antes da troca, fora da trava de publicacao.
-void perfis_ao_abrir_sessao(void (*antes)(void));
-void perfis_invalidar_sessao(void);
+// A confirmed opening starts a new live session, including reopening the same
+// profile. Saved data belongs to the profile; asynchronous results also belong
+// to this particular visit. Publication guards never cover network requests.
 uint64_t perfis_sessao_geracao(void);
+// Account boundaries invalidate workers without confirming or bypassing a PIN.
+void perfis_invalidar_sessao(void);
 int perfis_sessao_atual(uint64_t geracao);
 int perfis_sessao_travar(uint64_t geracao);
 void perfis_sessao_destravar(void);
+// Called on the UI thread before changing the active identity. Playback can
+// finish and save progress under the profile that is leaving.
+void perfis_ao_abrir_sessao(void (*antes)(void));
 // Le do disco o perfil ativo E A LISTA DE PERFIS DA ULTIMA SESSAO. Chamar uma
 // vez no arranque, antes de app_iniciar.
 //

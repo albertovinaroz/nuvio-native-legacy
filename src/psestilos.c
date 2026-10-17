@@ -264,9 +264,8 @@ static void desenharLuz(const PSCena *c, float alfa) {
   { float vx = NV_TELA_W * 0.82f + cosf(t * 0.22f) * 80.0f, vy = 80.0f + sinf(t * 0.27f) * 60.0f, r = 960.0f;
     gfx_rect((GfxRect){ vx - r, vy - r, r * 2.0f, r * 2.0f }, 0, GFX_SOMBRA, 1.0f, 0, 0, 0.5f,
              c->luz[3], c->luz[4], c->luz[5], 0.30f * alfa); }
-  // Horizonte: uma linha de luz que some nas pontas.
-  gfx_rect((GfxRect){ NV_TELA_W * 0.5f - 820.0f, 896.0f, 1640.0f, 6.0f }, 0, GFX_SOMBRA, 1.0f, 0, 0, 0.5f,
-           c->luz[0], c->luz[1], c->luz[2], 0.55f * resp * alfa);
+  // #205: o dono tirou a linha de horizonte (a barra de luz comprida sob o
+  // bloco de perfis/continuar assistindo); so ela saiu, o resto ficou.
   veusBordas(0.60f, 0.65f, 0.55f, alfa);
   graoDesenhar(0.055f * alfa);
 }

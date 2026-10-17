@@ -1,8 +1,10 @@
   0, 0, 0,          /* qualidade, DV, Atmos */
   0,                /* idioma de legenda: 0 = seguir a conta */
-  // AUDIO NO ORIGINAL POR PADRAO (LING_OPC_ORIGINAL, o ULTIMO item de
-  // OPCOES_COD em linguas.c — ele fica no fim porque este arquivo grava o
-  // INDICE da opcao, e inserir no meio reinterpreta ajustes.txt ja salvo).
+  // AUDIO NO ORIGINAL POR PADRAO (LING_OPC_ORIGINAL, o indice do "~" em
+  // OPCOES_COD em linguas.c). Ele NAO e mais o ultimo item: os idiomas novos
+  // entram depois dele justamente para este indice nao mudar, porque este
+  // arquivo grava o INDICE da opcao e mover o "~" reinterpreta ajustes.txt ja
+  // salvo. Ver o comentario em linguas.c.
   // Pedido do dono: "o que eu quero que seja padrao e tocar o audio na
   // linguagem original". Antes era 0 = "Da conta", e uma conta com "Portugues"
   // salvo fazia o app pular para a dublagem sem ninguem ter pedido naquele
@@ -159,7 +161,7 @@
   0,                /* posteres personalizados: DESLIGADO (indice 0) */
   0, 0, 0, 0, 0, 0,/* endereco, token, parametros, chave, modelo, testar: acoes */
   0,                /* layout da home: Moderna (a de sempre) */
-  0, 0, 0, 0, 0,    /* chaves de debrid (AllDebrid, testar, RD, TB, PM): acoes */
+  0, 0, 0, 0, 0, 0, 0, 0, /* chaves e testes de debrid: acoes */
   1,                /* usar sempre o Cinemeta: DESLIGADO (V_LIGA: 1 = Desligado) -> catalogo primeiro */
   // Notas na linha do titulo: de fabrica so o que a linha ja mostrava antes de
   // existir a escolha (IMDb, Rotten Tomatoes, Trakt). V_LIGA: 0 = Ligado.
@@ -199,7 +201,7 @@
   0,                /* medidor de desempenho: DESLIGADO (V_MEDIDOR: 0 = Desligado) */
   0,                /* guia de uso: acao */
   0, 0, 0,          /* pacote de selos (espelho de selospacote_ativo), adicionar e remover: o embutido */
-  0,                /* tamanho da interface: 100%, o de sempre */
+  UI_SIZE_AUTO,     /* Untouched interface size follows the physical panel. */
   2,                /* fundo: Frost desde a 2.0 (FUNDO_FROST; dono, 05/10/2026) */
   2,                /* opacidade do vidro: 78%, a de sempre */
   0,                /* vidro fosco: desligado */
@@ -242,7 +244,11 @@
   0, /* default aspect ratio: Ultimo usado */
   1, /* also in Continue watching (2.0.2): Desligado (V_LIGA: 1 = Desligado) = one title, one place */
   0, /* continue on the profile picker (#303): Ligado (V_LIGA: 0 = Ligado) = as before */
+#ifdef NV_TPK
+  1, /* DTS/TrueHD on the Samsung .tpk: 5.1 (Dolby Digital) (0 = off, 2 = stereo AAC) */
+#else
   0, /* DTS converted to: Estereo (AAC) = the proven path */
+#endif
   1, /* Dolby Vision in MKV (2.0.2, experimental): Desligado */
   0, /* send history to the Nuvio account (2.0.2, per profile): Ligado */
   0, /* social features (2.0.2, per profile): Ligado */
@@ -255,6 +261,7 @@
   0, 0, /* search (#311): Nuvio results First; show the source on result groups: Ligado */
   0, /* Settings layout (#339): Painel = the card grid and the art beside the list */
   0, /* P2P space limit (#334): Automatico */
+  0, /* P2P cache location (#205): Interno */
   0, /* Source display order (#400): Por qualidade, local */
   0, /* Sincronia automática da legenda: Ligado, local */
   0, /* Mostrar no player (#425): Só meus idiomas; sem preferencia, todas */
@@ -268,7 +275,36 @@
   1, /* auto-skip credits, only with a real start+end marker: Desligado */
   5, /* owner decision #256: configurable countdown in seconds */
   0, /* interface mode: TV, including on phones until Mobile is selected */
+  0, /* Mic button in search (.tpk): Automatico, local */
+  0, /* menu position (#461): Na lateral, the rail as always */
+  0, /* collection tabs style (#205): Chips, as always */
+  0, /* Android keyboard: Automatico, the IME opens by itself as always */
+  0, /* subtitle outline colour (#475): Preto, as always */
   1, 0, /* provider failover off; order action */
   3, 3, 3, 3, /* total links per native provider */
   1, 0, 3, /* addon failover off; instance order action; total links */
+  0, 0, /* #492: warm resume ON; keep-alive duration 2 minutes */
+  0, /* live statistics size (#338): remember the last one */
+  1, /* hide watched movies (#366): Desligado, per profile on this device */
+  0, /* live statistics side: Direita */
+  0, /* remote tips: action */
+  0, /* show genre under the hero logo: Ligado, as always */
+  1, /* addon name on the Cinema opening (#205): Desligado, local */
+  0, 0, 0, 0, /* hero synopsis/ratings/year/runtime: Ligado, the look as always */
+  0, /* curation address (#205): action; the URL lives in curadoria.txt */
+  2, /* opening screen backdrop (#508): Arte borrada, as always, local */
+  0, /* hero synopsis size: Normal, the original 22/30 */
+  1, /* episode card size (#205): Medio, as always */
   1, /* video preload and next episode buffer: Desligado, independent source setting */
+  0, /* provider setup: shared legacy accounts; choice itself belongs to this profile */
+  0, /* Mural tile titles (#521): Ligado, as always, local */
+  0, /* friends row: Feed (9A) */
+  1, /* audio language in the automatic choice: off (V_LIGA 1), behaviour unchanged */
+  0, /* second audio language: Da conta */
+#ifdef NV_ANDROID
+  0, /* Baixar registro: acao local, sem preferencia gravada */
+#endif
+  0, 0, 0, /* shared exclusions parent, max-size view, release-group editor */
+  120, 0, 0, 0, 0, 3, 1, 0, 1, 0, 0, /* primary style views; player.txt is authoritative */
+  0, 0, 0, 0, 0, 0, 0, /* secondary appearance inherits primary, manual delay0 */
+  0, /* collection default view (#362): Automatic, existing layout */

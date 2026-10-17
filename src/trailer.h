@@ -57,6 +57,10 @@ int  trailer_cheia(void);
 // 1 quando ha video de fato tocando: so ai a pagina abre o furo — antes
 // disso mostrar um buraco preto seria pior que a arte.
 int  trailer_tocando(void);
+// #338: 1 enquanto um trailer toca DE VERDADE — e 0 na pausa da tela cheia
+// nativa, onde trailer_tocando continua preso em 1 (o medidor de desempenho
+// volta; ver trailer.c). O main alimenta desempenho_trailer com isto.
+int  trailer_medidor_esconde(void);
 // 1 quando o PLANO pode aparecer: quem desenha o furo (fundo, destaque, tela
 // cheia) pergunta isto alem de trailer_tocando. No .tpk (#178) o recorte do
 // zoom so e pedido ~800 ms depois de tocar; ate ele assentar o quadro inteiro

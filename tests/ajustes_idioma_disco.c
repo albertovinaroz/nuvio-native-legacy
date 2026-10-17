@@ -14,6 +14,7 @@
 // arranque) e confere o indice E o que chega em linguas.c, que e o que o
 // player consulta (ling_legenda/ling_audio).
 #include "../src/ajustes.c"
+#include "nvtmp.h"
 #include <assert.h>
 #include <unistd.h>
 
@@ -46,11 +47,20 @@ static int linhaDoArquivo(const char *caminho, const char *chave) {
 }
 
 int main(void) {
-  char dir[] = "/tmp/nuvio-aj-idioma-XXXXXX";
+  char dir[NVT_MAX]; nvt_set(dir, sizeof dir, "/nuvio-aj-idioma-XXXXXX");
   char caminho[700];
   FILE *f;
   int en = -1, es = -1, i;
   assert(mkdtemp(dir));
+  // Pasta de dados de verdade: as migracoes de marca (resolucao, aparencia,
+  // profundidade...) gravam a marca na primeira passagem e param de rodar —
+  // e o gravar() delas roda DEPOIS do idioma restaurado. Sem pasta, elas
+  // regravavam o arquivo em toda leitura e esconderiam a escrita errada de
+  // uma migracao anterior (a do som do trailer, #509).
+  { char dirDados[NVT_MAX]; nvt_set(dirDados, sizeof dirDados, "/nuvio-aj-dados-XXXXXX");
+    assert(mkdtemp(dirDados));
+    setenv("NUVIO_DADOS", dirDados, 1);
+    dados_iniciar(dirDados); }
   for (i = 0; i < ling_opcao_n(); i++) {
     if (!strcmp(ling_opcao_codigo(i), "en")) en = i;
     if (!strcmp(ling_opcao_codigo(i), "es")) es = i;
@@ -73,7 +83,7 @@ int main(void) {
   // Fork: as variantes moram depois do "~" no disco e ao lado da familia na tela.
   assert(ling_opcao_para_disco(LING_OPC_ORIGINAL) == 30);
   assert(!strcmp(ling_opcao_codigo(es + 1), "es-419"));
-  assert(ling_opcao_para_disco(es + 1) == 31);
+  assert(ling_opcao_para_disco(es + 1) == 34);
   for (i = 0; i < ling_opcao_n(); i++) assert(ling_opcao_de_disco(ling_opcao_para_disco(i)) == i);
 
   // A conta com outro idioma nao desfaz a escolha desta TV (linguas.c: a
@@ -134,6 +144,26 @@ int main(void) {
   reiniciarIdioma();
   ajustes_dir(dir);
   assert(valor[AJ_IDIOMA] == 8 && ajustes_idioma() == IDIOMA_ES);   // marca 0 = manual
+
+  // #509: migrating trailer sound must preserve language on disk and reload.
+  for (i = 0; i < 3; i++) {
+    escrever(caminho, i == 0 ?
+      "idioma 0\nidiomaAutoLocal 0\ntrailerDetalheSomLocal 0\n" : i == 1 ?
+      "idioma 0\ntrailerDetalheSomLocal 0\n" :
+      "idioma 0\nidiomaAutoLocal 1\ntrailerDetalheSomLocal 0\n");
+    reiniciarIdioma();
+    ajustes_dir(dir);
+    assert(ajustes_idioma() == IDIOMA_PT);
+    assert(linhaDoArquivo(caminho, "idioma") == IDIOMA_PT);
+    assert(linhaDoArquivo(caminho, "idiomaAutoLocal") == (i == 2));
+    assert(linhaDoArquivo(caminho, "trailerDetalheSomLocal") == 1);
+    assert(ajustes_trailer_som());
+    reiniciarIdioma();
+    ajustes_dir(dir);
+    assert(ajustes_idioma() == IDIOMA_PT);
+    assert((valor[AJ_IDIOMA] == 0) == (i == 2));
+    assert(ajustes_trailer_som());
+  }
 
   // (3) AUTOMATICO: o gravado e o ultimo resolvido (a TV abre nele), e a
   // conta corrige quando chega. Ordem: tmdb_language, depois legenda.
@@ -264,6 +294,36 @@ int main(void) {
   valor[AJ_TMDB_IDIOMA] = 13; assert(!strcmp(ajustes_tmdb_idioma(), "ru-RU"));
   valor[AJ_TMDB_IDIOMA] = 31; assert(!strcmp(ajustes_tmdb_idioma(), "zh-TW"));
   valor[AJ_TMDB_IDIOMA] = 0;
+
+  // ---- MIGRACAO idiomas-206 DO FORK ---------------------------------------
+  // A 2.0.5-b2 do fork gravava espanhol latino em 31 e portugues do Brasil em
+  // 32; na 2.0.6 31/32 sao croata/servio (upstream) e as variantes foram para
+  // 34/35. A migracao do fork leva 31 -> es-419 e 32 -> pt-br uma vez; 33
+  // (bosnio, que a b2 nao tinha) fica. Substitui o recuo -3 do upstream.
+  { char marca[700];
+    snprintf(marca, sizeof marca, "%s/idiomas-206.txt", getenv("NUVIO_DADOS"));
+    unlink(marca);
+    escrever(caminho, "legendaIdioma 31\naudioIdioma 32\nlegendaSecundariaIdioma 33\n");
+    reiniciarIdioma();
+    ajustes_dir(dir);
+    assert(!strcmp(ling_opcao_codigo(valor[AJ_LEG_LINGUA]), "es-419"));
+    assert(!strcmp(ling_opcao_codigo(valor[AJ_AUD_LINGUA]), "pt-br"));
+    assert(!strcmp(ling_opcao_codigo(valor[AJ_LEG_LINGUA2]), "bs"));
+    assert(linhaDoArquivo(caminho, "legendaIdioma") == 34);
+    assert(linhaDoArquivo(caminho, "audioIdioma") == 35);
+    // A marca impede segunda passagem: 31 lido de novo e croata.
+    escrever(caminho, "legendaIdioma 31\n");
+    reiniciarIdioma();
+    ajustes_dir(dir);
+    assert(!strcmp(ling_opcao_codigo(valor[AJ_LEG_LINGUA]), "hr"));
+    // Arquivo antigo (ate o indice 30) passa intacto, mesmo sem a marca.
+    unlink(marca);
+    escrever(caminho, "legendaIdioma 16\naudioIdioma 30\n");
+    reiniciarIdioma();
+    ajustes_dir(dir);
+    assert(!strcmp(ling_legenda(), "id"));
+    assert(valor[AJ_AUD_LINGUA] == LING_OPC_ORIGINAL);       // "~" intacto
+  }
 
   unlink(caminho);
   { char tmp[700]; snprintf(tmp, sizeof tmp, "%s/ajustes.tmp", dir); unlink(tmp); }

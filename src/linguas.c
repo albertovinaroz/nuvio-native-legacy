@@ -1,5 +1,6 @@
 #include "linguas.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -42,7 +43,7 @@ static const struct { const char *cod, *nome; } NOMES[] = {
   // tabela nao nomeava ("HRV", "BUL"...). So as familias de 2 letras: os
   // codigos de 3 letras e as variantes chegam aqui por familia() (ling_nome).
   { "hr", "Croata" },     { "bg", "Búlgaro" },   { "sk", "Eslovaco" },
-  { "sr", "Sérvio" },     { "sl", "Esloveno" },  { "et", "Estoniano" },
+  { "sr", "Sérvio" },     { "bs", "Bósnio" },    { "sl", "Esloveno" },  { "et", "Estoniano" },
   { "lv", "Letão" },      { "lt", "Lituano" },   { "ca", "Catalão" },
   { "eu", "Basco" },      { "gl", "Galego" },    { "is", "Islandês" },
   { "fa", "Persa" },      { "ms", "Malaio" },    { "tl", "Filipino" },
@@ -121,6 +122,11 @@ static const char *familia(const char *c, char *buf) {
     // #429: servo-croata. "hbs"/"sh" e o codigo conjunto que muitos MKV usam
     // para croata, servio e bosnio; ling_casa trata "sh" como os tres.
     { "bos","bs" },{ "hbs","sh" },
+    // #429: variantes regionais do conjunto servo-croata que MKV etiqueta com
+    // tracinho ("hbs-hrv", "hbs-srp"). Sem isto familia() devolvia "hbs" cru
+    // e ling_casa nao casava com preferencia "hr".
+    { "hbs-hrv","hr" },{ "hbs_hrv","hr" },{ "hbs-srp","sr" },{ "hbs_srp","sr" },
+    { "hbs-bos","bs" },{ "hbs_bos","bs" },
   };
   size_t i;
   for (i = 0; i < sizeof F / sizeof *F; i++)
@@ -131,6 +137,8 @@ static const char *familia(const char *c, char *buf) {
     for (k = 0; c[k] && c[k] != '-' && c[k] != '_' && k + 1 < 8; k++)
       d[k] = (char)(c[k] >= 'A' && c[k] <= 'Z' ? c[k] + 32 : c[k]);
     d[k] = 0;
+    for (i = 0; i < sizeof F / sizeof *F; i++)
+      if (!strcasecmp(d, F[i].cod)) return F[i].fam;
     return d; }
 }
 
@@ -217,8 +225,9 @@ int ling_afinidade(const char *cod, const char *pref) {
 
 // ------------------------------------------------------------ preferencias
 
-static char contaLeg[16], contaLeg2[16], contaAud[16];
-static char localLeg[16], localAud[16], localLeg2[16];
+static char contaLeg[16], contaLeg2[16], contaAud[16], contaAud2[16];
+static char localLeg[16], localAud[16], localLeg2[16], localAud2[16];
+static int contaAudLivre;
 
 // As sentinelas do web viram vazio (= sem filtro) ou "none" (= nenhuma).
 // "DEVICE"/"DEFAULT"/"ORIGINAL" dizem "deixe o arquivo decidir", que deste lado
@@ -237,10 +246,17 @@ static void guardar(char *dest, size_t n, const char *v) {
 
 void ling_conta_legenda(const char *v)  { guardar(contaLeg,  sizeof contaLeg,  v); }
 void ling_conta_legenda2(const char *v) { guardar(contaLeg2, sizeof contaLeg2, v); }
-void ling_conta_audio(const char *v)    { guardar(contaAud,  sizeof contaAud,  v); }
+void ling_conta_audio(const char *v) {
+  // Preserve the account's explicit unfiltered/original choice for the
+  // optional source chip, without changing playback's existing preferences.
+  contaAudLivre = v && (!strcmp(v, "*") || !strcasecmp(v, "original") || !strcasecmp(v, "off"));
+  guardar(contaAud, sizeof contaAud, v);
+}
+void ling_conta_audio2(const char *v)   { guardar(contaAud2, sizeof contaAud2, v); }
 const char *ling_conta_legenda_valor(void)  { return contaLeg; }
 const char *ling_conta_legenda2_valor(void) { return contaLeg2; }
 const char *ling_conta_audio_valor(void)    { return contaAud; }
+const char *ling_conta_audio2_valor(void)   { return contaAud2; }
 // A escolha LOCAL preserva o "*": "Todas" e uma decisao ("nao filtre"), nao a
 // ausencia de decisao. Tratar as duas como vazio fazia escolher "Todas" cair de
 // volta na preferencia da conta — ou seja, o ajuste nao obedecia.
@@ -254,6 +270,7 @@ static void guardarLocal(char *dest, size_t n, const char *v) {
 void ling_local_legenda(const char *v)  { guardarLocal(localLeg, sizeof localLeg, v); }
 void ling_local_audio(const char *v)    { guardarLocal(localAud, sizeof localAud, v); }
 void ling_local_legenda2(const char *v) { guardarLocal(localLeg2, sizeof localLeg2, v); }
+void ling_local_audio2(const char *v)   { guardarLocal(localAud2, sizeof localAud2, v); }
 
 // A escolha desta TV ganha da conta. Quem mexeu no aparelho quis mexer AQUI, e
 // ver a proxima sincronizacao desfazer isso e o tipo de comportamento que faz a
@@ -291,6 +308,18 @@ const char *ling_legenda2(void) {
   return localLeg[0] ? "" : contaLeg2;
 }
 const char *ling_audio(void)    { return emVigor(localAud, contaAud); }
+// O SEGUNDO IDIOMA DE AUDIO (secondary_preferred_audio_language do app
+// oficial): a mesma regra da segunda legenda acima.
+const char *ling_audio2(void) {
+  if (localAud2[0]) return emVigor(localAud2, contaAud2);
+  return localAud[0] ? "" : contaAud2;
+}
+
+const char *ling_audio_fonte(const char *padrao) {
+  const char *pref = ling_audio();
+  if (localAud[0] == '*' || localAud[0] == '~' || (!localAud[0] && contaAudLivre)) return pref;
+  return pref[0] ? pref : padrao ? padrao : "";
+}
 
 // ------------------------------------------------------------ lista da UI
 
@@ -311,35 +340,54 @@ const char *ling_audio(void)    { return emVigor(localAud, contaAud); }
 static const char *OPCOES_COD[] = {
   "", "*",
   "pt", "en", "es",
-  "de", "ar", "zh", "da", "ko", "fr", "el", "he", "nl", "hi", "hu", "id",
-  "it", "ja", "no", "pl", "ro", "ru", "sv", "th", "cs", "tr", "uk", "vi", "fi",
+  "de", "ar", "zh", "da", "ko", "fr", "el", "he", "nl", "hi", "hu",
+  "id", "it", "ja", "no", "pl", "ro", "ru", "sv", "th", "cs", "tr", "uk", "vi", "fi",
   // "~" = ORIGINAL DO TITULO. Nao e um idioma: e "descubra qual e o idioma
   // deste filme e toque esse". Quem resolve e ling_definir_original(), chamado
   // por quem abre o titulo; aqui so mora o marcador.
   //
-  // ELE FICA NO FIM, E ISSO NAO E ESTETICA — E COMPATIBILIDADE. O ajustes.txt
-  // grava o INDICE da opcao, nao o codigo ("aud_lingua 2"), entao inserir um
-  // item no meio desta lista REINTERPRETA o arquivo de quem ja atualizou:
-  // na 1.1.2 o "~" entrou no indice 2 e todo mundo que tinha audio "Portugues"
-  // (2) passava a ter "Original", quem tinha "Ingles" (3) passava a ter
-  // "Portugues", e assim por diante nos 28 idiomas — em audio E em legenda,
-  // que leem a MESMA lista. Foi pego na revisao antes de publicar.
+  // O ajustes.txt grava o INDICE da opcao, nao o codigo ("audioIdioma 30"),
+  // entao inserir um item no meio desta lista REINTERPRETA o arquivo de quem
+  // ja atualizou: na 1.1.2 o "~" entrou no indice 2 e todo mundo que tinha
+  // audio "Portugues" (2) passava a ter "Original", quem tinha "Ingles" (3)
+  // passava a ter "Portugues", e assim por diante nos 28 idiomas — em audio
+  // E em legenda, que leem a MESMA lista. Foi pego na revisao antes de
+  // publicar. Na revisao do #429 (2.0.6) quase aconteceu de novo: "hr",
+  // "sr" e "bs" entraram nos indices 16-18 e todo indice gravado >=16
+  // (id->hr, ..., fi->bs, ~->bs) trocava de idioma em silencio.
   //
-  // REGRA PARA QUEM MEXER AQUI: item novo entra NO FIM. Reordenar ou inserir no
-  // meio exige migracao do ajustes.txt, que hoje nao tem marca de versao.
+  // REGRA PARA QUEM MEXER AQUI: item novo entra NO FIM, DEPOIS do "~". O "~"
+  // NAO pode andar junto — mover ele regravaria o indice de quem tem audio no
+  // original (LING_OPC_ORIGINAL). Reordenar ou inserir no meio exige migracao
+  // do ajustes.txt, que hoje nao tem marca de versao.
   "~",
+  // #429 (2.0.6): croata, servio e bosnio, adicionados NO FIM pela regra
+  // acima. Ficam fora da ordem alfabetica de proposito — a ordem e
+  // compatibilidade, nao estetica.
+  "hr", "sr", "bs",
   // FORK: as variantes regionais que o filtro de fontes ja separa ("lat",
-  // "ptbr" em stream_idioma_codigo). Depois do "~", pela regra acima; na TELA
-  // elas aparecem ao lado da familia (ORDEM_UI).
+  // "ptbr" em stream_idioma_codigo). Depois dos do upstream, pela regra acima;
+  // na TELA elas aparecem ao lado da familia (ORDEM_UI em linguas.h). Na
+  // 2.0.5-b2 do fork estavam em 31/32 — ver a migracao em ajustes.c.
   "es-419", "pt-br"
 };
 #define LING_OPC_TOTAL ((int)(sizeof OPCOES_COD / sizeof *OPCOES_COD))
-typedef char nv_checa_disco_original[LING_OPC_TOTAL > LING_DISCO_ORIGINAL ? 1 : -1];
 // ORDEM_UI (linguas.h) cobre cada indice de OPCOES_COD uma vez, e o "~" fica no
-// LING_OPC_ORIGINAL.
+// ultimo lugar da tela (LING_OPC_ORIGINAL).
 typedef char nv_checa_ordem_ui[LING_OPC_N == LING_OPC_TOTAL &&
                                LING_OPC_ORIGINAL == LING_OPC_TOTAL - 1 ? 1 : -1];
-int ling_opcao_n(void) { return LING_OPC_TOTAL; }
+int ling_opcao_n(void) {
+  // Trava do "~" no indice fixo DO DISCO (upstream, 2.0.6): C99 nao deixa
+  // conferir o CONTEUDO do vetor num typedef de arquivo, entao a guarda e esta
+  // checagem no arranque (rotulosDeIdioma chama aqui antes de ler o
+  // ajustes.txt). Quem mover o "~" descobre no primeiro boot do proprio build.
+  if (OPCOES_COD[LING_DISCO_ORIGINAL][0] != '~') {
+    fprintf(stderr, "[linguas] \"~\" fora do indice %d: lista reordenada sem "
+            "migracao do ajustes.txt\n", LING_DISCO_ORIGINAL);
+    abort();
+  }
+  return LING_OPC_TOTAL;
+}
 const char *ling_opcao_codigo(int i) {
   return (i >= 0 && i < LING_OPC_TOTAL) ? OPCOES_COD[ling_opcao_para_disco(i)] : "";
 }

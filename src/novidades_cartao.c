@@ -14,6 +14,7 @@
 // CUSTO DE GPU: nenhuma passada de desfoque; artes do pacote, veus e
 // retangulos pequenos (a copia desfocada do gfx_desfocado e feita uma vez).
 #include "novidades_cartao.h"
+#include "dicascontrole.h"
 #include "novidades201.h"
 #include "novidades202.h"
 #include "apoio.h"
@@ -84,7 +85,7 @@ typedef struct {
 } NovCena;
 
 typedef struct {
-  const char *versao;     // "2.0.5" (o titulo e "Novidades da %s")
+  const char *versao;     // "2.0.6" (o titulo e "Novidades da %s")
   const char *arquivo;    // a marca de "ja visto" (dados_*)
   const char *subtitulo;  // uma frase embaixo do titulo
   const NovItem *itens;
@@ -139,7 +140,7 @@ __attribute__((unused)) static float lerp(float a, float b, float t) { return a 
 
 // O vidro escuro das ilhas: miolo quase opaco e um fio claro na borda.
 __attribute__((unused)) static void vidro(GfxRect r, float raioPx, float a) {
-  gfx_cor(r, raioPx / r.h, 0.070f, 0.073f, 0.082f, 0.90f * a);
+  gfx_vidro_ou_solido(r, raioPx / r.h, GFX_VIDRO_DENS, a, 0.070f, 0.073f, 0.082f, 0.90f);
   gfx_anel(r, raioPx / r.h, 1.0f, 1, 1, 1, 0.09f * a);
 }
 
@@ -176,7 +177,7 @@ __attribute__((unused)) static void novArteDesfocada(int numero, GfxRect r, floa
 
 // ======================================================= O CONTEUDO DA VERSAO
 // Para a proxima versao: um src/novidades/<versao>.inc novo, trocado aqui.
-#include "novidades/205.inc"
+#include "novidades/206.inc"
 #define CT NOV_ATUAL
 
 static const char *artePorNumero(int n) {
@@ -394,6 +395,7 @@ void novcartao_decidir(int homePronta, int playerAberto, int detalheAberto) {
 static void fechar(void) {
   aberto = 0;
   dados_gravar(CT.arquivo, "1\n");
+  dicascontrole_depois_novidades();
 }
 
 static void irPagina(int p) {
@@ -453,7 +455,7 @@ static void desenhaPrevia(float x, float y, float a) {
   GfxRect p = { x, y, PV_W, PV_H };
   float total = 0.0f, ini = 0.0f, dentro, dur, e;
   int i, agora = 0, antes;
-  gfx_cor(p, PV_RAIO / p.h, 0.055f, 0.058f, 0.068f, a);
+  gfx_vidro_ou_solido(p, PV_RAIO / p.h, GFX_VIDRO_DENS_MODAL, a, 0.055f, 0.058f, 0.068f, 1.0f);
   if (nCen <= 0) { gfx_anel(p, PV_RAIO / p.h, 1.0f, 1, 1, 1, 0.07f * a); return; }
   for (i = 0; i < nCen; i++) total += duracaoCena(i);
   { float tc = fmodf(relogio, total);
@@ -730,7 +732,7 @@ static void desenharCorpo(void) {
     ajustes_acento(&ar, &ag, &ab);
     gfx_rect((GfxRect){ c.x - 40.0f, c.y - 20.0f, c.w + 80.0f, c.h + 70.0f }, 0, GFX_SOMBRA, 1.0f, 0, 0, 0.12f,
              0, 0, 0, 0.6f * a);
-    gfx_cor(c, N_RAIO / altura, 0.052f, 0.055f, 0.064f, 0.96f * a);
+    gfx_vidro_ou_solido(c, N_RAIO / altura, GFX_VIDRO_DENS_MODAL, a, 0.052f, 0.055f, 0.064f, 0.96f);
     gfx_luz_canto(c, N_RAIO / altura, c.w * 0.78f, -c.h * 0.25f, c.h * 0.95f, ar, ag, ab, 0.10f * a);
     gfx_anel(c, N_RAIO / altura, 1.2f, 1, 1, 1, 0.07f * a); }
 

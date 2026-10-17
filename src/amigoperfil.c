@@ -186,7 +186,8 @@ static void numero(GfxRect r, const char *valor, const char *rotulo, TxtEstilo e
   TxtLinha um = txt_linha(estilo, "Hg", 167, 164, 178, 255);
   float lead = (float)um.h + 2.0f;
   int n = rotuloLinhas(estilo, rotulo, lw);
-  gfx_cor(r, 18.0f / r.h, 0.118f, 0.114f, 0.141f, 0.94f * a);
+  if (ajustes_vidro()) gfx_vidro_painel(r, 18.0f / r.h, 0.72f, a);
+  else gfx_cor(r, 18.0f / r.h, 0.118f, 0.114f, 0.141f, 0.94f * a);
   txt_desenhar_alpha(v, r.x + 20.0f, r.y + (compacto ? 8.0f : 10.0f), a);
   txt_bloco_corta(estilo, rotulo, 167, 164, 178,
                   r.x + 20.0f, r.y + r.h - (compacto ? 10.0f : 12.0f) - lead * (float)n + 2.0f,

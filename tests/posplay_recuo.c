@@ -17,6 +17,34 @@ static int pedir(void) {
 }
 int main(void) {
   assert(posplay_roteiro() == 0);
+  // #470: accepted neighbour-episode credits must count from card opening,
+  // while 265 seconds of credits remain (Samsung reporter: 2309 / 2574).
+  ajustes_shot_valor("proximoContagemLocal", 12);
+  assert(posplay_contagem(1000, 0, 265, 1, 12) == 13000);
+  posplay_fechar(); aquecer(2574, 1);
+  posplay_atualizar(.016f, 1000, 2309, 2574, 1, 0, 1);
+  assert(posplay_visivel() && !pedir());
+  posplay_atualizar(.016f, 12999, 2320.999, 2574, 1, 0, 1);
+  assert(posplay_visivel() && !pedir());
+  posplay_atualizar(.016f, 13000, 2321, 2574, 1, 0, 1);
+  assert(!posplay_visivel() && pedir() && !pedir());
+  // Dismiss cancels the running countdown for the rest of this window.
+  posplay_fechar(); aquecer(2574, 1);
+  posplay_atualizar(.016f, 1000, 2309, 2574, 1, 0, 1);
+  assert(tecla(SDLK_AC_BACK) == 1);
+  posplay_atualizar(.016f, 14000, 2322, 2574, 1, 0, 1);
+  assert(!posplay_visivel() && !pedir());
+  // Autoplay off keeps the card manual throughout credits and EOF.
+  ajustes_shot_valor("proximoAutoLocal", 1);
+  posplay_fechar(); aquecer(2574, 1);
+  posplay_atualizar(.016f, 1000, 2309, 2574, 1, 0, 1);
+  posplay_atualizar(.016f, 14000, 2322, 2574, 1, 0, 1);
+  posplay_atualizar(.016f, 300000, 2574, 2574, 1, 0, 1);
+  assert(posplay_visivel() && !pedir());
+  assert(tecla(SDLK_RETURN) == 1 && pedir());
+  ajustes_shot_valor("proximoAutoLocal", 0);
+  ajustes_shot_valor("proximoContagemLocal", 5);
+  puts("posplay #470: countdown starts with card, dismiss and autoplay off preserved");
   abrirContagem();
   posplay_recuar(); posplay_aguardar_busca(1);
   posplay_atualizar(.016f, 6000, 2000, 3600, 1, 0, 0);
@@ -48,16 +76,14 @@ int main(void) {
   // da integracao, enquanto os creditos ainda estao rolando.
   ajustes_shot_valor("proximoContagemLocal", 12);
   posplay_fechar(); aquecer(3600, 1);
-  posplay_marcador_real(1);
   posplay_atualizar(.016f, 1000, 3500, 3600, 1, 0, 1);
   posplay_atualizar(.016f, 5000, 3504, 3600, 1, 0, 1);
-  posplay_atualizar(.016f, 16000, 3515, 3600, 1, 0, 1);
+  posplay_atualizar(.016f, 12000, 3511, 3600, 1, 0, 1);
   assert(posplay_visivel() && !pedir()); // 12 s, nao os 5 s fixos do PR
   posplay_recuar();
   posplay_atualizar(.016f, 18000, 3514, 3600, 1, 0, 1);
   assert(posplay_visivel() && !pedir());
   assert(tecla(SDLK_RETURN) == 1 && pedir());
-  posplay_marcador_real(0);
   // Pedido ja consumido nao pode ressuscitar o cartao ao cancelar uma busca.
   abrirContagem();
   posplay_atualizar(.016f, 4100, 3600, 3600, 1, 0, 1);

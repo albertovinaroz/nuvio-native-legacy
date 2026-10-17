@@ -13,9 +13,11 @@
 // nuvem, catalogo. STDOUT E CAPTURADO e conferido no fim: nenhum token pode
 // aparecer no que os modulos imprimem. O progresso do teste sai por stderr.
 #include "../src/visto.h"
+#include "nvtmp.h"
 #include "../src/vistoep.h"
 #include "../src/simkl.h"
 #include "../src/trakt.h"
+#include "../src/sessao.h"
 #include <assert.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -33,6 +35,11 @@ void marco(const char *m) { (void)m; }
 static const char *tokenSimkl = "";
 static int logada = 1;
 const char *simklauth_token(void) { return tokenSimkl; }
+unsigned long long simklauth_credencial_copiar(char *dst, size_t tam) {
+  if (dst && tam) snprintf(dst, tam, "%s", tokenSimkl);
+  return 1;
+}
+int simklauth_invalidar_se(unsigned long long cred) { (void)cred; tokenSimkl = ""; return 1; }
 const char *nuvem_simkl_cliente(void) { return "cid-teste"; }
 const char *nuvem_simkl_app(void) { return "nuvio"; }
 const char *nuvem_trakt_cliente(void) { return "cli-trakt"; }
@@ -43,6 +50,19 @@ int sessao_logada(void) { return logada; }
 const char *sessao_usuario(void) { return "usuario-teste"; }
 char *contacache_ler(const char *s, int p, const char *u, long *q) { (void)s; (void)p; (void)u; (void)q; return NULL; }
 int perfis_ativo(void) { return 2; }
+uint64_t perfis_sessao_geracao(void) { return 1; }
+int perfis_sessao_atual(uint64_t g) { return g == 1; }
+int perfis_sessao_travar(uint64_t g) { return g == 1; }
+void perfis_sessao_destravar(void) {}
+int sessao_token_copiar(char *dst, size_t n) {
+  snprintf(dst, n, "%s", logada ? "token-teste" : "");
+  return logada;
+}
+int sessao_identidade_local_copiar(char *u, size_t nu, char *jwt, size_t nj) {
+  snprintf(u, nu, "%s", logada ? sessao_usuario() : "");
+  return sessao_token_copiar(jwt, nj);
+}
+void sessao_token_recusado(const char *tok) { (void)tok; assert(0); }
 const char *dados_cliente_id(void) { return "cliente-teste"; }
 char *dados_ler(const char *n) { (void)n; return NULL; }
 int dados_gravar(const char *n, const char *c) { (void)n; (void)c; return 1; }
@@ -104,6 +124,11 @@ char *sessao_rpc(const char *funcao, const char *corpo, int *status) {
   return strdup("null");
 }
 
+char *nuvem_rpc_com(const char *fn, const char *corpo, const char *jwt, int *st) {
+  assert(!strcmp(jwt, "token-teste"));
+  return sessao_rpc(fn, corpo, st);
+}
+
 static void zerar(void) { nPost = nOutro = nRpc = 0; }
 static int conta(const char *s, const char *sub) {
   int k = 0; for (s = strstr(s, sub); s; s = strstr(s + 1, sub)) k++; return k;
@@ -111,7 +136,7 @@ static int conta(const char *s, const char *sub) {
 
 int main(void) {
   static char saida[1 << 16];
-  char tmpl[] = "/tmp/nuvio-visto-XXXXXX";
+  char tmpl[NVT_MAX]; nvt_set(tmpl, sizeof tmpl, "/nuvio-visto-XXXXXX");
   int fd = mkstemp(tmpl), salvo = dup(1);
   VistoPar tres[3] = { {1, 1}, {1, 2}, {1, 3} };
   assert(fd >= 0);

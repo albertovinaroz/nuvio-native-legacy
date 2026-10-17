@@ -558,6 +558,12 @@ static int fioConsulta(void *arg) {
 #endif
   (void)arg;
   body[0] = 0;
+#ifdef NV_VIDAA
+  SDL_LockMutex(mtx);
+  pronto = 1;
+  SDL_UnlockMutex(mtx);
+  return 0;  // hosted app e sempre current
+#endif
   corpo = rede_baixar(AT_URL, 12);
   if (!corpo) { printf("[atualizacao] sem resposta do GitHub\n"); fflush(stdout); }
   else {
@@ -636,6 +642,12 @@ static int fioInstalar(void *arg) {
 #endif
   char cmd[900];
   (void)arg;
+#ifdef NV_VIDAA
+  SDL_LockMutex(mtx);
+  pronto = 1;
+  SDL_UnlockMutex(mtx);
+  return 0;  // hosted app e sempre current
+#endif
   { char extra[110] = "";
     if (ipkHash[0]) snprintf(extra, sizeof extra, ",\"ipkHash\":\"%s\"", ipkHash);
     snprintf(cmd, sizeof cmd,
@@ -1530,10 +1542,7 @@ void atualizacao_desenhar(Uint32 agora) {
   if (ajustes_vidro()) {
     gfx_rect((GfxRect){ R.x - 20.0f, R.y - 6.0f, R.w + 40.0f, R.h + 40.0f }, 0, GFX_SOMBRA,
              1.0f, 0, 0, 0.5f, 0, 0, 0, 0.36f * a);
-    gfx_cor(R, raio, 0.055f, 0.059f, 0.071f, (0.80f + 0.10f * tr) * a);
-    // radial-gradient(120% 80% at 22% -40%, branco 10% -> 0 a 60%)
-    gfx_luz_canto(R, raio, R.w * 0.22f, -R.h * 0.40f, (R.w > R.h ? R.w : R.h) * 0.62f,
-                  1, 1, 1, 0.10f * a);
+    gfx_vidro_material(R, raio, GFX_VIDRO_DENS + 0.10f * tr, a);   // + gfx_vidro_luz
   } else {
     gfx_rect((GfxRect){ R.x - 16.0f, R.y - 4.0f, R.w + 32.0f, R.h + 30.0f }, 0, GFX_SOMBRA,
              1.0f, 0, 0, 0.5f, 0, 0, 0, 0.45f * a);

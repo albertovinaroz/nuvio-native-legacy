@@ -6,6 +6,7 @@
 #include "idioma.h"
 #include "ajustes.h"
 #include "gfx.h"
+#include "uisizing.h"
 #include "layout.h"
 #include "marco.h"
 #include "bidi.h"
@@ -33,6 +34,7 @@ typedef struct {
   char chave[288];
   unsigned long hash;   // FNV-1a da chave, para pular o strcmp
   TxtLinha linha;
+  float larg;           // txt_tracking: a largura com o espacamento
   unsigned long uso;
   unsigned long quadroUso;
   int ocupado;
@@ -71,6 +73,7 @@ static int camada;
 static char arabeBoldCaminho[600];   // face Bold real do Noto Naskh (#335), vazio ate txt_iniciar
 static int arabeCorpo;
 static void arabeBoldFechar(void);
+static int pisoCam[TXT_NCAM];
 static float escCamSlot[TXT_NCAM];   // o fator de cada casa (0 = livre; a 0 e sempre 1x)
 static unsigned long usoCam[TXT_NCAM];
 static unsigned long relogioCam;
@@ -291,8 +294,8 @@ static const struct { int corpo, peso; } ESTILOS[TXT_NFONTES] = {
   // ESCALA DOS PAINEIS (30/09, revisao de proporcao): titulo 34, item 26,
   // apoio 22 (NV_FT_PG_FIM). Eram 36 Regular / 24 Bold / 20: o item em Bold
   // pesava mais que o titulo, e o apoio ficava abaixo do piso de leitura.
-  { 34, PESO_MEDIUM },              // cabecalhos dos paineis (Fontes, Legendas, Episodios)
-  { 26, PESO_MEDIUM },              // episodio/fonte/faixa dentro da lista
+  { NV_FT_SHEET_TITLE, PESO_MEDIUM }, // headers
+  { NV_FT_SHEET_BODY, PESO_MEDIUM },  // episode/source/track rows
   { 28, PESO_MEDIUM },              // titulo no card Continuar assistindo
   { 23, PESO_REGULAR },             // temporada e nome do episodio
   { 20, PESO_MEDIUM },              // tempo restante no badge do card
@@ -310,7 +313,7 @@ static const struct { int corpo, peso; } ESTILOS[TXT_NFONTES] = {
   { NV_TOP10_NUM_CORPO, PESO_BOLD },   // numeral do Top 10 da Dinamica
   // Escala das ilhas (text.h). 600 e 800 claros sobre o vidro escuro vao para
   // Bold pela regra optica escrita acima; 400 fica Regular.
-  { 40, PESO_BOLD    },   // TXT_ILHA_TITULO
+  { NV_FT_SHEET_BODY * 20 / 13, PESO_BOLD }, // TXT_ILHA_TITULO
   { 22, PESO_BOLD    },   // TXT_ILHA_SECAO
   { 24, PESO_BOLD    },   // TXT_ILHA_NOME
   { 24, PESO_REGULAR },   // TXT_ILHA_CORPO
@@ -427,9 +430,31 @@ static const struct { int corpo, peso; } ESTILOS[TXT_NFONTES] = {
   { 18, PESO_BOLD    },   // TXT_V3_SELO
   { 28, PESO_REGULAR },   // TXT_V3_INSP
   { 28, PESO_BOLD    },   // TXT_V3_INSP_B
-  { NV_FT_DET_SIN, PESO_BOLD   },   // TXT_DET_META_FORTE
-  { NV_FT_DET_SIN, PESO_MEDIUM },   // TXT_DET_META_GEN
+  { 26, PESO_BOLD   },   // TXT_DET_META_FORTE (meta fica em 26)
+  { 26, PESO_MEDIUM },   // TXT_DET_META_GEN
+  { 25, PESO_MEDIUM },   // TXT_TV_ROTULO: item da barra Apple TV (25/500)
+  { 24, PESO_BOLD   },   // TXT_TV_SECAO: "STREAMING" em caixa alta (24/700)
+  { 24, PESO_REGULAR },  // TXT_HERO_SIN_GRANDE
+  { 19, PESO_REGULAR }, { 21, PESO_REGULAR }, { 22, PESO_REGULAR }, { 23, PESO_REGULAR },
+  { 24, PESO_REGULAR }, { 25, PESO_REGULAR }, { 26, PESO_REGULAR }, { 27, PESO_REGULAR },
+  { 28, PESO_REGULAR }, { 29, PESO_REGULAR }, { 30, PESO_REGULAR }, { 31, PESO_REGULAR },
+  { 33, PESO_REGULAR }, { 34, PESO_REGULAR }, { 35, PESO_REGULAR }, { 39, PESO_REGULAR },
+  { 20, PESO_REGULAR }, // TXT_SINOPSE_20
 };
+
+// CORPO E PESO de um estilo, para teste e diagnostico (o desenho nao usa:
+// vai direto ao cache por estilo).
+void txt_estilo_medidas(TxtEstilo estilo, int *corpo, int *peso) {
+  int i = (int)estilo;
+  if (i < 0 || i >= TXT_NFONTES) i = 0;
+  if (corpo) *corpo = ESTILOS[i].corpo;
+  if (peso) *peso = ESTILOS[i].peso;
+}
+
+// One base per style, shared by measuring and rasterizing. Legacy 100% stays exact.
+static float corpoAtual(int style) {
+  return pisoCam[camada] ? ui_size_text(ESTILOS[style].corpo, escCam) : ESTILOS[style].corpo;
+}
 
 // RESERVA PARA O QUE A INTER NAO TEM.
 //
@@ -634,7 +659,7 @@ static TTF_Font *reservaDe(Escrita e, TxtEstilo estilo, const char *s) {
     int falta;
     if (!f && !reservaFalhou[e][c][estilo]) {
       f = reservas[e][c][estilo] = TTF_OpenFont(caminhoReserva[e][c],
-                                                (int)(ESTILOS[estilo].corpo * ESC_T + 0.5f));
+                                                (int)(corpoAtual(estilo) * ESC_T + 0.5f));
       if (!f) reservaFalhou[e][c][estilo] = 1;
     }
     if (!f) continue;
@@ -927,7 +952,7 @@ static TTF_Font *fonteLegendaDe(TxtEstilo estilo, const char *s,
 #else
       fontesLegendaLG[i] = TTF_OpenFont("/usr/share/fonts/LG_Display-Regular.ttf",
 #endif
-          (int)(ESTILOS[estilo].corpo * ESC_T + 0.5f));
+          (int)(corpoAtual(estilo) * ESC_T + 0.5f));
       if (!fontesLegendaLG[i] && !avisoFallback[TXT_FAMILIA_LG]) {
         printf("fonte de legenda LG Display indisponivel; usando fallback\n");
         avisoFallback[TXT_FAMILIA_LG] = 1;
@@ -992,7 +1017,7 @@ static TTF_Font *fonteNegritoReal(TxtFamilia familia, TxtEstilo estilo, TTF_Font
     SDL_RWops *rw = SDL_RWFromConstMem(bytesPeso[familia][PESO_BOLD], (int)tamPeso[familia][PESO_BOLD]);
     tentouNegCam[camada][familia][i] = 1;
     if (rw) {
-      int corpo = (int)(ESTILOS[estilo].corpo * ESC_T + 0.5f);
+      int corpo = (int)(corpoAtual(estilo) * ESC_T + 0.5f);
       TTF_Font *bold = TTF_OpenFontRW(rw, 0, corpo);
       int ajustado = bold ? corpoNegrito(fonte, bold, corpo, 0) : corpo;
       if (bold && ajustado != corpo && ajustado >= 4) {
@@ -1098,7 +1123,7 @@ static int carregarFamilia(TxtFamilia familia) {
     } else { buf = bytesPeso[familia][peso]; tam = tamPeso[familia][peso]; }
     rw = SDL_RWFromConstMem(buf, (int)tam);
     fontes[familia][i] = rw
-      ? TTF_OpenFontRW(rw, 0, (int)(ESTILOS[i].corpo * ESC_T + 0.5f))
+      ? TTF_OpenFontRW(rw, 0, (int)(corpoAtual(i) * ESC_T + 0.5f))
       : NULL;
     rwFonte[familia][i] = rw;
     if (!fontes[familia][i]) {
@@ -1138,7 +1163,7 @@ static void abrirEstiloCamada(TxtFamilia familia, int i) {
   if (!buf) return;
   rw = SDL_RWFromConstMem(buf, (int)tam);
   if (!rw) return;
-  fontes[familia][i] = TTF_OpenFontRW(rw, 0, (int)(ESTILOS[i].corpo * ESC_T + 0.5f));
+  fontes[familia][i] = TTF_OpenFontRW(rw, 0, (int)(corpoAtual(i) * ESC_T + 0.5f));
   if (!fontes[familia][i]) { SDL_FreeRW(rw); return; }
   rwFonte[familia][i] = rw;
   if ((familia == TXT_FAMILIA_LG || familia == TXT_FAMILIA_DROID) && peso == PESO_BOLD)
@@ -1169,8 +1194,8 @@ static void fecharCamadaAmpliada(int k) {
       for (int i = 0; i < TXT_NFONTES; i++)
         if (reservasCam[k][e][c][i]) { TTF_CloseFont(reservasCam[k][e][c][i]); reservasCam[k][e][c][i] = NULL; }
   memset(reservaFalhouCam[k], 0, sizeof reservaFalhouCam[k]);
-  // So as linhas DESTE fator: a chave da camada comeca por "E<fator*100>:".
-  snprintf(pre, sizeof pre, "E%d:", (int)(escCamSlot[k] * 100.0f + 0.5f));
+  // Remove only this factor and floor policy from the text cache.
+  snprintf(pre, sizeof pre, "E%dF%d:", (int)(escCamSlot[k] * 100.0f + 0.5f), pisoCam[k]);
   np = strlen(pre);
   for (int i = 0; i < MAX_LINHAS; i++)
     if (cache[i].ocupado && escCamSlot[k] > 0.0f && !strncmp(cache[i].chave, pre, np)) {
@@ -1188,11 +1213,12 @@ static void fecharCamadaAmpliada(int k) {
 // comparacao por casa — e chamada na entrada de quem rasteriza, mede ou desenha.
 static void camadaAtualizar(void) {
   float e = gfx_escala();
+  int floor = e < 1 && gfx_escala_ui() < 1;
   int k, livre = -1, velha = 1;
   if (e == 1.0f) { camada = 0; return; }
-  if (camada > 0 && escCamSlot[camada] == e) { usoCam[camada] = ++relogioCam; return; }
+  if (camada > 0 && escCamSlot[camada] == e && pisoCam[camada] == floor) { usoCam[camada] = ++relogioCam; return; }
   for (k = 1; k < TXT_NCAM; k++) {
-    if (escCamSlot[k] == e) { camada = k; usoCam[k] = ++relogioCam; return; }
+    if (escCamSlot[k] == e && pisoCam[k] == floor) { camada = k; usoCam[k] = ++relogioCam; return; }
     if (escCamSlot[k] <= 0.0f && livre < 0) livre = k;
     if (usoCam[k] < usoCam[velha]) velha = k;
   }
@@ -1200,6 +1226,7 @@ static void camadaAtualizar(void) {
   k = livre > 0 ? livre : velha;
   if (livre < 0) fecharCamadaAmpliada(k);
   escCamSlot[k] = e;
+  pisoCam[k] = floor;
   usoCam[k] = ++relogioCam;
   camada = k;
 }
@@ -1599,10 +1626,18 @@ int txt_visual_da_linha(TxtFamilia familia, TxtEstilo estilo, const char *s,
 // A ENFASE ENTRA NA CHAVE DO CACHE. Sem isso a mesma frase em italico e em
 // redondo dividiriam a mesma textura, e qual das duas a tela mostra dependeria
 // de quem rasterizou primeiro.
-static TxtLinha linhaFamilia(TxtEstilo estilo, const char *s, int r, int g,
-                             int b, int a, TxtFamilia familia, int enfase) {
+static SDL_Surface *rasterLinha(TxtEstilo estilo, const char *s, SDL_Color cor,
+                                TxtFamilia familia, int enfase);
+static SDL_Surface *rasterTracking(TxtEstilo estilo, const char *s, SDL_Color cor,
+                                   TxtFamilia familia, float trk, float *larg);
+// `trk` != NULL: a linha de txt_tracking, letra a letra com *trk entre elas,
+// numa textura so (a largura volta em *larg).
+static TxtLinha linhaCache(TxtEstilo estilo, const char *s, int r, int g, int b,
+                           int a, TxtFamilia familia, int enfase,
+                           const float *trk, float *larg) {
   TxtLinha vazia = {0, 0, 0, 0, 0};
-  char limpo[1024];
+  char limpo[1024], pre[16] = "";
+  if (larg) *larg = 0.0f;
   camadaAtualizar();
   if (familia < TXT_FAMILIA_INTER || familia >= TXT_FAMILIA_N)
     familia = TXT_FAMILIA_INTER;
@@ -1616,22 +1651,23 @@ static TxtLinha linhaFamilia(TxtEstilo estilo, const char *s, int r, int g,
   // o simbolo que a face sabe desenhar fica; so o que viraria quadrado sai. Ela
   // era so da Inter, e com "LG Display" ou "Droid Sans" o ⚡ dos nomes de fonte
   // de addon aparecia como caixa.
-  {
+  // Por letra, cada letra e limpa com a fonte dela (rasterTracking).
+  if (!trk) {
     TTF_Font *fl = fonteDe(familia, estilo, s), *a1, *a2;
     altDe(familia, estilo, fl, &a1, &a2);
     s = semDecorativoSemGlifo(fl, a1, a2, s, limpo, sizeof limpo);
     if (!*s) return vazia;
-  }
+  } else snprintf(pre, sizeof pre, "T%d|", (int)(*trk * 100.0f + (*trk < 0 ? -0.5f : 0.5f)));
 
   char chave[288];
   // A VARIANTE CJK entra na chave: o mesmo hanzi tem forma de japones, de chines
   // simplificado e de tradicional (ver Escrita), e trocar o idioma da interface
   // nao pode devolver a textura da lingua anterior.
   if (camada)
-    snprintf(chave, sizeof chave, "E%d:%d:%d:%d:%d|%02x%02x%02x|%.226s", (int)(escCam * 100.0f + 0.5f),
+    snprintf(chave, sizeof chave, "%sE%dF%d:%d:%d:%d:%d|%02x%02x%02x|%.226s", pre, (int)(escCam * 100.0f + 0.5f), pisoCam[camada],
              (int)familia, (int)estilo, enfase & 3, (int)variacaoCjk(), r & 255, g & 255, b & 255, s);
   else
-    snprintf(chave, sizeof chave, "%d:%d:%d:%d|%02x%02x%02x|%.232s", (int)familia,
+    snprintf(chave, sizeof chave, "%s%d:%d:%d:%d|%02x%02x%02x|%.232s", pre, (int)familia,
              (int)estilo, enfase & 3, (int)variacaoCjk(), r & 255, g & 255, b & 255, s);
 
   // Hash da chave para evitar o strcmp em quase todas as entradas: a busca
@@ -1658,6 +1694,7 @@ static TxtLinha linhaFamilia(TxtEstilo estilo, const char *s, int r, int g,
     if (cache[i].hash == h && strcmp(cache[i].chave, chave) == 0) {
       cache[i].uso = ++relogio;
       cache[i].quadroUso = quadroTxt;
+      if (larg) *larg = cache[i].larg;
       return cache[i].linha;
     }
   }
@@ -1692,30 +1729,11 @@ static TxtLinha linhaFamilia(TxtEstilo estilo, const char *s, int r, int g,
 
   Uint64 t0 = SDL_GetPerformanceCounter();
   SDL_Color cor = { (Uint8)r, (Uint8)g, (Uint8)b, (Uint8)a };
-  TTF_Font *fonte = fonteLegendaDe(estilo, s, familia), *alt1, *alt2;
-  if (!fonte) return vazia;
-  altDe(familia, estilo, fonte, &alt1, &alt2);
-  char vis[1600];
-  const char *v = visualDe(fonte, s, vis, sizeof vis);
-  // SOMA ao estilo que a fonte ja tem, e RESTAURA depois. As familias de
-  // reserva nascem com TTF_STYLE_BOLD ligado (ver txt_iniciar); zerar aqui
-  // tiraria delas o peso que o app inteiro conta com.
-  int estiloAnt, novo = 0;
-  arabeCorpo = (int)(ESTILOS[estilo].corpo * ESC_T + 0.5f);
-  if (enfase && bidi_tem_arabe(v) && !txtTemLatim(v) && (enfase & TXT_ENF_NEGRITO)) {   // #335
-    TTF_Font *bf = arabeBoldFace(fonte);
-    if (bf) fonte = bf;               // a face Bold de verdade
-    enfase &= ~TXT_ENF_NEGRITO;       // nunca o sintetico sobre arabe
-  }
-  if (enfase) fonte = fonteComEnfase(familia, estilo, fonte, enfase, &novo);
-  estiloAnt = TTF_GetFontStyle(fonte);
-  if (enfase && novo != estiloAnt) TTF_SetFontStyle(fonte, novo);
-  SDL_Surface *sf = renderCorridas(fonte, alt1, alt2, v, cor, enfaseTtf(enfase));
-  if (enfase && novo != estiloAnt) TTF_SetFontStyle(fonte, estiloAnt);
-  if (!sf) return vazia;
-  SDL_Surface *cv = SDL_ConvertSurfaceFormat(sf, SDL_PIXELFORMAT_ABGR8888, 0);
-  SDL_FreeSurface(sf);
-  if (!cv) return vazia;
+  float w = 0.0f;
+  SDL_Surface *cv = trk ? rasterTracking(estilo, s, cor, familia, *trk, &w)
+                        : rasterLinha(estilo, s, cor, familia, enfase);
+  // O slot ja perdeu a textura: sem linha nova ele sai da tabela.
+  if (!cv) { cache[slot].ocupado = 0; return vazia; }
 
   GLuint t; glGenTextures(1, &t); glBindTexture(GL_TEXTURE_2D, t);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, cv->w, cv->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, cv->pixels);
@@ -1736,12 +1754,103 @@ static TxtLinha linhaFamilia(TxtEstilo estilo, const char *s, int r, int g,
   // exato do glifo (txt_desenhar_alpha), e nao em w*s arredondado.
   cache[slot].linha.pw = camada ? cv->w : 0;
   cache[slot].linha.ph = camada ? cv->h : 0;
+  cache[slot].larg = w;
   txt_rasterizadas++;
   txt_ms += (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / (double)SDL_GetPerformanceFrequency();
   cache[slot].uso = ++relogio;
   cache[slot].quadroUso = quadroTxt;
   SDL_FreeSurface(cv);
   return cache[slot].linha;
+}
+
+static TxtLinha linhaFamilia(TxtEstilo estilo, const char *s, int r, int g,
+                             int b, int a, TxtFamilia familia, int enfase) {
+  return linhaCache(estilo, s, r, g, b, a, familia, enfase, NULL, NULL);
+}
+
+// A superficie de uma linha ja limpa, no formato da textura.
+static SDL_Surface *rasterLinha(TxtEstilo estilo, const char *s, SDL_Color cor,
+                                TxtFamilia familia, int enfase) {
+  TTF_Font *fonte = fonteLegendaDe(estilo, s, familia), *alt1, *alt2;
+  if (!fonte) return NULL;
+  altDe(familia, estilo, fonte, &alt1, &alt2);
+  char vis[1600];
+  const char *v = visualDe(fonte, s, vis, sizeof vis);
+  // SOMA ao estilo que a fonte ja tem, e RESTAURA depois. As familias de
+  // reserva nascem com TTF_STYLE_BOLD ligado (ver txt_iniciar); zerar aqui
+  // tiraria delas o peso que o app inteiro conta com.
+  int estiloAnt, novo = 0;
+  arabeCorpo = (int)(corpoAtual(estilo) * ESC_T + 0.5f);
+  if (enfase && bidi_tem_arabe(v) && !txtTemLatim(v) && (enfase & TXT_ENF_NEGRITO)) {   // #335
+    TTF_Font *bf = arabeBoldFace(fonte);
+    if (bf) fonte = bf;               // a face Bold de verdade
+    enfase &= ~TXT_ENF_NEGRITO;       // nunca o sintetico sobre arabe
+  }
+  if (enfase) fonte = fonteComEnfase(familia, estilo, fonte, enfase, &novo);
+  estiloAnt = TTF_GetFontStyle(fonte);
+  if (enfase && novo != estiloAnt) TTF_SetFontStyle(fonte, novo);
+  SDL_Surface *sf = renderCorridas(fonte, alt1, alt2, v, cor, enfaseTtf(enfase));
+  if (enfase && novo != estiloAnt) TTF_SetFontStyle(fonte, estiloAnt);
+  if (!sf) return NULL;
+  SDL_Surface *cv = SDL_ConvertSurfaceFormat(sf, SDL_PIXELFORMAT_ABGR8888, 0);
+  SDL_FreeSurface(sf);
+  return cv;
+}
+
+
+// TRACKING NUMA TEXTURA SO. txt_tracking desenhava uma linha por LETRA: um
+// kicker de 12 letras eram 12 buscas no cache e 12 desenhos, todo quadro. Nos
+// Ajustes isso era 45% dos desenhos (tests/ajustes_perf.sh). Aqui as letras
+// sao rasterizadas como antes, uma a uma e limpas pela fonte de cada uma, e
+// coladas no lugar em que eram desenhadas: x da letra = soma das larguras de
+// layout + trk. A largura devolvida e a mesma conta de antes.
+static SDL_Surface *rasterTracking(TxtEstilo estilo, const char *s, SDL_Color cor,
+                                   TxtFamilia familia, float trk, float *larg) {
+  SDL_Surface *sf[128], *out;
+  int px[128], n = 0, i, w = 0, h = 0;
+  float lx = 0.0f;
+  const unsigned char *p = (const unsigned char *)s;
+  while (*p && n < 128) {
+    char c[5], limpo[32];
+    int k = 0, nb = (*p & 0xF8) == 0xF0 ? 4 : (*p & 0xF0) == 0xE0 ? 3 : (*p & 0xE0) == 0xC0 ? 2 : 1;
+    const char *cs = c;
+    TTF_Font *fl, *a1, *a2;
+    SDL_Surface *g = NULL;
+    while (k < nb && p[k]) { c[k] = (char)p[k]; k++; }
+    c[k] = 0; p += k ? k : 1;
+    if ((fl = fonteDe(familia, estilo, c))) {
+      altDe(familia, estilo, fl, &a1, &a2);
+      cs = semDecorativoSemGlifo(fl, a1, a2, c, limpo, sizeof limpo);
+      if (*cs) g = rasterLinha(estilo, cs, cor, familia, 0);
+    }
+    if (g) {
+      sf[n] = g; px[n] = (int)(lx * ESC_T + 0.5f);
+      if (px[n] + g->w > w) w = px[n] + g->w;
+      if (g->h > h) h = g->h;
+      n++;
+      lx += (float)(int)(g->w / ESC_T + 0.5f);
+    }
+    lx += trk;
+  }
+  *larg = lx > 0.0f ? lx - trk : 0.0f;
+  out = w > 0 && h > 0 ? SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ABGR8888) : NULL;
+  if (out) SDL_FillRect(out, NULL, (Uint32)cor.r | (Uint32)cor.g << 8 | (Uint32)cor.b << 16);
+  for (i = 0; i < n; i++) {
+    int x, y;
+    // "Over" no alfa: as letras eram quads com mistura, e a caixa de uma pode
+    // invadir a vizinha com o espacamento pequeno.
+    for (y = 0; out && y < sf[i]->h; y++) {
+      Uint32 *d = (Uint32 *)((Uint8 *)out->pixels + y * out->pitch) + px[i];
+      const Uint32 *o = (const Uint32 *)((const Uint8 *)sf[i]->pixels + y * sf[i]->pitch);
+      for (x = 0; x < sf[i]->w; x++) {
+        Uint32 sa = o[x] >> 24, da = d[x] >> 24;
+        if (!sa) continue;
+        d[x] = (o[x] & 0xFFFFFFu) | (sa + da * (255 - sa) / 255) << 24;
+      }
+    }
+    SDL_FreeSurface(sf[i]);
+  }
+  return out;
 }
 
 // LARGURA SEM RASTERIZAR. A quebra de linha (txt_bloco) e o corte com
@@ -1816,7 +1925,7 @@ static int larguraLinhaMedir(TxtEstilo estilo, const char *s, TxtFamilia familia
   altDe(familia, estilo, fonte, &a1, &a2);
   const char *v = visualDe(fonte, s, vis, sizeof vis);
   int estiloAnt, novo = 0;
-  arabeCorpo = (int)(ESTILOS[estilo].corpo * ESC_T + 0.5f);
+  arabeCorpo = (int)(corpoAtual(estilo) * ESC_T + 0.5f);
   if (enfase && bidi_tem_arabe(v) && !txtTemLatim(v) && (enfase & TXT_ENF_NEGRITO)) {   // #335
     TTF_Font *bf = arabeBoldFace(fonte);
     if (bf) fonte = bf;               // a face Bold de verdade
@@ -1876,33 +1985,67 @@ static float encaixa(float v) {
 }
 
 void txt_desenhar_alpha(TxtLinha l, float x, float y, float alpha) {
+  txt_desenhar_tom(l, x, y, 1, 1, 1, alpha);
+}
+
+void txt_desenhar_tom(TxtLinha l, float x, float y, float cr, float cg, float cb, float alpha) {
   if (!l.tex) return;
   camadaAtualizar();
   GfxRect r = { encaixa(x), encaixa(y), (float)l.w, (float)l.h };
   if (camada && l.pw > 0) { r.w = (float)l.pw / ESC_T; r.h = (float)l.ph / ESC_T; }
-  gfx_rect(r, l.tex, GFX_TEXTO, 0, 0, 0, 0.0f, 1, 1, 1, alpha);
+#ifdef ESTATVIVO_TESTE
+  extern void estatvivo_teste_texto(GfxRect r);
+  if (alpha > 0.5f) estatvivo_teste_texto(r);
+#endif
+  gfx_rect(r, l.tex, GFX_TEXTO, 0, cr != 1 || cg != 1 || cb != 1, 0, 0.0f, cr, cg, cb, alpha);
 }
 
 float txt_tracking(TxtEstilo estilo, const char *s, int r, int g, int b,
                    float x, float y, float alpha, float tracking) {
+  float larg;
+  TxtLinha l;
   if (!s || !*s) return 0.0f;
-  float larg = 0.0f;
-  // Percorre por CARACTERE UTF-8, nao por byte: cortar no meio de um acento
-  // produz um glifo invalido, e a fonte da LG devolve um retangulo vazio.
-  for (const unsigned char *p = (const unsigned char *)s; *p; ) {
-    int n = 1;
-    if      ((*p & 0xF8) == 0xF0) n = 4;
-    else if ((*p & 0xF0) == 0xE0) n = 3;
-    else if ((*p & 0xE0) == 0xC0) n = 2;
-    char c[5]; int k = 0;
-    while (k < n && p[k]) { c[k] = (char)p[k]; k++; }
-    c[k] = 0; p += k ? k : 1;
+  l = linhaCache(estilo, s, r, g, b, 255, fonteInterface, 0, &tracking, &larg);
+  if (x >= 0.0f) txt_desenhar_alpha(l, x, y, alpha);
+  return larg;
+}
 
-    TxtLinha l = txt_linha(estilo, c, r, g, b, 255);
-    if (x >= 0.0f && l.w) txt_desenhar_alpha(l, x + larg, y, alpha);
-    larg += l.w + tracking;
+// O passo UTF-8 de um caractere (o mesmo calculo do rasterTracking).
+static int glifoUtf8(const unsigned char *p, char *c) {
+  int nb = (*p & 0xF8) == 0xF0 ? 4 : (*p & 0xF0) == 0xE0 ? 3 : (*p & 0xE0) == 0xC0 ? 2 : 1, k = 0;
+  while (k < nb && p[k]) { c[k] = (char)p[k]; k++; }
+  c[k] = 0;
+  return k ? k : 1;
+}
+
+void txt_glifos(TxtEstilo estilo, const char *s, int r, int g, int b,
+                float x, float y, float alpha) {
+  const unsigned char *p = (const unsigned char *)(s ? s : "");
+  if ((int)estilo < 0 || estilo >= TXT_NFONTES) return;
+  while (*p) {
+    char c[5];
+    p += glifoUtf8(p, c);
+    if (c[0] != ' ') {
+      // Toda superficie de glifo da mesma fonte tem a mesma altura (a caixa do
+      // ascento+descenso — medido no Mac: ':' sai 49px como '0'), entao os
+      // glifos assentam no mesmo y e as baselines ficam na linha.
+      TxtLinha l = txt_linha(estilo, c, 255, 255, 255, 255);
+      if (l.w > 0) txt_desenhar_tom(l, x, y, r / 255.0f, g / 255.0f, b / 255.0f, alpha);
+    }
+    x += (float)txt_largura(estilo, c);
   }
-  return larg > 0.0f ? larg - tracking : 0.0f;
+}
+
+float txt_glifos_largura(TxtEstilo estilo, const char *s) {
+  const unsigned char *p = (const unsigned char *)(s ? s : "");
+  float w = 0.0f;
+  if ((int)estilo < 0 || estilo >= TXT_NFONTES) return 0.0f;
+  while (*p) {
+    char c[5];
+    p += glifoUtf8(p, c);
+    w += (float)txt_largura(estilo, c);
+  }
+  return w;
 }
 
 // Declarada em text.h desde o inicio e NUNCA implementada. Ninguem chamava,

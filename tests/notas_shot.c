@@ -12,6 +12,7 @@
 // rodar de outro jeito.
 
 #include <SDL2/SDL.h>
+#include "nvtmp.h"
 #include <SDL2/SDL_image.h>
 #include <assert.h>
 #include <stdio.h>
@@ -379,7 +380,7 @@ static void hero(int i) {
 static void secaoFoco(int i, int sec) {
   abrirItem(i);
   nivel = 1;
-  if (!strcmp(itens[i].imdb, IMDB_SERIE)) { foco.fileira = SEC_TEMPORADAS; foco.coluna = 1; quadros(3); }
+  if (!strcmp(itens[i].imdb, IMDB_SERIE)) { foco.fileira = SEC_TEMPORADAS; foco.coluna = 2; quadros(3); }
   else quadros(1);
   foco.fileira = sec; foco.coluna = 0;
   quadros(220);
@@ -404,7 +405,7 @@ static void cacheAudiencia(int temp, int ate) {
 }
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nv-notas-shots/n";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nv-notas-shots/n");
   char nome[600];
   SDL_GLContext gl;
 

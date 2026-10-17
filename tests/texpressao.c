@@ -12,7 +12,8 @@ static void limpar(void) {
   memset(itens, 0, sizeof itens);
   nMax = 8; quadroAtual = 100; bytesUsados = 0;
   tex_despejos = 0; tex_despejos_quentes = 0;
-  pressaoPct = 100; pressaoAte = 0;
+  pressaoPct = 100; pressaoAte = 0; pressaoPlay = 100;
+  orcMemTotal = 0;
 }
 // 1024x10: bytesTextura sem piramide, conta redonda.
 static void pronto(int i, unsigned long uso, unsigned long quadro) {
@@ -85,6 +86,32 @@ int main(void) {
   tex_pressao_memoria(0);
   assert(pressaoPct == 100 && !pressaoAtiva());
   puts("ok  nivel baixo nao liga a pressao");
+
+  // 8. REPRODUCAO (tex_pressao_reproducao): so Android liga (aqui o define
+  //    nao existe, entao o teto e 100%% e nada muda) — a regra do C que vale
+  //    em qualquer plataforma e que fechar o video devolve o teto inteiro.
+  limpar();
+  orcamento = um * 10;
+  orcMemTotal = 2400;                       // a TCL do incidente
+#ifdef NV_ANDROID
+  assert(tex_pressao_play_pct() == 40);     // < 3 GB
+  assert((orcMemTotal = 4096, tex_pressao_play_pct()) == 75);
+  assert((orcMemTotal = 2048, tex_pressao_play_pct()) == 40);
+  orcMemTotal = 2400;
+  tex_pressao_reproducao(1);
+  assert(pressaoPlay == 40);
+  for (i = 0; i < 8; i++) pronto(i, (unsigned long)i + 1, 50);
+  tex_novo_quadro();
+  assert(bytesUsados <= um * 4);            // 40%% de 10
+  assert(tex_despejos == 4);
+  tex_pressao_reproducao(0);                // fechou o video: teto volta
+  assert(pressaoPlay == 100 && limiteBytes() == orcamento);
+#else
+  assert(tex_pressao_play_pct() == 100);    // fora do Android nunca aperta
+  tex_pressao_reproducao(1);
+  assert(pressaoPlay == 100 && limiteBytes() == orcamento);
+#endif
+  puts("ok  reproducao aperta o teto no Android e devolve ao fechar");
 
   puts("PASS: texpressao");
   return 0;

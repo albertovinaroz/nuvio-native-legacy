@@ -14,6 +14,7 @@
 //
 //   bash tests/ctxinfo_shot.sh [pasta]
 #include "ajustes.h"
+#include "nvtmp.h"
 #include "amigostitulo.h"
 #include "agenda.h"
 #include "artehero.h"
@@ -212,7 +213,7 @@ static const char *NOMES[] = {
 #define NN (int)(sizeof NOMES / sizeof *NOMES)
 
 int main(int argc, char **argv) {
-  const char *saida = argc > 1 ? argv[1] : "/tmp/nv-ctxinfo-shots";
+  const char *saida = argc > 1 ? argv[1] : nvt("/nv-ctxinfo-shots");
   static CatItem itens[40];
   static CatFileira fils[2];
   SDL_GLContext gl;

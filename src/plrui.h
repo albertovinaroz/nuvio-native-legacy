@@ -47,7 +47,9 @@ float plrui_dicas(const char *const *teclas, const char *const *rotulos, int n,
 // SEGMENTADO (.seg): trilho pilula branco 6% (solido #1D1E23), item
 // selecionado 14% (solido #34363E); `ed` = selecionado E em foco (cheio no
 // acento). `contagem[i]` < 0 = sem numero. Devolve a largura. x < 0 so mede.
-float plrui_seg(const char *const *rotulos, const int *contagem, int n, int sel, int ed,
+// `sel` e `ed` aceitam FRACOES: quem chama anima com mola e a pilula de foco
+// desliza entre os chips (sel) e esmaece ao entrar/sair do segmentado (ed).
+float plrui_seg(const char *const *rotulos, const int *contagem, int n, float sel, float ed,
                 float x, float y, float a);
 
 // A BARRA DE PROGRESSO, a mesma em todo lugar (OSD, pausa, ao vivo, trailer):

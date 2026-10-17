@@ -1,5 +1,7 @@
 # Dependencias estaticas do .tpk. Roda DENTRO de nuvio-tpk-sdk (tools/tpk/Dockerfile),
 # com o cache montado em /w e os fontes em /w/src (tools/tpk.sh baixa).
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 set -e
 P=/w/prefix; mkdir -p $P
 cd /w/src/SDL2-2.30.9
@@ -31,7 +33,7 @@ HB=/w/src/harfbuzz-10.4.0
 if [ ! -f $P/lib/libharfbuzz.a ]; then
   # A unidade unica estoura a memoria do container (cc1plus Killed): cada .cc
   # citado em harfbuzz.cc vira um objeto, dois por vez.
-  rm -rf /tmp/hb; mkdir -p /tmp/hb && cd /tmp/hb
+  rm -rf ${TMPDIR:-/tmp}/hb; mkdir -p ${TMPDIR:-/tmp}/hb && cd ${TMPDIR:-/tmp}/hb
   grep -oE '#include "[A-Za-z0-9/-]+\.cc"' $HB/src/harfbuzz.cc | cut -d'"' -f2 > lista
   mkdir -p OT/Var/VARC
   cat lista | xargs -P 2 -I{} g++ $CXXFLAGS -std=c++11 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fvisibility-inlines-hidden \

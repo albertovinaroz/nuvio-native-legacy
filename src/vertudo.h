@@ -14,12 +14,23 @@
 #define NV_VERTUDO_H
 #include <SDL2/SDL.h>
 #include "colecoes.h"
+// IDs persistidos por colecao e compartilhados pelo ajuste global. Acrescentar
+// novas exibicoes somente no fim; zero e automatico no global e herda-o na pasta.
+typedef enum {
+  VT_LAY_AUTO = 0, VT_LAY_GRADE, VT_LAY_LINHA, VT_LAY_RANKING,
+  VT_LAY_SAGA, VT_LAY_DECADAS, VT_LAY_MURAL, VT_LAY_VITRINE,
+  VT_LAY_FLUXO,                   // no fim: o numero gravado das outras nao muda
+  VT_LAY_N
+} VtLayout;
 void vertudo_colecao(const ColFolder *folder);
 
 // Abre com o catalogo de uma fileira da home.
 void vertudo_abrir(const char *base, const char *tipo, const char *catId,
                    const char *titulo);
 int  vertudo_aberta(void);
+const char *vertudo_perf_tag(void);
+// Perf-only navigation: first collection, then cycle without saving preferences.
+void vertudo_perf_cycle(void);
 // Some sem animar (o player saiu para a home: ilha_minimizar).
 void vertudo_fechar_seco(void);
 void vertudo_evento(const SDL_Event *e);

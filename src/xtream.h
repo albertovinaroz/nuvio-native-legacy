@@ -28,6 +28,7 @@
 #define NV_XTREAM_H
 
 #include <time.h>
+#include <stdint.h>
 
 // ---------------------------------------------------------------- cadastro
 void xtream_carregar(void);
@@ -55,6 +56,8 @@ typedef struct {
 // Baixa categorias + canais ao vivo e preenche `saida`. Devolve quantos; 0 sem
 // cadastro ou sem resposta. BLOQUEIA: e do fio do guia.
 int xtream_canais(XtreamCanal *saida, int max);
+// Mesmo pedido, com a abertura do guia capturada antes de criar o worker.
+int xtream_canais_sessao(XtreamCanal *saida, int max, uint64_t sessao);
 // Por que a ULTIMA xtream_canais devolveu 0 (issue #112): XT_OK (respondeu,
 // mesmo vazia, ou sem cadastro), XT_SEM_RESPOSTA, XT_RECUSOU (auth 0). O guia
 // diz isso na tela; antes o "0" do Xtream sumia no meio dos canais dos addons

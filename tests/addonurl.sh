@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # #201: a URL de um addon chega INTEIRA ao pedido (1500 caracteres), e a que
 # passa de NV_ADDON_URL_MAX e recusada com uma linha de log — nunca cortada.
 # Ver o cabecalho de tests/addonurl.c. NAO precisa de rede.
@@ -12,8 +14,8 @@ flags=(-O1 -g -Isrc -ffunction-sections -fdata-sections -Wl,-dead_strip \
 if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
 # SO addons.c e js.c, com a mesma receita de tests/addonslista.sh: -dead_strip
 # descarta o resto do modulo e os vizinhos sao dublados no proprio teste.
-cc "${flags[@]}" src/addons.c src/fontefalha.c src/addonstats.c src/js.c tests/addonurl.c -o /tmp/nuvio-addonurl-tests
-saida=$(/tmp/nuvio-addonurl-tests)
+cc "${flags[@]}" src/addons.c src/fontefalha.c src/addonstats.c src/js.c tests/addonurl.c -o ${TMPDIR:-/tmp}/nuvio-addonurl-tests
+saida=$(${TMPDIR:-/tmp}/nuvio-addonurl-tests)
 echo "$saida" | grep -v '^\[addons\]' || true
 echo "$saida" | grep -q 'addonurl: ok'
 # A recusa e DITA: nome do addon e tamanho. Duas vezes — a linha do arquivo

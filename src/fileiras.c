@@ -60,6 +60,11 @@ typedef struct {
   // para "Fora": a pessoa nunca pediu para tirar, so nao coube. Linha que ja
   // estava no arquivo sem a marca segue a regra antiga (alem do limite = Fora).
   int  nova;
+  // ORDEM DOS ITENS da fileira de COLECAO (FilOrdem, 2.0.5). Gravada como
+  // linha opcional "ordemfileira" — o mesmo truque de "visibilidade": o
+  // formato posicional da linha `linha` nao muda e o arquivo de quem ja usa
+  // o app continua valendo byte a byte.
+  int  ordem;
 } Linha;
 
 static Linha linhas[FIL_MAX];
@@ -109,7 +114,8 @@ static const char *TIPO_ROT[FIL_TIPO_N] = {
   "Automático", "Cartaz em pé", "Destaque largo", "Coleção", "Serviço", "Ranking empilhado",
   "Destaque 4:3", "Ranking numerado", "Faixa com título",
   "Destaque 4:3 médio", "Destaque 4:3 grande",
-  "Linha do tempo", "Cartaz com ficha", "Palco"
+  "Linha do tempo", "Cartaz com ficha", "Palco", "Redonda", "Herói",
+  "Pôster grande"
 };
 static const char *TAM_ROT[FIL_TAM_N] = { "Compacto", "Padrão", "Grande" };
 // 0,85 e 1,2 e nao 0,5 e 2,0: o card do web mede 212x322 e o passo da fileira
@@ -240,22 +246,20 @@ static const FilEstiloLinha LINHAS_CAT[] = {
   { "Linha do tempo",    1, { FIL_TIPO_LINHA_TEMPO }, { "Linha do tempo" } },
   { "Cartaz com ficha",  1, { FIL_TIPO_FICHA }, { "Cartaz com ficha" } },
   { "Palco",             1, { FIL_TIPO_PALCO }, { "Palco" } },
+  { "Redonda",           1, { FIL_TIPO_REDONDA }, { "Redonda" } },
+  { "Herói",             1, { FIL_TIPO_HEROI }, { "Herói" } },
+  { "Pôster grande",     1, { FIL_TIPO_POSTER_GRANDE }, { "Pôster grande" } },
 };
 #define N_LINHAS_CAT (int)(sizeof LINHAS_CAT / sizeof *LINHAS_CAT)
-static const int ESTILOS_COL[] = { FIL_TIPO_AUTO, FIL_TIPO_COLECAO,
-                                   FIL_TIPO_DESTAQUE_QUADRADO, FIL_TIPO_CARTAZ };
-static const char *ESTILOS_COL_ROT[] = { "Automático", "Paisagem", "Quadrado", "Pôster" };
-#define N_ESTILOS_COL (int)(sizeof ESTILOS_COL / sizeof *ESTILOS_COL)
 
-// A forma `t` vale para esta chave? Catalogo aceita todo FilTipo (a tela de
-// Ajustes oferece tambem Top 10 e 4:3); colecao so as quatro de ESTILOS_COL.
+// A forma `t` vale para esta chave? Catalogo e colecao aceitam todo FilTipo (a
+// tela de Ajustes oferece tambem Top 10 e 4:3): a fileira de colecao tem o MESMO
+// conjunto de estilos da de catalogo, com a pasta no lugar do cartaz.
 static int tipoValido(const char *chave, int t) {
-  int o = fil_origem_de(chave), k;
+  int o = fil_origem_de(chave);
   if (t == FIL_TIPO_AUTO) return 1;
-  if (o == FIL_ORIGEM_CATALOGO) return t > 0 && t < FIL_TIPO_N;
-  if (o != FIL_ORIGEM_COLECAO) return 0;
-  for (k = 0; k < N_ESTILOS_COL; k++) if (ESTILOS_COL[k] == t) return 1;
-  return 0;
+  if (o != FIL_ORIGEM_CATALOGO && o != FIL_ORIGEM_COLECAO) return 0;
+  return t > 0 && t < FIL_TIPO_N;
 }
 
 static int limita(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -317,6 +321,13 @@ static void gravar(void) {
   for (i = 0; i < nLinhas && k < cap; i++)
     if (linhas[i].nova)
       k += (size_t)snprintf(txt + k, cap - k, "nova %s\n", linhas[i].chave);
+  // ORDEM DOS ITENS da fileira de colecao (2.0.5): linha propria e opcional
+  // como "visibilidade" — versao anterior nao a conhece (ignora) e arquivo
+  // antigo, sem ela, volta ao padrao FIL_ORD_LISTA.
+  for (i = 0; i < nLinhas && k < cap; i++)
+    if (linhas[i].ordem > 0 && linhas[i].ordem < FIL_ORD_N)
+      k += (size_t)snprintf(txt + k, cap - k, "ordemfileira %s %d\n",
+                            linhas[i].chave, linhas[i].ordem);
   if (k < cap) dados_gravar(arquivoDoPerfil(), txt);
   free(txt);
   revisao++;
@@ -368,6 +379,18 @@ static void carregar(void) {
     } else if (!strncmp(buf, "nova ", 5)) {
       for (int i = 0; i < nLinhas; i++)
         if (!strcmp(linhas[i].chave, buf + 5)) linhas[i].nova = 1;
+    } else if (!strncmp(buf, "ordemfileira ", 13)) {
+      // A chave termina no PRIMEIRO espaco; o resto e o numero. Chave de
+      // fileira nunca tem espaco (e <addonId>_<tipo>_<catalogoId> ou
+      // collection_<id>), e valor fora da faixa volta ao padrao na leitura.
+      char *esp = strchr(buf + 13, ' ');
+      if (esp) {
+        *esp = 0;
+        int o = atoi(esp + 1);
+        if (o > 0 && o < FIL_ORD_N)
+          for (int i = 0; i < nLinhas; i++)
+            if (!strcmp(linhas[i].chave, buf + 13)) linhas[i].ordem = o;
+      }
     } else if (!strncmp(buf, "visibilidade ", 13)) {
       for (int i = 0; i < nLinhas; i++)
         if (!strcmp(linhas[i].chave, buf + 13)) linhas[i].visPessoal = 1;
@@ -673,9 +696,29 @@ int fil_adicionar(int i, int *estado) {
 // aqui, mesmo alem do limite — e o caso da "vaga garantida por addon", que a
 // descoberta promove para dentro da janela por conta propria.
 void fil_normalizar(void) {
-  int i, p = 0, mudou = 0;
+  int i, p = 0, mudou = 0, w = 0;
   pthread_mutex_lock(&trava);
   garantir();
+  // #504: a folha abre com a lista DO ARQUIVO, e a limpeza da remocao do addon
+  // (#365, em fil_marcar_sem_addon) e mais estreita: ela exige !vista, e uma
+  // linha que a descoberta chegou a registrar — ou oculta pelo arquivo antigo
+  // com a marca vista relida como tal — fica na aba "Fora da Home" para
+  // sempre. Aqui nao se sabe a lista de addons da volta, so o semAddon ja
+  // marcado: e a mesma barra de escolha da #365 (intocada pela pessoa), que e o
+  // que separa "fantasma" de "a pessoa pediu isto e o addon pode voltar".
+  for (i = 0; i < nLinhas; i++) {
+    int morto = fil_origem_de(linhas[i].chave) == FIL_ORIGEM_CATALOGO &&
+                linhas[i].semAddon && !linhas[i].naHome &&
+                !linhas[i].ocultaConta && !linhas[i].emColecao &&
+                linhas[i].oculta != OC_COLECAO &&
+                !linhas[i].visPessoal && !linhas[i].fila &&
+                linhas[i].tipo == FIL_TIPO_AUTO && linhas[i].tam == FIL_TAM_PADRAO &&
+                !(heroFonte[0] && !strcmp(heroFonte, linhas[i].chave));
+    if (morto) { mudou = 1; continue; }
+    if (w != i) linhas[w] = linhas[i];
+    w++;
+  }
+  if (w != nLinhas) { nLinhas = w; revisao++; }
   for (i = 0; i < nLinhas; i++) {
     int nova = linhas[i].nova;
     if (linhas[i].oculta || linhas[i].ocultaConta || linhas[i].emColecao || linhas[i].semAddon) {
@@ -887,7 +930,7 @@ int fil_podar_catalogos(const char *const *ids, const char *const *bases, int n,
 // row back exactly as the person left it.
 int fil_marcar_sem_addon(const char *const *ids, const char *const *bases,
                          const int *ativos, int n, int perfilDaLista) {
-  int i, mudou = 0;
+  int i, mudou = 0, w = 0, limpeza = 0;
   pthread_mutex_lock(&trava);
   garantir();
   if (perfilDaLista <= 0 || perfilDaLista != perfil) {
@@ -901,8 +944,37 @@ int fil_marcar_sem_addon(const char *const *ids, const char *const *bases,
       if (ativos[k] && doAddon(linhas[i].chave, ids[k], bases[k])) vivo = 1;
     if (linhas[i].semAddon != !vivo) { linhas[i].semAddon = !vivo; mudou++; }
   }
-  if (mudou) revisao++;
+  // #365: FANTASMAS EM "FORA DA HOME". A linha sem escolha valida — tipo e
+  // tamanho padrao, sem fila, sem visPessoal, nao e fonte do destaque e
+  // so foi escondida (OC_SUGESTAO — a proposta automatica — ou OC_PESSOA
+  // sem visPessoal, que e o arquivo antigo escondendo sem registrar
+  // vinculo proprio — e a aparencia do relato: a linha fica "Not on Home
+  // Screen" para sempre mesmo depois do addon sair) NAO tem mais volta
+  // possivel. Quem guardou valor de verdade tem visPessoal/destaque e
+  // fica. O passo nao usa orfaDespejavel: esse exige !vista, e o relato e
+  // do arranque que NUNCA publicou a linha nesta sessao.
+  for (i = 0; i < nLinhas; i++) {
+    int morto = fil_origem_de(linhas[i].chave) == FIL_ORIGEM_CATALOGO &&
+                linhas[i].semAddon && !linhas[i].vista && !linhas[i].naHome &&
+                !linhas[i].ocultaConta && !linhas[i].emColecao &&
+                linhas[i].oculta != OC_COLECAO &&
+                !linhas[i].visPessoal && !linhas[i].fila &&
+                linhas[i].tipo == FIL_TIPO_AUTO && linhas[i].tam == FIL_TAM_PADRAO &&
+                (linhas[i].oculta == OC_SUGESTAO ||
+                 linhas[i].oculta == OC_PESSOA) &&
+                !(heroFonte[0] && !strcmp(heroFonte, linhas[i].chave));
+    if (morto) { limpeza++; continue; }
+    if (w != i) linhas[w] = linhas[i];
+    w++;
+  }
+  if (w != nLinhas) nLinhas = w;
+  if (mudou || limpeza) { revisao++; if (limpeza) gravar(); }
   pthread_mutex_unlock(&trava);
+  if (limpeza) {
+    printf("[fileiras] #365: %d catalogo(s) sem escolha de addon removido "
+           "sairam da aba Fora da Home\n", limpeza);
+    fflush(stdout);
+  }
   return mudou;
 }
 
@@ -1436,13 +1508,7 @@ void fil_alternar(int i) {
 void fil_ciclar_tipo(int i) {
   pthread_mutex_lock(&trava);
   if (i >= 0 && i < nLinhas && !formaFixa(linhas[i].chave)) {
-    int t = linhas[i].tipo, k;
-    // Numa colecao o ciclo e o das quatro formas dela, na ordem do menu.
-    if (fil_origem_de(linhas[i].chave) == FIL_ORIGEM_COLECAO) {
-      for (k = 0; k < N_ESTILOS_COL && ESTILOS_COL[k] != t; k++) {}
-      t = ESTILOS_COL[(k + 1) % N_ESTILOS_COL];
-    } else t = (t + 1) % FIL_TIPO_N;
-    linhas[i].tipo = t;
+    linhas[i].tipo = (linhas[i].tipo + 1) % FIL_TIPO_N;
     gravar();
   }
   pthread_mutex_unlock(&trava);
@@ -1450,15 +1516,8 @@ void fil_ciclar_tipo(int i) {
 
 int fil_estilo_linhas(const char *chave, FilEstiloLinha *l, int max) {
   int o = fil_origem_de(chave), n = 0, k;
-  if (o == FIL_ORIGEM_CATALOGO) {
+  if (o == FIL_ORIGEM_CATALOGO || o == FIL_ORIGEM_COLECAO)
     for (k = 0; k < N_LINHAS_CAT && n < max; k++, n++) if (l) l[n] = LINHAS_CAT[k];
-  } else if (o == FIL_ORIGEM_COLECAO) {
-    for (k = 0; k < N_ESTILOS_COL && n < max; k++, n++) if (l) {
-      memset(&l[n], 0, sizeof l[n]);
-      l[n].rotulo = l[n].nomes[0] = ESTILOS_COL_ROT[k];
-      l[n].n = 1; l[n].tipos[0] = ESTILOS_COL[k];
-    }
-  }
   return n;
 }
 
@@ -1479,19 +1538,36 @@ const char *fil_estilo_tam_palavra(int k) {
 }
 
 const char *fil_estilo_rotulo(const char *chave, int t) {
-  int o = fil_origem_de(chave), k;
-  if (o == FIL_ORIGEM_COLECAO)
-    for (k = 0; k < N_ESTILOS_COL; k++) if (ESTILOS_COL[k] == t) return ESTILOS_COL_ROT[k];
+  (void)chave;
   return fil_tipo_rotulo(t);
 }
 
 const char *fil_estilo_ajuda(const char *chave, int t) {
   if (fil_origem_de(chave) == FIL_ORIGEM_COLECAO) {
+    if (t == FIL_TIPO_AUTO) return "A forma que a coleção tem na sua conta.";
+    // #205: todo estilo vale para a fileira de colecao, mas o card e sempre a
+    // PASTA — a capa da colecao no formato do estilo. O que a ajuda do
+    // catalogo promete alem do formato (pilha do Top 10, numeros do Ranking,
+    // linha do tempo, ficha, palco, recorte redondo) a pasta nao desenha:
+    // a frase diz so o que renderiza de verdade.
     switch (t) {
-      case FIL_TIPO_COLECAO:           return "Pasta deitada, com a capa da coleção.";
-      case FIL_TIPO_DESTAQUE_QUADRADO: return "Pasta quadrada, da altura do cartaz.";
-      case FIL_TIPO_CARTAZ:            return "Pasta em pé, do tamanho do cartaz.";
-      default:                         return "A forma que a coleção tem na sua conta.";
+      case FIL_TIPO_CARTAZ:
+      case FIL_TIPO_TOP10:
+      case FIL_TIPO_RANKING:
+      case FIL_TIPO_LINHA_TEMPO:
+        return "Cartaz em pé com a capa da coleção.";
+      case FIL_TIPO_PALCO:   return "Cartaz em pé maior com a capa da coleção.";
+      case FIL_TIPO_REDONDA: return "Card quadrado com a capa da coleção.";
+      case FIL_TIPO_FICHA:   return "Cartaz com a capa da coleção num card mais largo.";
+      case FIL_TIPO_DESTAQUE:
+      case FIL_TIPO_LARGA:   return "Card deitado 16:9 com a capa da coleção.";
+      case FIL_TIPO_COLECAO:  return "Card deitado médio com a capa da coleção.";
+      case FIL_TIPO_SERVICO:  return "Card deitado compacto com a capa da coleção.";
+      case FIL_TIPO_DESTAQUE_QUADRADO:
+      case FIL_TIPO_DESTAQUE_QUADRADO_M:
+      case FIL_TIPO_DESTAQUE_QUADRADO_G:
+        return "Card em 4:3 com a capa da coleção.";
+      default:                return "A capa da coleção no card do formato escolhido.";
     }
   }
   // As frases das formas sao as da tela de Ajustes (aj_fil_forma_ajuda): as
@@ -1513,6 +1589,9 @@ const char *fil_estilo_ajuda(const char *chave, int t) {
     case FIL_TIPO_LINHA_TEMPO: return "Cartazes em ordem de lançamento sobre uma linha com os anos, que se desenha conforme você anda.";
     case FIL_TIPO_FICHA:    return "Cartaz com a ficha ao lado: ano, gênero, nota e o começo da sinopse.";
     case FIL_TIPO_PALCO:    return "O título em foco fica grande no centro e os vizinhos diminuem dos dois lados.";
+    case FIL_TIPO_POSTER_GRANDE: return "Cartaz 3:4 grande com logo, gênero, classificação e duas linhas de sinopse na base, sobre um véu na cor predominante da arte.";
+    case FIL_TIPO_REDONDA:  return "Foto circular com o nome embaixo, para fileiras de pessoas.";
+    case FIL_TIPO_HEROI:    return "Um cartão único do tamanho da fileira, com fundo, selo, título e duas linhas — o banner entre fileiras do Apple TV.";
     default:                return "O app escolhe a forma pelo nome do catálogo e pelo layout da Home.";
   }
 }
@@ -1520,6 +1599,48 @@ const char *fil_estilo_ajuda(const char *chave, int t) {
 const char *fil_linha_tipo_rotulo(int i) {
   if (i < 0 || i >= nLinhas) return fil_tipo_rotulo(FIL_TIPO_AUTO);
   return fil_estilo_rotulo(linhas[i].chave, linhas[i].tipo);
+}
+
+// --- ORDEM DOS ITENS da fileira de colecao (FilOrdem, 2.0.5) ----------------
+// O dono pediu o quatro opcoes ao lado do estilo: "ordenar elas por ano,
+// ordem alfabetica, ordem da lista ou aleatorio". Vale so para fileira de
+// colecao — a de catalogo e a ordem do addon, e Continuar assistindo e a
+// posicao de retomada; em ambas inventar uma ordem aqui seria prometer o que
+// a fonte nao entrega.
+static const char *ORDEM_ROT[FIL_ORD_N] = {
+  "Ordem da lista", "Ano", "Alfabética", "Aleatória"
+};
+
+const char *fil_ordem_rotulo(int o) {
+  return ORDEM_ROT[o >= 0 && o < FIL_ORD_N ? o : 0];
+}
+
+int fil_ordem(const char *chave) {
+  int i, v = FIL_ORD_LISTA;
+  if (!chave || !chave[0]) return v;
+  pthread_mutex_lock(&trava);
+  garantir();
+  i = achar(chave);
+  if (i >= 0 && linhas[i].ordem > 0 && linhas[i].ordem < FIL_ORD_N)
+    v = linhas[i].ordem;
+  pthread_mutex_unlock(&trava);
+  return v;
+}
+
+int fil_definir_ordem(const char *chave, int o) {
+  int i, ok = 0;
+  if (!chave || !chave[0] || o < 0 || o >= FIL_ORD_N ||
+      fil_origem_de(chave) != FIL_ORIGEM_COLECAO) return 0;
+  pthread_mutex_lock(&trava);
+  garantir();
+  i = achar(chave);
+  if (i >= 0) {
+    ok = 1;
+    // Mesma ordem: nao reescreve o arquivo nem remonta a home por nada.
+    if (linhas[i].ordem != o) { linhas[i].ordem = o; gravar(); }
+  }
+  pthread_mutex_unlock(&trava);
+  return ok;
 }
 
 int fil_definir_tipo(const char *chave, int t) {
@@ -1929,6 +2050,14 @@ void fil_teste_recarregar(void) { carregado = 0; }
 // da C9 percorreu (linhas antigas, lidas do disco, com vista=0).
 void fil_teste_esquecer_vista(int i) {
   if (i >= 0 && i < nLinhas) linhas[i].vista = 0;
+}
+// Indice da linha de uma chave: com a mexida no resumo da tabela as linhas se
+// reordenam, e quem testa a mudanca do addon precisa da linha MARCADA, nao
+// de uma posicao fixa.
+int fil_teste_achar(const char *chave) {
+  int i;
+  for (i = 0; i < nLinhas; i++) if (chave && !strcmp(linhas[i].chave, chave)) return i;
+  return -1;
 }
 #endif
 

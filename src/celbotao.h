@@ -79,6 +79,8 @@ float celb_embutido_altura(int dono, float w, float hMax);
 // no sistema de coordenadas de quem chama. Sem fundo nem camada: e conteudo
 // do dono.
 void  celb_desenhar_em(int dono, GfxRect r, float alpha);
+// Compact QR for the friends invitation; uses the same hosted token.
+void  celb_desenhar_qr_em(int dono, GfxRect r, float alpha);
 
 // --- testes ---
 // Onde o cartao (ou o bloco hospedado) ficou no ultimo desenho (0 se fechado).

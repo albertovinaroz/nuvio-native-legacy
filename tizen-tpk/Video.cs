@@ -87,12 +87,15 @@ namespace NuvioTpk
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void FnAspecto(int x, int y, int w, int h, int lx, int ly, int lw, int lh);
         [DllImport("libcapi-media-player.so.0")] static extern int player_set_display_mode(IntPtr p, PlayerDisplayMode mode);
         [DllImport("libcapi-media-player.so.0")] static extern int player_set_display_roi_area(IntPtr p, int x, int y, int w, int h);
+        // DTS conversion (X-Nuvio-Prebuffer from src/video_tpk.c): only in IDLE, before Prepare.
+        [DllImport("libcapi-media-player.so.0")] static extern int player_set_streaming_buffering_time(IntPtr p, int preMs, int reMs);
+        [DllImport("libcapi-media-player.so.0")] static extern int player_get_streaming_buffering_time(IntPtr p, out int preMs, out int reMs);
         FnAspecto fAspecto;
         bool aspectoRecusado;
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int FnPos();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void FnEscolher(int tipo, int idx);
 
-        const int EV_PRONTO = 1, EV_TOCANDO = 2, EV_PAUSADO = 3, EV_FIM = 4, EV_ERRO = 5, EV_TAMANHO = 6, EV_BUFFER = 7, EV_VELOCIDADE = 8;
+        const int EV_PRONTO = 1, EV_TOCANDO = 2, EV_PAUSADO = 3, EV_FIM = 4, EV_ERRO = 5, EV_TAMANHO = 6, EV_BUFFER = 7, EV_VELOCIDADE = 8, EV_PRESO = 9, EV_CONSULTA_LENTA = 10, EV_BUSCOU = 11;
 
         readonly Func<Display> fazDisplay;
         readonly Action<Action> principal;
@@ -136,6 +139,7 @@ namespace NuvioTpk
         readonly object trocaTrava = new object();
         Task<bool> liberacao = Task.FromResult(true);
         internal int PrazoPararMs = 5000;
+        internal int PrazoBuscarMs = 15000;
 
         public Video(Func<Display> fazDisplay, Action<Action> principal, string dados, int telaW, int telaH)
         {
@@ -314,10 +318,14 @@ namespace NuvioTpk
                         int ms = p.GetPlayPosition();
                         lock (trocaTrava) { if (minha == sessao && player == p) posMs = ms; }
                     }
+                } catch (InvalidOperationException e) {
+                    Log("posicao: " + e.Message);
+                    Preso(minha, -1);
                 } catch { }
                 finally {
                     long ms = (Stopwatch.GetTimestamp() - inicio) * 1000 / Stopwatch.Frequency;
                     if (ms >= 50) Log("[video] tpk consulta posicao levou " + ms + " ms (fio video)");
+                    if (ms >= 5000 && minha == Volatile.Read(ref sessao)) NvVid.Evento(EV_CONSULTA_LENTA, 0, 0);
                     Volatile.Write(ref f.consulta, 0);
                 }
             }, null);
@@ -332,6 +340,13 @@ namespace NuvioTpk
         void Principal(Action a)
         {
             principal(() => { try { a(); } catch (Exception e) { Log("principal: " + e); } });
+        }
+
+        // Checagem da sessao e aviso sob a trava do Trocar: um EV_PRESO da
+        // sessao velha nunca chega depois de o C abrir a nova.
+        void Preso(int minha, int alvo)
+        {
+            lock (trocaTrava) { if (minha == sessao) NvVid.Evento(EV_PRESO, alvo, 0); }
         }
 
         // Invalida tambem comandos que ficaram na fila durante uma troca.
@@ -356,10 +371,15 @@ namespace NuvioTpk
                 fio?.Fechar();
                 var velho = player; player = null;
                 var prime = primer; primer = null; primerGen++;
-                if (velho != null || prime != null) {
+                if (velho != null || prime != null || naoSolto != null) {
                     var anterior = liberacao;
                     liberacao = Task.Run(async () => {
-                        bool ok = await anterior.ConfigureAwait(false);
+                        await anterior.ConfigureAwait(false);
+                        // #412: Dispose recusado no player preso. Cada abertura
+                        // nova tenta de novo; sem Dispose confirmado, nada abre.
+                        bool ok = true;
+                        var resto = Interlocked.Exchange(ref naoSolto, null);
+                        if (resto != null) ok = Soltar(resto);
                         if (prime != null) ok = Liberar(prime) && ok;
                         if (velho != null) ok = Liberar(velho) && ok;
                         return ok;
@@ -377,7 +397,7 @@ namespace NuvioTpk
             novo.Post(async _ => {
                 if (await Task.WhenAny(soltar, Task.Delay(PrazoPararMs)) != soltar || !await soltar) {
                     Log("[video] tpk parar nao confirmou; player indisponivel, processo preservado");
-                    if (minha == Volatile.Read(ref sessao)) NvVid.Evento(EV_ERRO, -3, 0);
+                    lock (trocaTrava) { if (minha == sessao) NvVid.Evento(EV_ERRO, -3, 0); }
                     return;
                 }
                 if (minha != Volatile.Read(ref sessao)) return;
@@ -388,7 +408,7 @@ namespace NuvioTpk
 
         async void Abrir(string url, string cabecalhos, int minha)
         {
-            posMs = 0;
+            posMs = 0; buscando = false; buscaPend = pausaPend = -1;
             // Player novo nasce no volume cheio; so um pedido DESTA sessao
             // (trailer.c, logo depois do video_tocar) o muda.
             volAlvo = 1f; volPedido = false;
@@ -411,6 +431,17 @@ namespace NuvioTpk
                     int i = linha.IndexOf(':');
                     if (i <= 0) continue;
                     string nome = linha.Substring(0, i).Trim(), valor = linha.Substring(i + 1).Trim();
+                    if (nome == "X-Nuvio-Prebuffer")
+                    {
+                        try
+                        {
+                            int ms = int.Parse(valor), rc = player_set_streaming_buffering_time(p.Handle, ms, 0), pre = -1, re = -1;
+                            player_get_streaming_buffering_time(p.Handle, out pre, out re);
+                            Log("[dts-tpk] prebuffer " + ms + " ms: rc=" + rc + ", player says pre=" + pre + " re=" + re);
+                        }
+                        catch (Exception e) { Log("[dts-tpk] prebuffer: " + e.GetType().Name + " " + e.Message); }
+                        continue;
+                    }
                     if (nome.Equals("User-Agent", StringComparison.OrdinalIgnoreCase)) p.UserAgent = valor;
                     else if (nome.Equals("Cookie", StringComparison.OrdinalIgnoreCase)) p.Cookie = valor;
                     else Log("cabecalho ignorado pelo player: " + nome);
@@ -533,43 +564,97 @@ namespace NuvioTpk
         // Preparing nao admite Unprepare; cada passo ainda tenta o Dispose.
         // Muted e Display=null vem primeiro: silenciam e soltam o plano mesmo
         // quando Stop/Unprepare travam (#412, saida para a Home).
+        Player naoSolto; // Dispose falhou; o proximo Trocar tenta de novo
+
+        bool Soltar(Player p)
+        {
+            try { p.Dispose(); Log("[video] tpk dispose confirmado na nova tentativa"); return true; }
+            catch (Exception e) { Log("parar dispose de novo: " + e.Message); Volatile.Write(ref naoSolto, p); return false; }
+        }
+
         bool Liberar(Player p)
         {
             try { p.Muted = true; } catch (Exception e) { Log("parar muted: " + e.Message); }
             try { p.Display = null; } catch (Exception e) { Log("parar display: " + e.Message); }
-            try { if (p.State == PlayerState.Playing || p.State == PlayerState.Paused) p.Stop(); }
+            // Um GetState so: no player preso cada leitura custa ~5 s (#412) e,
+            // recusada, Stop/Unprepare tambem seriam; segue direto ao Dispose.
+            PlayerState st = PlayerState.Idle;
+            try { st = p.State; } catch (Exception e) { Log("parar estado: " + e.Message); }
+            try { if (st == PlayerState.Playing || st == PlayerState.Paused) { p.Stop(); st = PlayerState.Ready; } }
             catch (Exception e) { Log("parar stop: " + e.Message); }
-            try { if (p.State == PlayerState.Ready || p.State == PlayerState.Playing || p.State == PlayerState.Paused) p.Unprepare(); }
+            try { if (st == PlayerState.Ready || st == PlayerState.Playing || st == PlayerState.Paused) p.Unprepare(); }
             catch (Exception e) { Log("parar unprepare: " + e.Message); }
             try { p.Dispose(); return true; }
-            catch (Exception e) { Log("parar dispose: " + e.Message); return false; }
+            catch (Exception e) { Log("parar dispose: " + e.Message); Volatile.Write(ref naoSolto, p); return false; }
         }
 
         bool Liberar(ref Player p) { if (!Liberar(p)) return false; Volatile.Write(ref p, null); return true; }
 
+        bool buscando;
+        int buscaPend = -1, pausaPend = -1;
+
         void Pausar(bool pausa)
         {
-            if (player == null) return;
+            var p = player;
+            int minha = playerSessao;
+            if (p == null) return;
+            if (buscando) { pausaPend = pausa ? 1 : 0; return; }
             try
             {
-                if (pausa && player.State == PlayerState.Playing) { player.Pause(); NvVid.Evento(EV_PAUSADO, 0, 0); }
-                else if (!pausa && player.State == PlayerState.Paused) { player.Start(); windowMetrics.Invalidate(); NvVid.Evento(EV_TOCANDO, 0, 0); }
+                if (pausa && p.State == PlayerState.Playing) { p.Pause(); NvVid.Evento(EV_PAUSADO, 0, 0); }
+                else if (!pausa && p.State == PlayerState.Paused) { p.Start(); windowMetrics.Invalidate(); NvVid.Evento(EV_TOCANDO, 0, 0); }
             }
             catch (InvalidOperationException e)
             {
-                // #269: o estado mudou entre a checagem e o Pause/Start. Estado ja e outro; avisa uma vez.
-                if (!pausarAvisado) { pausarAvisado = true; Log("pausar: estado mudou (" + e.Message + ")"); }
+                Log("pausar: " + e.Message);
+                Preso(minha, -1);
             }
             catch (Exception e) { Log("pausar: " + e.Message); }
         }
-        bool pausarAvisado;
 
         async void Buscar(int ms)
         {
             if (player == null) return;
             windowMetrics.Invalidate();
-            try { posMs = ms; await player.SetPlayPositionAsync(ms, false); }
-            catch (Exception e) { Log("buscar: " + e.Message); }
+            if (buscando) { buscaPend = ms; return; }
+            var p = player;
+            int minha = Volatile.Read(ref sessao);
+            buscando = true;
+            bool expirou = false;
+            try {
+                var busca = p.SetPlayPositionAsync(ms, false);
+                _ = busca.ContinueWith(t => { var _e = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                if (await Task.WhenAny(busca, Task.Delay(PrazoBuscarMs)) != busca) {
+                    expirou = true; // Nao aceitar comandos neste player ate a troca.
+                    Log("buscar: prazo vencido");
+                    Preso(minha, buscaPend >= 0 ? buscaPend : ms);
+                    return;
+                }
+                await busca;
+                // So depois do seek aceito: pausado, o Tique nao consulta.
+                lock (trocaTrava) {
+                    if (minha == sessao && player == p) {
+                        posMs = ms;
+                        NvVid.Evento(EV_BUSCOU, ms, 0);
+                    }
+                }
+                if (minha != Volatile.Read(ref sessao)) return;
+                // PlaybackInterrupted pode ter emitido evento 3 durante o seek.
+                if (p.State == PlayerState.Playing) NvVid.Evento(EV_TOCANDO, 0, 0);
+                else if (p.State == PlayerState.Paused) NvVid.Evento(EV_PAUSADO, 0, 0);
+            }
+            catch (InvalidOperationException e) {
+                Log("buscar: " + e.Message);
+                Preso(minha, buscaPend >= 0 ? buscaPend : ms);
+                return;
+            }
+            catch (Exception e) { Log("buscar: " + e.Message); return; }
+            finally { if (!expirou && minha == Volatile.Read(ref sessao)) buscando = false; }
+            if (minha != Volatile.Read(ref sessao)) return;
+            // SetPlayPositionAsync terminou: nao disputar Pause/outro seek com
+            // a transicao que produz evento 3; o cache ja recebeu o alvo aceito.
+            if (buscaPend >= 0) { int alvo = buscaPend; buscaPend = -1; Buscar(alvo); }
+            else if (pausaPend >= 0) { bool pausa = pausaPend != 0; pausaPend = -1; Pausar(pausa); }
         }
 
         // Host 4/5 (Program40): move/redimensiona a janela ElmSharp do video.

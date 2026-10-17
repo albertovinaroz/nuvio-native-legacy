@@ -25,6 +25,7 @@ GLuint tex_obter_larg(const char *c, float w) { (void)c; (void)w; return 0; }
 GLuint tex_obter_logo_larg_qualquer(const char *c, float w) { (void)c; (void)w; return 0; }
 void marco(const char *m) { (void)m; }
 void desc_sinopse_hero(const int *idx, int n) { (void)idx; (void)n; }
+void desc_ocultar_vistos_atualizar(void) {}
 
 char *dados_ler(const char *nome) { (void)nome; return NULL; }
 int   dados_gravar(const char *nome, const char *c) { (void)nome; (void)c; return 1; }

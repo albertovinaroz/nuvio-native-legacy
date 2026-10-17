@@ -1,11 +1,13 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # Exibicoes da pagina de colecao em PNG, sem rede. Nao entra na suite
 # (testa-tudo.sh pula *_shot.sh): precisa de janela GL e de olho humano.
 #
 #   NUVIO_SHOT_FONTE=3 bash tests/colecao_exibicao_shot.sh /tmp/nv-colecao-exibicao
 set -eu
 cd "$(dirname "$0")/.."
-saida="${1:-/tmp/nv-colecao-exibicao}"
+saida="${1:-${TMPDIR:-/tmp}/nv-colecao-exibicao}"
 mkdir -p "$saida"
 NUVIO_DADOS=$(mktemp -d "${TMPDIR:-/tmp}/nuvio-colexib-shot.XXXXXX")
 export NUVIO_DADOS

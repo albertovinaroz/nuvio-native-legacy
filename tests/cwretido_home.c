@@ -9,6 +9,8 @@
 // direto, como tests/cwremover_home.c. Sem janela, rede ou TV.
 #include <assert.h>
 // Duples do cache de arte do Codex (mesmos de tests/home_layout.c).
+// #204: o "Ocultar filmes assistidos" da descoberta, parado neste teste.
+void desc_ocultar_vistos_atualizar(void) {}
 void cachearte_marcar_grupo(int grupo, const char *url, int variante, int essencial, int emUso) {
   (void)grupo; (void)url; (void)variante; (void)essencial; (void)emUso; }
 void cachearte_limpar_referencias_grupo(int grupo) { (void)grupo; }

@@ -347,7 +347,13 @@ static void medir(const NotasSecao *s, Medidas *m) {
   if (m->nFontes) {
     int linhas = (m->nFontes + 1) / 2;
     float hg = (float)linhas * TILE_H + (float)(linhas - 1) * TILE_GAP;
-    m->scoreH = notasEmpilhadas() ? SCORE_MIN_H : fmaxf(hg, SCORE_MIN_H);
+    // UMA fonte nao enche o cartao de resumo: sem "Menor/Maior" e sem a barra
+    // critica x publico (os dois precisam de r.n > 1), um piso de 448 deixava
+    // a metade de baixo do cartao vazia a cada titulo novo demais para o
+    // MDBList — o "52 de 100 · so uma fonte" da TCL. 208 cabem o numero e a
+    // linha "de 100"; com 2+ o resumo cheio volta a precisar da altura toda.
+    float minimo = m->nFontes == 1 ? 208.0f : SCORE_MIN_H;
+    m->scoreH = notasEmpilhadas() ? minimo : fmaxf(hg, minimo);
     m->h = notasEmpilhadas() ? m->scoreH + COL_GAP + hg : m->scoreH;
   }
 }

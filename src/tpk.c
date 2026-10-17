@@ -329,6 +329,13 @@ int tpk_gl_atributo(SDL_GLattr a, int *v) {
   return 0;
 }
 
+__attribute__((visibility("default")))
+void nv_tpk_ciclo(int memoria) {
+  SDL_Event e = {0};
+  e.type = memoria ? SDL_APP_LOWMEMORY : SDL_APP_WILLENTERBACKGROUND;
+  SDL_PushEvent(&e);
+}
+
 // Tecla do controle, pelo nome que o NUI da (Key.KeyPressedName). Vem do fio
 // principal do .NET; SDL_PushEvent e seguro de qualquer fio.
 __attribute__((visibility("default")))

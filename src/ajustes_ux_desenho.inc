@@ -22,14 +22,21 @@ static const char *uxResumo(int op) {
   if (op == AJ_HOME_LAYOUT && uxIndice == 1) return i18n("Escolha como o destaque e as fileiras se organizam na Tela inicial.");
   return ajudaOpcao(op);
 }
+static int uxOpcaoNaTela(int op) {
+  if (op == AJ_FILTRO_TAM_MAX || op == AJ_FILTRO_GRUPOS) return AJ_FILTROS_FONTES;
+  return op >= AJ_FALHA_RD_LIMITE && op <= AJ_FALHA_AD_LIMITE
+    ? AJ_FALHA_PROVEDOR_ORDEM : op;
+}
 static const char *uxCaminho(int op) {
   int i;
+  op = uxOpcaoNaTela(op);
   for (i = 0; i < AJ_N_TELA; i++)
     if (TELA[i].tipo == IT_OPC && TELA[i].op == op) return TELA[secIni[secDoItem[i]]].titulo;
   return "Ajustes";
 }
 static int uxSecaoDe(int op) {
   int i;
+  op = uxOpcaoNaTela(op);
   for (i = 0; i < AJ_N_TELA; i++)
     if (TELA[i].tipo == IT_OPC && TELA[i].op == op) return secDoItem[i];
   return 0;
@@ -37,6 +44,7 @@ static int uxSecaoDe(int op) {
 // O bloco (ROT) da opcao, "" sem bloco.
 static const char *uxBloco(int op) {
   int i, j;
+  op = uxOpcaoNaTela(op);
   for (i = 0; i < AJ_N_TELA; i++)
     if (TELA[i].tipo == IT_OPC && TELA[i].op == op) {
       for (j = i; j > secIni[secDoItem[i]]; j--)
@@ -125,21 +133,28 @@ static void ajIlhaSombra(GfxRect r, float raioPx, float al, int opaca) {
   gfx_sombra_sob((GfxRect){ r.x - 20, r.y - 6, r.w + 40, r.h + 46 }, 1.0f, 0.0f, 0.5f, 0, 0, 0, al,
                  r, raioPx, opaca ? 1.0f : 0.0f);
 }
+// O miolo que a ilha solida cobre de certeza (sem a faixa do canto).
+static GfxRect ajIlhaMiolo0(GfxRect r, float raioPx) {
+  float m = raioPx + 2.0f;
+  return (GfxRect){ r.x + m, r.y + m, r.w - 2.0f * m, r.h - 2.0f * m };
+}
 // Ilha: sombra curta, miolo (vidro 80% / solido #15161A) e a luz larga do canto
 // de cima, sem contorno. `modal` = miolo a 86%, para a ilha por cima de outra.
 static void ajIlhaMaterial(GfxRect r, float raioPx, float a, int modal, int pagina) {
   if (pagina) raioPx = 0.0f;
   float raio = raioPx / r.h;
   if (a <= 0.003f) return;
+  // Solido e opaco: o Frost pendente nao e pintado embaixo do miolo.
+  if (!ajVid() && a * gfx_opacidade_grupo >= 0.999f) {
+    GfxRect f = ajIlhaMiolo0(r, raioPx);
+    if (f.w > 0.0f && f.h > 0.0f) gfx_ambiente_descarregar_fora(&f, 1);
+  }
   if (!pagina) ajIlhaSombra(r, raioPx, (ajVid() ? 0.36f : 0.45f) * a, !ajVid() && a >= 0.999f);
   if (ajVid()) {
     // Teste do vidro: opacidade (78% = 0.80/0.86 de sempre) e fosco.
-    float miolo = (modal ? 0.86f : 0.80f) * gfx_vidro_opacidade();
-    gfx_vidro_fosco(r, raio, a);
-    gfx_vidro_miolo(r, raio, 0.055f, 0.059f, 0.071f, (miolo > 1.0f ? 1.0f : miolo) * a, a);
-    gfx_luz_canto(r, raio, r.w * 0.22f, -r.h * 0.40f, r.h * 0.62f, 1, 1, 1, 0.10f * a);
+    gfx_vidro_material(r, raio, modal ? GFX_VIDRO_DENS_MODAL : GFX_VIDRO_DENS, a);
   } else {
-    gfx_cor(r, raio, 0.082f, 0.086f, 0.102f, a);
+    gfx_cor_painel(r, raio, 0.082f, 0.086f, 0.102f, a);
   }
 }
 static void ajIlha(GfxRect r, float raioPx, float a, int modal) {
@@ -154,11 +169,8 @@ static void ajIlhaMiolo(GfxRect r, float raioPx, float miolo) {
   float raio = raioPx / r.h;
   if (!ajTelaCheia()) ajIlhaSombra(r, raioPx, ajVid() ? 0.36f : 0.45f, !ajVid());
   if (ajVid()) {
-    float m = miolo * gfx_vidro_opacidade();
-    gfx_vidro_fosco(r, raio, 1);
-    gfx_vidro_miolo(r, raio, 0.055f, 0.059f, 0.071f, m > 1.0f ? 1.0f : m, 1);
-    gfx_luz_canto(r, raio, r.w * 0.22f, -r.h * 0.40f, r.h * 0.62f, 1, 1, 1, 0.10f);
-  } else gfx_cor(r, raio, 0.082f, 0.086f, 0.102f, 1);
+    gfx_vidro_material(r, raio, miolo, 1);
+  } else gfx_cor_painel(r, raio, 0.082f, 0.086f, 0.102f, 1);
 }
 // Superficie de FOCO de linha: um degrau mais clara (vidro 12%, solido #2B2D34).
 static void ajFocoLinha(GfxRect r, float raioPx, float f, float a) {
@@ -424,7 +436,7 @@ static int ajTipo(int op) {
   }
 }
 // O valor i no segmentado: traduzido e sem o aposto entre parenteses
-// ("Dinâmica (Apple TV)" vira "Dinâmica"; o nome inteiro fica no inspetor).
+// ("Rótulo (aposto)" vira "Rótulo"; o nome inteiro fica no inspetor).
 static const char *ajRotSeg(int op, int i) {
   static char b[3][96];
   char *p;
@@ -437,7 +449,7 @@ static const char *ajRotSeg(int op, int i) {
 static float aj2SegLargura(int op, int n);
 static int ajSegmentada(int op) {
   int n;
-  if (op < 0 || ajTipo(op) != AJL_ESC || op == AJ_LEG_LINGUA || op == AJ_LEG_LINGUA2 || op == AJ_AUD_LINGUA || op == AJ_FUNDO ||
+  if (op < 0 || ajTipo(op) != AJL_ESC || op == AJ_LEG_LINGUA || op == AJ_LEG_LINGUA2 || op == AJ_AUD_LINGUA || op == AJ_AUD_LINGUA2 || op == AJ_FUNDO ||
       op == AJ_INTERFACE_MODO /* o seletor com alvos proprios permite sair de TV usando so o toque */ ||
       op == AJ_LOGO_APP /* abre o seletor com miniaturas de 64 px, como o icone do app */) return 0;
   n = nValores(op);
@@ -546,7 +558,7 @@ static void aj2Bolinha(int v, float cx, float cy, int foco, int gravada, float a
   }
   if (ajTemaNovo(v)) {   // as seis novas: o ponto claro no canto
     float px = cx + d * 0.5f * 0.707f, py = cy - d * 0.5f * 0.707f;
-    gfx_cor((GfxRect){ px - 8.5f, py - 8.5f, 17, 17 }, 0.5f, 0.055f, 0.059f, 0.071f, 0.95f * a);
+    gfx_cor((GfxRect){ px - 8.5f, py - 8.5f, 17, 17 }, 0.5f, 0.055f, 0.059f, 0.071f, 0.95f * a); // vidro-ok: slider knob
     gfx_cor((GfxRect){ px - 6, py - 6, 12, 12 }, 0.5f, 0.953f, 0.949f, 0.937f, a);
   }
 }
@@ -625,7 +637,7 @@ static void aj2Regua(GfxRect ln, float y, float a) {
           gfx_anel_fora(p, 28.0f / 56.0f, 2.0f, 3.0f, 0.953f, 0.949f, 0.937f, 0.92f * a);
         } else ajNeutro(p, 28, 0.07f, AJ_CHIP_SOL, a);
         aj2CorDin(v, url, c1, c2);
-        gfx_cor((GfxRect){ px + 7, cy - 21, 42, 42 }, 0.5f, 0.055f, 0.059f, 0.071f, 0.85f * a);
+        gfx_cor((GfxRect){ px + 7, cy - 21, 42, 42 }, 0.5f, 0.055f, 0.059f, 0.071f, 0.85f * a); // vidro-ok: knob disc
         if (v == sel && !foc) gfx_icone((GfxRect){ px + 16, cy - 12, 24, 24 }, "aj_check", 1, 1, 1, a);
         else {
           if (v == AJ_TEMA_GRADIENTE) c1[0] = (c1[0] + c2[0]) * 0.5f, c1[1] = (c1[1] + c2[1]) * 0.5f, c1[2] = (c1[2] + c2[2]) * 0.5f;
@@ -693,8 +705,9 @@ static void ajAjudaLinhaDesenhar(int op, float x, float y, float a) {
 // escolhe a fonte; o padrao e o modelo sao do filtro; o estilo da segunda
 // legenda e dela.
 static int uxPaiVisual(int op) {
+  if (ajLegendaSecundaria(op)) return AJ_LEG_LINGUA2;
   switch (op) {
-    case AJ_FONTE_PRIORIDADE: case AJ_FONTE_PRAZO: return AJ_FONTE_MANUAL;
+    case AJ_FONTE_PRIORIDADE: case AJ_FONTE_PRAZO: case AJ_FONTE_IDIOMA_AUDIO: return AJ_FONTE_MANUAL;
     case AJ_FONTE_REGEX_PADRAO: case AJ_FONTE_REGEX_MODELO: return AJ_FONTE_REGEX;
     case AJ_FONTE_ADDONS_PERM: case AJ_FONTE_PLUGINS_PERM: return AJ_FONTE_ESCOPO;
     case AJ_LEG2_POS: case AJ_LEG2_TAMANHO: case AJ_LEG2_COR: case AJ_LEG2_FUNDO: case AJ_LEG2_BORDA:
@@ -1055,20 +1068,33 @@ static float aj2ChipLiga(int op, float xDir, float yc, int ligado, float a) {
 // 2.0.3 (decisao do dono): o interruptor e uma PILULA COM O ESTADO ESCRITO.
 // Ligado = pilula clara cheia, ponto escuro, texto escuro. Desligado = so o
 // contorno, ponto vazado, texto cinza. Nunca a bolinha sozinha.
+// A TROCA E UMA MOLA (ajMov, ~140 ms): o contorno esvai enquanto a pilula
+// cheia cresce, em vez de trocar num quadro. O texto rasterizado nao recolore
+// por quadro (cache): troca no ponto medio, como o resto da tela.
+// Linhas de add-on/plugin nao tem opcao (op < 0): o estado vem de `ligado` e
+// nao ha mola por linha, entao nao tocam em ajMovValor/ajMovPronto.
+static float aj2PilulaOn(int op, int ligado) {
+  if (op < 0 || op >= AJ_N) return ligado ? 1.0f : 0.0f;
+  return 1.0f - ajMov(op, uxValorAtual(op));   // valor 1 = Desligado (ver lig())
+}
 static float aj2PilulaEstado(int op, float xDir, float yc, int ligado, float a) {
-  const char *rot = ligado ? "Ligado" : "Desligado";
-  TxtLinha t = ligado ? txt_linha(TXT_V3_PILL, rot, 22, 22, 26, 255) : ajTxt(TXT_V3_PILL, rot);
-  float h = 50.0f, w = 20.0f + 12.0f + 10.0f + t.w + 22.0f;
+  float on = aj2PilulaOn(op, ligado);
+  TxtLinha tOff = ajTxt(TXT_V3_PILL, "Desligado");
+  TxtLinha tOn = txt_linha(TXT_V3_PILL, "Ligado", 22, 22, 26, 255);
+  // As DUAS strings sao desenhadas em crossfade: a largura nao pode seguir so
+  // uma delas (pulo de varios pixels no meio do voo, com os dois textos
+  // meio visiveis). A pilula mistura as duas larguras com o mesmo `on`.
+  float h = 50.0f, w = 20.0f + 12.0f + 10.0f + anim_mistura((float)tOff.w, (float)tOn.w, on) + 22.0f;
   GfxRect r = { xDir - w, yc - h * 0.5f, w, h }, d = { r.x + 20.0f, yc - 6.0f, 12.0f, 12.0f };
-  (void)op;
-  if (ligado) {
-    gfx_cor(r, 0.5f, 0.953f, 0.949f, 0.937f, a);
-    gfx_cor(d, 0.5f, 0.086f, 0.086f, 0.102f, a);
-    txt_desenhar_alpha(t, d.x + 22.0f, yc - t.h * 0.5f, a);
-  } else {
-    gfx_anel(r, 0.5f, 2.0f, 1, 1, 1, 0.28f * a);
-    gfx_anel(d, 0.5f, 2.0f, 1, 1, 1, 0.55f * a);
-    txt_desenhar_alpha(t, d.x + 22.0f, yc - t.h * 0.5f, 0.62f * a);
+  if (on < 0.995f) {
+    gfx_anel(r, 0.5f, 2.0f, 1, 1, 1, 0.28f * (1.0f - on) * a);
+    gfx_anel(d, 0.5f, 2.0f, 1, 1, 1, 0.55f * (1.0f - on) * a);
+    txt_desenhar_alpha(tOff, d.x + 22.0f, yc - tOff.h * 0.5f, 0.62f * (1.0f - on) * a);
+  }
+  if (on > 0.005f) {
+    gfx_cor(r, 0.5f, 0.953f, 0.949f, 0.937f, on * a);
+    gfx_cor(d, 0.5f, 0.086f, 0.086f, 0.102f, on * a);
+    txt_desenhar_alpha(tOn, d.x + 22.0f, yc - tOn.h * 0.5f, on * a);
   }
   return w;
 }

@@ -1,5 +1,6 @@
 // tests/proxyts.sh: o proxy de TS da Live TV contra o servidor falso.
 #include "../src/proxyts.c"
+#include "nvtmp.h"
 #include "streams.h"
 #include <assert.h>
 static int falhas;
@@ -9,11 +10,11 @@ static long baixar(const char *url, int segundos, unsigned char **out, char *cab
   FILE *f;
   long n = 0;
   unsigned char *b = malloc(64 << 20);
-  snprintf(cmd, sizeof cmd, "curl -s -D /tmp/nuvio-proxyts-cab --max-time %d '%s'", segundos, url);
+  snprintf(cmd, sizeof cmd, "curl -s -D '%s/nuvio-proxyts-cab' --max-time %d '%s'", nvt_dir(), segundos, url);
   f = popen(cmd, "r");
   while (f && n < (64 << 20)) { size_t r = fread(b + n, 1, 65536, f); if (!r) break; n += (long)r; }
   if (f) pclose(f);
-  { FILE *c = fopen("/tmp/nuvio-proxyts-cab", "r"); size_t r = c ? fread(cab, 1, ncab - 1, c) : 0; cab[r] = 0; if (c) fclose(c); }
+  { FILE *c = fopen(nvt("/nuvio-proxyts-cab"), "r"); size_t r = c ? fread(cab, 1, ncab - 1, c) : 0; cab[r] = 0; if (c) fclose(c); }
   *out = b;
   return n;
 }

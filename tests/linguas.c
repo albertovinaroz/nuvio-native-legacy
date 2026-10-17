@@ -54,6 +54,10 @@ int main(void) {
   ok("pt casa pt-PT",      ling_casa("pt-PT", "pt"));
   ok("pt casa pb",         ling_casa("pb", "pt"));
   ok("hr casa hrv",        ling_casa("hrv", "hr"));
+  ok("hr casa hbs-hrv",    ling_casa("hbs-hrv", "hr"));
+  ok("hr casa scr",        ling_casa("scr", "hr"));
+  ok("sr casa hbs-srp",    ling_casa("hbs-srp", "sr"));
+  ok("bs casa bos",        ling_casa("bos", "bs"));
   ok("hrv NAO casa sr",    !ling_casa("hrv", "sr"));
   ok("ces NAO casa sk",    !ling_casa("ces", "sk"));
   // O player da Samsung (#269): "jp", "cz", "du", "gr", "in", "ma".
@@ -67,9 +71,25 @@ int main(void) {
   ok("nome de cz",  !strcmp(ling_nome("cz"), "Tcheco"));
   ok("nome de du",  !strcmp(ling_nome("du"), "Holandês"));
   ok("nome de ces", !strcmp(ling_nome("ces"), "Tcheco"));
-  ok("nome de es-419", !strcmp(ling_nome("es-419"), "Espanhol"));
+  // Fork: o espanhol latino tem nome proprio (opcao de Ajustes).
+  ok("nome de es-419", !strcmp(ling_nome("es-419"), "Espanhol latino"));
   ok("nome de zh-Hans", !strcmp(ling_nome("zh-Hans"), "Chinês"));
   ok("nome de hrv", !strcmp(ling_nome("hrv"), "Croata"));
+  ok("nome de bs", !strcmp(ling_nome("bs"), "Bósnio"));
+  // #429: hr/sr/bs entraram NO FIM (regra de compatibilidade do ajustes.txt,
+  // que grava o indice): 31, 32, 33 — nunca no meio da lista.
+  // Fork: ling_opcao_codigo e a ordem da TELA; o indice GRAVADO passa por
+  // ling_opcao_de_disco (linguas.h). Os do disco continuam os do upstream.
+#define DISCO(d) ling_opcao_codigo(ling_opcao_de_disco(d))
+  ok("opcao hr no disco 31", !strcmp(DISCO(31), "hr"));
+  ok("opcao sr no disco 32", !strcmp(DISCO(32), "sr"));
+  ok("opcao bs no disco 33", !strcmp(DISCO(33), "bs"));
+  // Indices JA GRAVADOS em ajustes.txt nao podem mudar: 16 e "id" (nao "hr")
+  // e o "~" fica no indice 30 do disco, antes dos idiomas novos.
+  ok("indice 16 continua id", !strcmp(DISCO(16), "id"));
+  ok("original no indice fixo", !strcmp(DISCO(30), "~"));
+  ok("original por ultimo na tela", !strcmp(ling_opcao_codigo(LING_OPC_ORIGINAL), "~"));
+  ok("variantes do fork no disco 34/35", !strcmp(DISCO(34), "es-419") && !strcmp(DISCO(35), "pt-br"));
   ok("selo de pb", !strcmp(ling_selo("pb"), "PT-BR"));
   // O "lang" com nome por extenso (Auto-Subs: "Hebrew (Auto-Subs)").
   { char c[16];
@@ -213,7 +233,10 @@ int main(void) {
        ling_legenda_auto("hr", emb, 1, 1, NULL, 0, 1) == 0);
     const int tp[] = { LING_LEG_COMUM, LING_LEG_COMUM };
     ok("auto205: tipo tambem ranqueia hr antes de hbs",
-       ling_legenda_auto_tipo("hr", "", 0, emb, tp, 2, 1, NULL, 0, 1) == 1); }
+       ling_legenda_auto_tipo("hr", "", 0, emb, tp, 2, 1, NULL, 0, 1) == 1);
+    const char *steve[] = { "eng", "hbs-hrv" };
+    ok("auto429: Steve hbs-hrv liga para hr",
+       ling_legenda_auto("hr", steve, 2, 1, NULL, 0, 1) == 1); }
 
   if (falhas) { printf("%d falha(s)\n", falhas); return 1; }
   printf("linguas ok\n");

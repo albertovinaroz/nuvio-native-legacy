@@ -1,6 +1,7 @@
 #include "legenda.h"
 #include "assrender.h"
 #include "rede.h"
+#include "idioma.h"
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -627,7 +628,39 @@ static char *documentoTexto(const LegendaCue *v, int n) {
 #endif
 }
 
-typedef struct { char url[1400]; unsigned g; LegendaBaixada pronto; void *u; } Pedido;
+typedef struct PreDownload {
+  char url[1400];
+  char *bruto;
+  long nb;
+  int refs, terminou;
+  unsigned sessao;
+} PreDownload;
+static unsigned preGeracao;
+static PreDownload *preDownload;
+static int preTentou;
+static pthread_cond_t prePronto = PTHREAD_COND_INITIALIZER;
+
+// Todas as referencias e o corpo ficam sob trava; o fio nunca toca a UI.
+static void preLiberar(PreDownload *p) {
+  if (!--p->refs) { free(p->bruto); free(p); }
+}
+static void preDescartar(const char *motivo) {
+  if (!preDownload) return;
+  printf("[legenda] pre-download: descartado (%s)\n", motivo);
+  preGeracao++; preLiberar(preDownload); preDownload = NULL;
+}
+void legenda_pre_descartar(const char *motivo) {
+  pthread_mutex_lock(&trava);
+  preDescartar(motivo);
+  pthread_mutex_unlock(&trava);
+}
+void legenda_pre_reiniciar(void) {
+  pthread_mutex_lock(&trava);
+  preDescartar("novo play"); preGeracao++; preTentou = 0;
+  pthread_mutex_unlock(&trava);
+}
+
+typedef struct { char url[1400]; unsigned g; LegendaBaixada pronto; void *u; PreDownload *pre; } Pedido;
 
 /* So o host do link, para o log de tempo: caminho e query levam a chave do
  * addon/debrid e nunca saem daqui; "usuario:senha@" tambem cai fora. */
@@ -648,13 +681,54 @@ static double msAgora(void) {
   return t.tv_sec * 1000.0 + t.tv_nsec / 1e6;
 }
 
+static void *preBaixar(void *u) {
+  PreDownload *p = u;
+  double t0 = msAgora(); long nb = 0;
+  char *bruto = rede_baixar_bin(p->url, 20, &nb);
+  pthread_mutex_lock(&trava);
+  p->bruto = bruto; p->nb = nb; p->terminou = 1;
+  if (preDownload == p && p->sessao == preGeracao) {
+    if (bruto) printf("[legenda] pre-download: pronto em %.0f ms antes do video\n", msAgora() - t0);
+    else preDescartar("falha no download");
+  }
+  pthread_cond_broadcast(&prePronto);
+  preLiberar(p);
+  pthread_mutex_unlock(&trava);
+  return NULL;
+}
+void legenda_pre_baixar(const char *url) {
+  PreDownload *p; pthread_t fio;
+  if (!url || !*url) return;
+  pthread_mutex_lock(&trava);
+  if (preTentou) { pthread_mutex_unlock(&trava); return; }
+  preTentou = 1;
+  p = calloc(1, sizeof *p);
+  if (p) {
+    snprintf(p->url, sizeof p->url, "%s", url);
+    p->refs = 2; p->sessao = preGeracao; preDownload = p;
+    if (pthread_create(&fio, NULL, preBaixar, p) == 0) pthread_detach(fio);
+    else { preDescartar(i18n("sem fio")); preLiberar(p); }
+  }
+  pthread_mutex_unlock(&trava);
+}
+
 static void *baixar(void *u) {
   Pedido *p=u; long nb=0; const char *cs="utf-8";
   char host[128]; double t0=msAgora();
   hostDoLink(p->url,host,sizeof host);
-  char *bruto=rede_baixar_bin(p->url,20,&nb);
-  printf("[legenda] download: host=%s %ld bytes em %.0f ms%s\n",host,bruto?nb:0L,msAgora()-t0,bruto?"":" (falhou)");
-  fflush(stdout);
+  char *bruto;
+  int reaproveitado = p->pre != NULL;
+  if (p->pre) {
+    pthread_mutex_lock(&trava);
+    while (!p->pre->terminou) pthread_cond_wait(&prePronto, &trava);
+    bruto = p->pre->bruto; nb = p->pre->nb; p->pre->bruto = NULL;
+    preLiberar(p->pre); p->pre = NULL;
+    pthread_mutex_unlock(&trava);
+  } else bruto = rede_baixar_bin(p->url,20,&nb);
+  if (!reaproveitado) {
+    printf("[legenda] download: host=%s %ld bytes em %.0f ms%s\n",host,bruto?nb:0L,msAgora()-t0,bruto?"":" (falhou)");
+    fflush(stdout);
+  }
   char *corpo=bruto?legenda_utf8(bruto,nb,&cs):NULL; LegendaCue *v=NULL;
   free(bruto);
   if (corpo && strcmp(cs,"utf-8")) { printf("[legenda] texto em %s, convertido para UTF-8\n",cs); fflush(stdout); }
@@ -701,6 +775,9 @@ unsigned legenda_carregar_com(const char *url, LegendaBaixada pronto, void *u) {
   p=calloc(1,sizeof *p);if(!p){ if(pronto)pronto(NULL,0,0,u); return 0; }
   p->pronto=pronto;p->u=u;
   pthread_mutex_lock(&trava);
+  if (preDownload && !strcmp(preDownload->url, url)) {
+    p->pre = preDownload; preDownload = NULL; // transfere a referencia ao pedido
+  } else preDescartar("outra escolha");
   ligada=1;p->g=++geracao;free(cues);cues=NULL;nCues=0;maiorDur=0;
   pthread_mutex_unlock(&trava);
   assrender_geracao(p->g);
@@ -708,7 +785,12 @@ unsigned legenda_carregar_com(const char *url, LegendaBaixada pronto, void *u) {
   snprintf(p->url,sizeof p->url,"%s",url);
   g=p->g;
   if(pthread_create(&fio,NULL,baixar,p)==0)pthread_detach(fio);
-  else { if(pronto)pronto(NULL,g,0,u); free(p); }
+  else {
+    pthread_mutex_lock(&trava);
+    if (p->pre) preLiberar(p->pre);
+    pthread_mutex_unlock(&trava);
+    if(pronto)pronto(NULL,g,0,u); free(p);
+  }
   return g;
 }
 
@@ -792,6 +874,7 @@ void legenda_atualizar_corpo(const char *corpo) {
 
 void legenda_desligar(void) {
   pthread_mutex_lock(&trava);
+  preDescartar(i18n("legenda desligada"));
   ligada=0;geracao++;free(cues);cues=NULL;nCues=0;maiorDur=0;
   pthread_mutex_unlock(&trava);
   assrender_geracao(geracao);

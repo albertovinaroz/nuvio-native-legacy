@@ -4,8 +4,12 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
+// A entrega real tem o harness watchstate_poda.sh; aqui nao ha diario.
+void wsenvio_podar(void) {}
+void wsenvio_podar_addon(const char *base) { (void)base; }
 #include <string.h>
 #include <unistd.h>
+#include "stub_perfisessao.h"
 #include "../src/fontecache.c"
 
 // Regional provider discovery has its own harness; keep this cache fixture
@@ -78,6 +82,7 @@ void stream_definir_lista_idade(const Stream *l, int n, Uint32 idade) {
   idadeLista = idade;
   snprintf(listaAlvo, sizeof listaAlvo, "%s", pedidoAlvo);
 }
+void stream_preparar_dica_p2p(const Stream *l, int n) { (void)l; (void)n; }
 void stream_definir_lista(const Stream *l, int n) { stream_definir_lista_idade(l, n, 0); }
 // #221: a busca real publica por addon; a lista cresce sem ser trocada.
 void stream_lista_acrescentar(const Stream *l, int n, int o) {

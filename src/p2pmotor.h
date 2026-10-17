@@ -78,6 +78,11 @@ unsigned p2pmotor_teto_mb(void);
 // pessoa pediu ate tanto, limitado ao livre menos P2PM_RESERVA_MB e nunca
 // abaixo do Automatico. Vale na proxima subida do motor. Qualquer fio.
 void p2pmotor_definir_limite_mb(unsigned mb);
+// #205: 1 = tentar cache em pendrive USB (cai para interno se nao houver ou falhar).
+void p2pmotor_definir_usb(int usar);
+// 1 se ha pendrive gravavel agora — Ajustes cinza a opcao "Pendrive USB" com
+// isto. Resposta cacheada por ~2 s; a sonda nao cria nem apaga nada no volume.
+int p2pmotor_usb_presente(void);
 // A conta acima, pura (testes).
 uint64_t p2pmotor_teto_duro(uint64_t livre, unsigned escolhaMb);
 // #334: janela de streaming que o motor recebe para um teto duro (0 = sem
@@ -89,8 +94,9 @@ int p2pmotor_cabe(uint64_t tam, uint64_t duro);
 // subiu (0 = desconhecido). Para a tela explicar a parada por espaco.
 void p2pmotor_arquivo_atual(uint64_t *tam, uint64_t *teto, uint64_t *livre);
 // Inicio do app: apaga a pasta do motor que sobrou de uma sessao que caiu (TV
-// desligada com o filme tocando), em fio solto, sem abrir o motor. Sem pasta
-// nao cria fio. Um pedido que chegue durante a limpeza espera por ela.
+// desligada com o filme tocando), em fio solto, sem abrir o motor. Call after
+// settings load: USB discovery runs on that worker only when P2P is enabled.
+// Um pedido que chegue durante a limpeza espera por ela.
 void p2pmotor_limpar_sobra(void);
 
 // BLOQUEIA (fio proprio). Sobe o motor se preciso, registra o magnet (com os
@@ -188,6 +194,7 @@ typedef int (*P2pmLivreFn)(const char *pasta, uint64_t *livre);      // 0 ok
 typedef int (*P2pmSondaFn)(const char *url, int (*parar)(void *), void *u); // 1 ok, 0 sem bytes, -1 HTTP erro
 void p2pmotor_teste_injetar(const P2pmOps *ops, P2pmLivreFn livre, P2pmSondaFn sonda,
                             const char *raiz, unsigned vigia_ms);
+void p2pmotor_teste_usb_base(const char *base);
 // Quantos eventos velhos (de outro pedido) foram descartados desde o inicio.
 unsigned p2pmotor_teste_descartados(void);
 #endif

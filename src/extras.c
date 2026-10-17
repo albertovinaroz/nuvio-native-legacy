@@ -5,6 +5,7 @@
 #include "streams.h"
 #include "marco.h"
 #include "vistoep.h"
+#include "perfisessao.h"
 #include "contalib.h"
 #include "trakt.h"
 #include "rede.h"
@@ -24,10 +25,25 @@ extern void cat_historico_definir_id(const char *imdb, const char *tipo, int vis
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
+#ifdef NV_EXTRAS_TESTE
+// Costura de teste (tests/notas0.c): a rede sai por macros para que o fio de
+// extras_pedir rode num binario de mesa, sem libcurl e sem conta.
+char *rede_baixar_teste(const char *url, int segundos);
+char *rede_baixar_com_teste(const char *url, int segundos, const char *const *cab);
+char *rede_baixar_st_teste(const char *url, int segundos, const char *const *cab,
+                           int *status);
+char *rede_postar_teste(const char *url, int segundos, const char *const *cab,
+                        const char *corpo);
+#define rede_baixar      rede_baixar_teste
+#define rede_baixar_com  rede_baixar_com_teste
+#define rede_baixar_st   rede_baixar_st_teste
+#define rede_postar      rede_postar_teste
+#endif
 
 static int  notaTrakt, votosTrakt;
 static int  notas[EX_NFONTES];
 static char mdbChave[80];
+static char mdbChavePacote[80];
 static char dirArteEx[512];
 
 // Nome do provedor na api do mdbList E nome do arquivo de marca em art/marcas.
@@ -86,6 +102,7 @@ void extras_carregar(const char *dirArte) {
     while (fim > mdbChave && (fim[-1] == '\n' || fim[-1] == '\r')) *--fim = 0;
   }
   fclose(f);
+  snprintf(mdbChavePacote, sizeof mdbChavePacote, "%s", mdbChave);
   printf("[extras] mdblist %s\n", mdbChave[0] ? "ok" : "vazio"); fflush(stdout);
 }
 
@@ -139,6 +156,7 @@ static int  epTempAtual, epNumAtual;    // de que episodio a lista acima e
 static int  epFioVivo;
 static char epShow[24];
 static int  epPedTemp, epPedNum;
+static NvPerfilSessao epComentSessao;
 static int  nComent;
 static struct { char titulo[120], ano[8], imdb[16], poster[NV_ARTE_URL_MAX]; } rel[EX_REL_MAX];
 // Vistos: um bit por episodio, ate 40 episodios em 20 temporadas. Vetor fixo
@@ -227,6 +245,23 @@ static int  nEstudio;
 static long tmdbEmCurso;
 
 static char idPedido[24], idEmCurso[24];
+static NvPerfilSessao sessaoPedido;
+static pthread_key_t sessaoDoFio;
+static pthread_once_t sessaoDoFioUma = PTHREAD_ONCE_INIT;
+static void criarSessaoDoFio(void) { pthread_key_create(&sessaoDoFio, free); }
+static void definirSessaoDoFio(NvPerfilSessao sessao) {
+  NvPerfilSessao *p;
+  pthread_once(&sessaoDoFioUma, criarSessaoDoFio);
+  p = pthread_getspecific(sessaoDoFio);
+  if (!p) { p = malloc(sizeof *p); if (p) pthread_setspecific(sessaoDoFio, p); }
+  if (p) *p = sessao;
+}
+static int sessaoDoFioAtual(void) {
+  NvPerfilSessao *p;
+  pthread_once(&sessaoDoFioUma, criarSessaoDoFio);
+  p = pthread_getspecific(sessaoDoFio);
+  return nv_perfil_sessao_atual(p ? *p : 0);
+}
 static int  serieEmCurso, seriePedido, fioVivo;
 // DOIS FIOS PERMANENTES, UMA GERACAO POR PEDIDO (19/09).
 //
@@ -252,7 +287,7 @@ static void *buscar(void *arg);
 static int pedidoAindaAtual(const char *id) {
   int atual;
   pthread_mutex_lock(&trava);
-  atual = !strcmp(id, idPedido);
+  atual = !strcmp(id, idPedido) && sessaoDoFioAtual();
   pthread_mutex_unlock(&trava);
   return atual;
 }
@@ -457,6 +492,96 @@ int extras_teste_trailers_ficha(const char *corpo, int serie, const char *idioma
 // relacionados e a publicacao final ficam com quem terminar por ultimo
 // (relacionadosEPublicar), porque dependem das duas partes.
 static void relacionadosEPublicar(const char *id, int serie, int temTrakt);
+
+static int fonteDe(const char *fonte) {
+  int k;
+  if (!fonte || !fonte[0]) return -1;
+  for (k = 0; k < EX_NFONTES; k++)
+    if (!strcmp(fonte, FONTE[k])) return k;
+  return -1;
+}
+
+static void amostraCorpo(const char *corpo, char *dst, unsigned tam) {
+  unsigned i, n = 0;
+  if (!dst || !tam) return;
+  dst[0] = 0;
+  if (!corpo) return;
+  for (i = 0; corpo[i] && n + 1 < tam && n < 120; i++) {
+    unsigned char c = (unsigned char)corpo[i];
+    if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+    dst[n++] = (char)c;
+  }
+  dst[n] = 0;
+}
+
+static int publicarMdbNota(const char *id, int fonte, int cru, long tmdbId,
+                           int serie) {
+  if (fonte < 0 || fonte >= EX_NFONTES || cru <= 0) return 0;
+  pthread_mutex_lock(&trava);
+  if (!strcmp(id, idPedido) && sessaoDoFioAtual()) {
+    notas[fonte] = cru;
+    if (fonte == EX_IMDB) {
+      imdbnota_publicar(id, cru);
+      imdbnota_alias_tmdb(id, tmdbId, serie);
+    }
+  }
+  pthread_mutex_unlock(&trava);
+  return 1;
+}
+
+static int mdblistPostProvedor(const char *id, int fonte, long tmdbId, int serie) {
+  const char *cabJ[2] = { "content-type: application/json", NULL };
+  char u[300], corpoPost[80], *rp;
+  double v;
+  snprintf(corpoPost, sizeof corpoPost,
+           "{\"ids\":[\"%s\"],\"provider\":\"imdb\"}", id);
+  snprintf(u, sizeof u, "https://api.mdblist.com/rating/%s/%s?apikey=%s",
+           serie ? "show" : "movie", FONTE[fonte], mdbChave);
+  rp = rede_postar(u, 12, cabJ, corpoPost);
+  if (!rp) return 0;
+  v = js_num(rp, NULL, "rating", -1.0);
+  free(rp);
+  if (v < 0.0) return 0;
+  return publicarMdbNota(id, fonte, emDecimos(v), tmdbId, serie);
+}
+
+static int aplicarMdblist(const char *id, const char *corpo, long tmdbId,
+                          int serie, int *pedidas) {
+  const char *p, *fim;
+  int k, comNota = 0;
+  if (!corpo) return 0;
+  fim = corpo + strlen(corpo);
+  p = js_array(corpo, fim, "ratings");
+  if (p) {
+    for (; p; p = js_prox(js_fim(p))) {
+      char fonte[24];
+      double v;
+      int f;
+      fim = js_fim(p);
+      if (!js_texto(p, fim, "source", fonte, sizeof fonte)) continue;
+      f = fonteDe(fonte);
+      if (f < 0) continue;
+      if (pedidas) (*pedidas)++;
+      if (f >= EX_METAUSER && !ajustes_nota_titulo(f)) continue;
+      v = js_num(p, fim, "score", -1.0);
+      if (v < 0.0) v = js_num(p, fim, "value", -1.0);
+      if (v < 0.0) v = js_num(p, fim, "rating", -1.0);
+      if (v < 0.0) continue;
+      if (publicarMdbNota(id, f, emDecimos(v), tmdbId, serie)) comNota++;
+    }
+    return comNota;
+  }
+  for (k = 0; k < EX_NFONTES; k++) {
+    double v;
+    if (k >= EX_METAUSER && !ajustes_nota_titulo(k)) continue;
+    if (pedidas) (*pedidas)++;
+    v = js_num(corpo, fim, FONTE[k], -1.0);
+    if (v < 0.0) continue;
+    if (publicarMdbNota(id, k, emDecimos(v), tmdbId, serie)) comNota++;
+  }
+  return comNota;
+}
+
 static void *buscar(void *arg) {
   const char *cab[4];
   char aut[200], chave[140], url[200], id[24];
@@ -467,13 +592,17 @@ static void *buscar(void *arg) {
   int parte = (int)(intptr_t)arg;
   unsigned long long historicoGeracao = cat_historico_geracao();
   unsigned long long credencialGeracao = trakt_credencial_geracao();
+  NvPerfilSessao perfilSessao;
 
   pthread_mutex_lock(&trava);
+  perfilSessao = sessaoPedido;
   snprintf(id, sizeof id, "%s", idEmCurso);
   serie = serieEmCurso;
   tmdbId = tmdbEmCurso;
   tipo = serie ? "shows" : "movies";
   pthread_mutex_unlock(&trava);
+  definirSessaoDoFio(perfilSessao);
+  if (!id[0] || !nv_perfil_sessao_atual(perfilSessao)) return NULL;
 
   // O Trakt E OPCIONAL. Os blocos que dependem dele (vistos, nota Trakt,
   // comentarios, notas por episodio, related de sobra) rodam so quando ha
@@ -562,7 +691,7 @@ static void *buscar(void *arg) {
                 if (js_texto(q, qf, "last_watched_at", quando, sizeof quando) && quando[0])
                   quandoMs = js_ms_iso(quando);
               }
-              vistoep_fonte(id, t, en, visto, quandoMs, &fonte);
+              vistoep_fonte_se_sessao(id, t, en, visto, quandoMs, &fonte, perfilSessao);
               { char cru[16] = "ausente";
                 js_bruto(q, qf, "completed", cru, sizeof cru);
                 printf("[vistoep] %s T%dE%d: trakt completed=%s lido=%d last_ms=%lld mapa=%d\n",
@@ -624,7 +753,7 @@ static void *buscar(void *arg) {
       int valido = strstr(corpo, "\"seasons\"") != NULL;
       free(corpo);
       pthread_mutex_lock(&trava);
-      if (!strcmp(id, idPedido) && valido) {
+      if (!strcmp(id, idPedido) && sessaoDoFioAtual() && valido) {
         memcpy(vistos, novo, sizeof vistos);
         proximoT = pt; proximoE = pe; progressoPronto = 1;
         epsExibidos = exib; epsVistos = vist;
@@ -646,12 +775,17 @@ static void *buscar(void *arg) {
   if (parte != 1 && temTrakt) {
   snprintf(url, sizeof url, "https://api.trakt.tv/%s/%s/ratings", tipo, id);
   corpo = rede_baixar_com(url, 12, cab);
+  // Diagnostico: "notas=0/11" nao dizia se o Trakt nao respondeu ou respondeu
+  // sem rating; uma linha por resultado separa rede de parse.
+  if (!corpo) printf("[extras] %s: ratings trakt sem resposta\n", id);
+  else if (js_num(corpo, NULL, "rating", 0.0) <= 0.0)
+    printf("[extras] %s: ratings trakt respondeu sem nota\n", id);
   if (corpo) {
     int n = para100(js_num(corpo, NULL, "rating", 0.0));
     int v = (int)js_num(corpo, NULL, "votes", 0.0);
     free(corpo);
     pthread_mutex_lock(&trava);
-    if (!strcmp(id, idPedido)) {
+    if (!strcmp(id, idPedido) && sessaoDoFioAtual()) {
       notaTrakt = n; votosTrakt = v;
       // Sem chave do mdbList esta e a UNICA nota do Trakt que teremos; com
       // chave, o passo seguinte sobrescreve com a que o mdbList devolver, que
@@ -675,47 +809,48 @@ static void *buscar(void *arg) {
       js_texto(corpo,NULL,"status",estado,sizeof estado);
       free(corpo);
       pthread_mutex_lock(&trava);
-      if(!strcmp(id,idPedido)) snprintf(fichaStatus,sizeof fichaStatus,"%s",estado);
+      if(!strcmp(id,idPedido) && sessaoDoFioAtual()) snprintf(fichaStatus,sizeof fichaStatus,"%s",estado);
       pthread_mutex_unlock(&trava);
     }
   }
 
   //
-  // Um POST por provedor, como o web faz (fetchProviderRating): a api aceita
-  // "ids" em lote mas so um provedor por chamada. Sao sete chamadas curtas; o
-  // fio ja e proprio, entao nao atrapalha o desenho.
+  // Um GET por titulo: /imdb/{movie|show}/{id} devolve todas as fontes em ratings[].
+  // O antigo /?i= agora so responde a pagina de ajuda da api (http 200, sem notas).
+  // O POST por provedor so lia "rating" e voltava 0/11 com o corpo novo.
   // mdblist_enabled corta a CONSULTA — as notas que o app tem por conta
   // propria (Trakt direto, IMDb do catalogo) nao dependem desta chave.
   if (parte != 0 && mdbChave[0] && ajustes_mdblist_ligado()) {
-    const char *cabJ[3];
-    char kj[64];
-    char corpoPost[80];
-    int k;
-    snprintf(kj, sizeof kj, "content-type: application/json");
-    cabJ[0] = kj; cabJ[1] = NULL; cabJ[2] = NULL;
-    snprintf(corpoPost, sizeof corpoPost,
-             "{\"ids\":[\"%s\"],\"provider\":\"imdb\"}", id);
-    for (k = 0; k < EX_NFONTES; k++) {
-      char u[300], *rp;
-      // As fontes extras so custam a viagem quando a pessoa as pediu na linha
-      // do titulo (o padrao e desligado): sao quatro POSTs a mais por titulo.
-      if (k >= EX_METAUSER && !ajustes_nota_titulo(k)) continue;
-      snprintf(u, sizeof u, "https://api.mdblist.com/rating/%s/%s?apikey=%s",
-               serie ? "show" : "movie", FONTE[k], mdbChave);
-      rp = rede_postar(u, 12, cabJ, corpoPost);
-      if (!rp) continue;
-      { double v = js_num(rp, NULL, "rating", -1.0);
-        free(rp);
-        if (v >= 0.0) {
-          int c = emDecimos(v);
-          pthread_mutex_lock(&trava);
-          if (!strcmp(id, idPedido)) {
-            notas[k] = c;
-            if (k == EX_IMDB) { imdbnota_publicar(id,c); imdbnota_alias_tmdb(id,tmdbId,serie); }
-          }
-          pthread_mutex_unlock(&trava);
-        } }
+    char u[300], amostra[128];
+    int status = 0, pedidas = 0, comNota = 0;
+    snprintf(u, sizeof u, "https://api.mdblist.com/imdb/%s/%s?apikey=%s",
+             serie ? "show" : "movie", id, mdbChave);
+    corpo = rede_baixar_st(u, 12, NULL, &status);
+    if (corpo) {
+      comNota = aplicarMdblist(id, corpo, tmdbId, serie, &pedidas);
+      if (!comNota) {
+        amostraCorpo(corpo, amostra, sizeof amostra);
+        printf("[extras] %s: mdblist http=%d sem nota corpo=%s\n",
+               id, status, amostra);
+      }
+      free(corpo);
+    } else {
+      printf("[extras] %s: mdblist http=%d sem resposta\n", id, status);
     }
+    if (!comNota) {
+      int k;
+      for (k = 0; k < EX_NFONTES; k++) {
+        if (k >= EX_METAUSER && !ajustes_nota_titulo(k)) continue;
+        pedidas++;
+        if (mdblistPostProvedor(id, k, tmdbId, serie)) comNota++;
+      }
+    }
+    printf("[extras] %s: mdblist pediu %d fontes, %d com nota\n",
+           id, pedidas, comNota);
+  } else if (parte != 0) {
+    // Ate aqui um "notas=0/11" parecia igual com ou sem chave configurada.
+    printf("[extras] %s: mdblist nao consultado (%s)\n", id,
+           !mdbChave[0] ? "sem chave" : "ajuste desligado");
   }
 
   // --- comentarios, os mais curtidos primeiro ---
@@ -759,7 +894,7 @@ static void *buscar(void *arg) {
     // novo: e so a ordem das oito linhas que ja chegaram.
     coment_ordenar(achado, n, idioma_iso(ajustes_idioma()));
     pthread_mutex_lock(&trava);
-    if (!strcmp(id, idPedido)) {
+    if (!strcmp(id, idPedido) && sessaoDoFioAtual()) {
       int k;
       for (k = 0; k < n; k++) {
         snprintf(coment[k].user, sizeof coment[k].user, "%s", achado[k].u);
@@ -811,7 +946,7 @@ static void *buscar(void *arg) {
       }
       free(corpo);
       pthread_mutex_lock(&trava);
-      if (!strcmp(id, idPedido)) nTemps = nt;
+      if (!strcmp(id, idPedido) && sessaoDoFioAtual()) nTemps = nt;
       pthread_mutex_unlock(&trava);
     }
   }
@@ -876,7 +1011,7 @@ static void *buscar(void *arg) {
         // usada por extras_pedir para que uma troca de titulo nao limpe os
         // campos no meio do parse e receba, logo depois, metade da ficha velha.
         pthread_mutex_lock(&trava);
-        if (strcmp(id, idPedido)) {
+        if (strcmp(id, idPedido) || !sessaoDoFioAtual()) {
           pthread_mutex_unlock(&trava);
           free(corpo);
           return NULL;
@@ -1129,7 +1264,7 @@ static void *buscar(void *arg) {
             int nv = parsearVideos(js_array(cs, NULL, "results"), 1,
                                       desc_tmdb_idioma(), vt, EX_TRAILER_MAX);
             pthread_mutex_lock(&trava);
-            if (!strcmp(id, idPedido) && !nTrailer) {
+            if (!strcmp(id, idPedido) && sessaoDoFioAtual() && !nTrailer) {
               publicarTrailers(vt, nv);
             }
             pthread_mutex_unlock(&trava);
@@ -1191,7 +1326,7 @@ static void *buscar(void *arg) {
           free(corpo);
           if (!ne) continue;
           pthread_mutex_lock(&trava);
-          if (!strcmp(id, idPedido)) {
+          if (!strcmp(id, idPedido) && sessaoDoFioAtual()) {
             int t3;
             for (t3 = 0; t3 < nTemps; t3++)
               if (temps[t3].numero == sn[t2]) break;
@@ -1273,7 +1408,7 @@ static void *buscar(void *arg) {
             ach[j2] = v;
           } }
         pthread_mutex_lock(&trava);
-        if (!strcmp(id, idPedido)) {
+        if (!strcmp(id, idPedido) && sessaoDoFioAtual()) {
           int k;
           snprintf(colNome, sizeof colNome, "%s", nome);
           snprintf(colCapa, sizeof colCapa, "%s", capa);
@@ -1375,7 +1510,7 @@ static void relacionadosEPublicar(const char *id, int serie, int temTrakt) {
     }
     free(corpo);
     pthread_mutex_lock(&trava);
-    if (!strcmp(id, idPedido)) {
+    if (!strcmp(id, idPedido) && sessaoDoFioAtual()) {
       int k;
       for (k = 0; k < n; k++) {
         snprintf(rel[k].titulo, sizeof rel[k].titulo, "%s", achado[k].t);
@@ -1486,12 +1621,14 @@ void extras_pedir(const char *imdb, int serie, long tmdbId) {
   // Mesmo id com OUTRO tipo e outro pedido: um titulo de tipo incerto
   // ("anime") abre como filme e o /meta o resolve como serie — ai os extras
   // tem de ser refeitos por /tv e /shows (detail.c repede).
-  if (!strcmp(idPedido, imdb) && seriePedido == serie) {
+  if (!strcmp(idPedido, imdb) && seriePedido == serie &&
+      nv_perfil_sessao_atual(sessaoPedido)) {
     printf("[vistoep] %s: extras reutilizados; fio=%d pronto=%d; sem nova consulta\n",
            imdb, fioVivo, progressoPronto);
     fflush(stdout);
     pthread_mutex_unlock(&trava); return; }
   snprintf(idPedido, sizeof idPedido, "%s", imdb);
+  sessaoPedido = nv_perfil_sessao_ler();
   seriePedido = serie;
   tmdbPedido = tmdbId;
   zerarPublicado();
@@ -1538,14 +1675,17 @@ static void *buscarEpComent(void *arg) {
   char aut[200], chave[140], url[260], show[24];
   char *corpo;
   int t, e;
+  NvPerfilSessao sessao;
   (void)arg;
 
   pthread_mutex_lock(&trava);
   snprintf(show, sizeof show, "%s", epShow);
   t = epPedTemp; e = epPedNum;
+  sessao = epComentSessao;
   pthread_mutex_unlock(&trava);
 
-  if (!trakt_cabecalhos(cab, aut, sizeof aut, chave, sizeof chave)) {
+  if (!nv_perfil_sessao_atual(sessao) ||
+      !trakt_cabecalhos(cab, aut, sizeof aut, chave, sizeof chave)) {
     pthread_mutex_lock(&trava); epFioVivo = 0; pthread_mutex_unlock(&trava);
     return NULL;
   }
@@ -1587,7 +1727,8 @@ static void *buscarEpComent(void *arg) {
     pthread_mutex_lock(&trava);
     // So publica se o dono ainda esta no mesmo episodio: trocar de episodio
     // enquanto isto volta faria a lista antiga aparecer sob o rotulo novo.
-    if (t == epPedTemp && e == epPedNum) {
+    if (nv_perfil_sessao_atual(sessao) && !strcmp(show, epShow) &&
+        t == epPedTemp && e == epPedNum) {
       int k;
       for (k = 0; k < n; k++) {
         snprintf(comentEp[k].user, sizeof comentEp[k].user, "%s", achado[k].u);
@@ -1605,7 +1746,8 @@ static void *buscarEpComent(void *arg) {
     // motivo do teste em extras_pedir_comentarios_ep — senao seria um pedido
     // por quadro ate a rede voltar.
     pthread_mutex_lock(&trava);
-    if (t == epPedTemp && e == epPedNum) { epTempAtual = t; epNumAtual = e; }
+    if (nv_perfil_sessao_atual(sessao) && !strcmp(show, epShow) &&
+        t == epPedTemp && e == epPedNum) { epTempAtual = t; epNumAtual = e; }
     pthread_mutex_unlock(&trava);
   }
   pthread_mutex_lock(&trava); epFioVivo = 0; pthread_mutex_unlock(&trava);
@@ -1631,6 +1773,7 @@ void extras_pedir_comentarios_ep(const char *imdbSerie, int temporada, int episo
     dp = strchr(epShow, ':');
     if (dp) *(char *)dp = 0; }
   epPedTemp = temporada; epPedNum = episodio;
+  epComentSessao = nv_perfil_sessao_ler();
   nComentEp = 0;                 // limpa: a lista velha e de outro episodio
   epTempAtual = epNumAtual = 0;
   epFioVivo = 1;
@@ -1876,7 +2019,10 @@ void extras_trailer_abrir(int i) {
   if (!yt[0]) return;
   char url[128];
   snprintf(url, sizeof url, "https://www.youtube.com/watch?v=%s", yt);
-#if defined(__EMSCRIPTEN__) || defined(NV_TPK) || defined(NV_ANDROID)
+#ifdef NV_VIDAA
+  printf("[extras] youtube externo indisponivel no VIDAA\n");
+  fflush(stdout);
+#elif defined(__EMSCRIPTEN__) || defined(NV_TPK) || defined(NV_ANDROID)
   // SAMSUNG (e Android, por ora; TODO Intent ACTION_VIEW): NAO abre mais nada (#136). No wgt o window.open trocava a
   // propria pagina do app pelo youtube.com/watch — o video tocava, mas o
   // Voltar nao tinha mais o Nuvio para onde voltar. O trailer da Samsung
@@ -2026,12 +2172,21 @@ int extras_proximo_episodio(int *t, int *e) {
 // Capturas: relacionados fixos (titulo, ano, imdb e poster por item).
 void extras_shot_relacionados(const char *const *titulo, const char *const *ano,
                               const char *const *poster, int n) {
+  extras_shot_relacionados_ids(titulo, ano, poster, NULL, n);
+}
+
+void extras_shot_relacionados_ids(const char *const *titulo, const char *const *ano,
+                                  const char *const *poster, const char *const *imdb,
+                                  int n) {
   int i;
   nRel = n < EX_REL_MAX ? n : EX_REL_MAX;
   for (i = 0; i < nRel; i++) {
     snprintf(rel[i].titulo, sizeof rel[i].titulo, "%s", titulo[i]);
     snprintf(rel[i].ano, sizeof rel[i].ano, "%s", ano[i]);
-    snprintf(rel[i].imdb, sizeof rel[i].imdb, "tt%07d", 100 + i);
+    if (imdb && imdb[i] && imdb[i][0])
+      snprintf(rel[i].imdb, sizeof rel[i].imdb, "%s", imdb[i]);
+    else
+      snprintf(rel[i].imdb, sizeof rel[i].imdb, "tt%07d", 100 + i);
     snprintf(rel[i].poster, sizeof rel[i].poster, "%s", poster[i]);
   }
 }
@@ -2062,6 +2217,7 @@ static int exrProx;
 static char exrPedido[24];
 static int exrSerie, exrSinopse, exrFio;
 static unsigned long exrGer, exrFeita;
+static NvPerfilSessao exrSessao;
 static pthread_mutex_t exrTrava = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t exrCv = PTHREAD_COND_INITIALIZER;
 
@@ -2094,13 +2250,16 @@ static void *lacoResumo(void *ignorado) {
     char id[24], url[400], chaveT[140], chaveTmdb[140];
     const char *cabPub[3];
     char *corpo;
-    int serie, querSinopse, k, cortado = 0;
+    int serie, querSinopse, cortado = 0;
+    NvPerfilSessao sessao;
     pthread_mutex_lock(&exrTrava);
     while (exrFeita == exrGer) pthread_cond_wait(&exrCv, &exrTrava);
     exrFeita = exrGer;
     snprintf(id, sizeof id, "%s", exrPedido);
     serie = exrSerie; querSinopse = exrSinopse;
+    sessao = exrSessao;
     pthread_mutex_unlock(&exrTrava);
+    if (!id[0] || !nv_perfil_sessao_atual(sessao)) continue;
 
     // 1. Trakt, uma viagem.
     if (trakt_cabecalhos_publicos(cabPub, chaveT, sizeof chaveT)) {
@@ -2118,7 +2277,7 @@ static void *lacoResumo(void *ignorado) {
         numaLinha(t.sinopseEn);
         free(corpo);
         pthread_mutex_lock(&exrTrava);
-        { ExrVaga *v = exrVaga(id, 1);
+        if (nv_perfil_sessao_atual(sessao)) { ExrVaga *v = exrVaga(id, 1);
           if (!v->r.cru[EX_TRAKT]) v->r.cru[EX_TRAKT] = t.cru[EX_TRAKT];
           v->r.duracao = t.duracao;
           snprintf(v->r.cert, sizeof v->r.cert, "%s", t.cert);
@@ -2127,6 +2286,7 @@ static void *lacoResumo(void *ignorado) {
         pthread_mutex_unlock(&exrTrava);
       }
     }
+    if (!nv_perfil_sessao_atual(sessao)) continue;
 
     // 2. TMDB, so pela sinopse no idioma da interface.
     snprintf(chaveTmdb, sizeof chaveTmdb, "%s", desc_chave_tmdb());
@@ -2143,7 +2303,7 @@ static void *lacoResumo(void *ignorado) {
           js_texto(v, js_fim(v), "overview", sin, sizeof sin);
           numaLinha(sin);
           pthread_mutex_lock(&exrTrava);
-          { ExrVaga *g = exrVaga(id, 1);
+          if (nv_perfil_sessao_atual(sessao)) { ExrVaga *g = exrVaga(id, 1);
             if (sin[0]) snprintf(g->r.sinopse, sizeof g->r.sinopse, "%s", sin);
             if (!g->r.cru[EX_TMDB] && nota > 0.0) g->r.cru[EX_TMDB] = emDecimos(nota * 10.0); }
           pthread_mutex_unlock(&exrTrava);
@@ -2151,41 +2311,63 @@ static void *lacoResumo(void *ignorado) {
         free(corpo);
       }
     }
+    if (!nv_perfil_sessao_atual(sessao)) continue;
 
     // 3. MDBList, so o que a linha do titulo mostra.
     if (mdbChave[0] && ajustes_mdblist_ligado()) {
-      const char *cabJ[2] = { "content-type: application/json", NULL };
-      char corpoPost[80];
-      snprintf(corpoPost, sizeof corpoPost, "{\"ids\":[\"%s\"],\"provider\":\"imdb\"}", id);
-      for (k = 0; k < EX_NFONTES; k++) {
-        char *rp;
-        int ja;
-        if (!ajustes_nota_titulo(k) || !ajustes_mdblist_fonte(k)) continue;
-        pthread_mutex_lock(&exrTrava);
-        { ExrVaga *g = exrVaga(id, 0); ja = g && g->r.cru[k] > 0 && k == EX_TRAKT; }
-        // Outro titulo pedido no meio: este para aqui e o fio pega o novo.
-        if (exrGer != exrFeita) ja = -1;
-        pthread_mutex_unlock(&exrTrava);
-        if (ja < 0) { cortado = 1; break; }
-        if (ja) continue;
-        snprintf(url, sizeof url, "https://api.mdblist.com/rating/%s/%s?apikey=%s",
-                 serie ? "show" : "movie", FONTE[k], mdbChave);
-        rp = rede_postar(url, 8, cabJ, corpoPost);
-        if (!rp) continue;
-        { double v = js_num(rp, NULL, "rating", -1.0);
-          free(rp);
-          if (v >= 0.0) {
-            int c = emDecimos(v);
+      int status = 0, comNota = 0;
+      snprintf(url, sizeof url, "https://api.mdblist.com/imdb/%s/%s?apikey=%s",
+               serie ? "show" : "movie", id, mdbChave);
+      corpo = rede_baixar_st(url, 8, NULL, &status);
+      if (corpo) {
+        const char *p, *fim = corpo + strlen(corpo);
+        p = js_array(corpo, fim, "ratings");
+        if (p) {
+          for (; p; p = js_prox(js_fim(p))) {
+            char fonte[24];
+            double v;
+            int f, cru;
+            fim = js_fim(p);
+            if (!js_texto(p, fim, "source", fonte, sizeof fonte)) continue;
+            f = fonteDe(fonte);
+            if (f < 0 || !ajustes_nota_titulo(f) || !ajustes_mdblist_fonte(f)) continue;
             pthread_mutex_lock(&exrTrava);
-            { ExrVaga *g = exrVaga(id, 1); g->r.cru[k] = c; }
+            { ExrVaga *g = exrVaga(id, 0);
+              if (exrGer != exrFeita || !nv_perfil_sessao_atual(sessao)) { cortado = 1; pthread_mutex_unlock(&exrTrava); break; }
+              if (g && g->r.cru[f] > 0 && f == EX_TRAKT) { pthread_mutex_unlock(&exrTrava); continue; } }
             pthread_mutex_unlock(&exrTrava);
-            if (k == EX_IMDB) imdbnota_publicar(id, c);
-          } }
+            if (cortado) break;
+            v = js_num(p, fim, "score", -1.0);
+            if (v < 0.0) v = js_num(p, fim, "value", -1.0);
+            if (v < 0.0) v = js_num(p, fim, "rating", -1.0);
+            if (v < 0.0) continue;
+            cru = emDecimos(v);
+            pthread_mutex_lock(&exrTrava);
+            if (nv_perfil_sessao_atual(sessao)) { ExrVaga *g = exrVaga(id, 1); g->r.cru[f] = cru; }
+            pthread_mutex_unlock(&exrTrava);
+            if (f == EX_IMDB && nv_perfil_sessao_travar(sessao)) {
+              imdbnota_publicar(id, cru);
+              nv_perfil_sessao_destravar();
+            }
+            comNota++;
+          }
+        }
+        if (!comNota && !cortado) {
+          char amostra[128];
+          amostraCorpo(corpo, amostra, sizeof amostra);
+          printf("[extras] %s: mdblist http=%d sem nota corpo=%s\n",
+                 id, status, amostra);
+        }
+        free(corpo);
+      } else if (!cortado) {
+        printf("[extras] %s: mdblist http=%d sem resposta\n", id, status);
       }
     }
 
     pthread_mutex_lock(&exrTrava);
-    { ExrVaga *g = exrVaga(id, 1); g->r.pronto = !cortado; g->r.carregando = 0; }
+    if (nv_perfil_sessao_atual(sessao)) {
+      ExrVaga *g = exrVaga(id, 1); g->r.pronto = !cortado; g->r.carregando = 0;
+    }
     pthread_mutex_unlock(&exrTrava);
   }
   return NULL;
@@ -2203,6 +2385,7 @@ void extras_resumo_pedir(const char *imdb, int serie, int semSinopse) {
     v->r.carregando = 1; }
   snprintf(exrPedido, sizeof exrPedido, "%s", id);
   exrSerie = serie; exrSinopse = semSinopse;
+  exrSessao = nv_perfil_sessao_ler();
   exrGer++;
   if (!exrFio) {
     pthread_t t;
@@ -2255,4 +2438,32 @@ void extras_teste_progresso(const char *id, int nVistos, int exibidos, int pt, i
   memset(vistos, 0, sizeof vistos);
   { int t, e; for (t = 1; t <= 3; t++) for (e = 1; e < 8 && t < 3; e++) vistos[t][e] = 1; }
   pthread_mutex_unlock(&trava);
+}
+
+void extras_abrir_sessao(void) {
+  snprintf(mdbChave, sizeof mdbChave, "%s", mdbChavePacote);
+  pthread_mutex_lock(&trava);
+  idPedido[0] = idEmCurso[0] = 0;
+  sessaoPedido = nv_perfil_sessao_ler();
+  gerPedida++;
+  gerFeita[0] = gerFeita[1] = gerPedida;
+  fioVivo = 0;
+  zerarPublicado();
+  epShow[0] = 0;
+  nComentEp = epTempAtual = epNumAtual = epPedTemp = epPedNum = 0;
+  pthread_mutex_unlock(&trava);
+  pthread_mutex_lock(&heroTrailerTrava);
+  heroTrailerGer++;
+  heroTrailerPedido[0] = 0;
+  nHeroTrailer = heroTrailerTentativas = 0;
+  heroTrailerTentativaEm = 0;
+  pthread_mutex_unlock(&heroTrailerTrava);
+  pthread_mutex_lock(&exrTrava);
+  memset(exrCache, 0, sizeof exrCache);
+  exrProx = 0;
+  exrPedido[0] = 0;
+  exrSessao = nv_perfil_sessao_ler();
+  exrGer++;
+  exrFeita = exrGer;
+  pthread_mutex_unlock(&exrTrava);
 }

@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # The remembered source keeps the release name (the Scandal bug): two works
 # with the same provider, bingeGroup, label and height must not share one
 # memory row, and a re-pick differing only in the file name must be written.
@@ -11,7 +13,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-NUVIO_DADOS=$(mktemp -d /tmp/nuvio-fontepref-file.XXXXXX)
+NUVIO_DADOS=$(mktemp -d ${TMPDIR:-/tmp}/nuvio-fontepref-file.XXXXXX)
 export NUVIO_DADOS
 trap 'rm -rf "$NUVIO_DADOS"' EXIT
 
@@ -34,7 +36,7 @@ if [ "${SANITIZE:-0}" = 1 ]; then cflags+=(-fsanitize=address,undefined -fno-omi
 
 # Libs AFTER the objects: the linker is order-sensitive on Linux.
 cc ${cflags[@]+"${cflags[@]}"} "${sources[@]}" tests/fontepref_file.c -Isrc \
-  -o /tmp/nuvio-fontepref-file -O1 -g \
+  -o ${TMPDIR:-/tmp}/nuvio-fontepref-file -O1 -g \
   ${libs[@]+"${libs[@]}"} \
   -Wall -Wextra -Wno-deprecated-declarations
-/tmp/nuvio-fontepref-file "$@"
+${TMPDIR:-/tmp}/nuvio-fontepref-file "$@"

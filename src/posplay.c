@@ -9,6 +9,7 @@
 #include "extras.h"
 #include "gfx.h"
 #include "text.h"
+#include "sinopse.h"
 #include "tex_cache.h"
 #include "layout.h"
 #include "anim.h"
@@ -36,9 +37,7 @@
 // Contagem configuravel, 5 s de fabrica, desligada por padrao (#256).
 // O web abre o painel de filme aos 90%; aqui, desde a 2.0.3, sem marcador e um
 // tempo FIXO antes do fim (intro_fim_estimado_filme, intro.h).
-// #331: a contagem nao espera mais os 5 s finais. O cartao sobe com os creditos
-// e, PP_ATRASO_MS depois, a contagem comeca com os creditos ainda rolando.
-#define PP_ATRASO_MS      4000u
+// #470: a contagem comeca quando o cartao sobe, ainda durante os creditos.
 // Guardas do #115 ("More like this aparece cedo demais — no comeco do
 // filme"). Ver posplay_regra_filme.
 #define PP_FILME_METADE   0.5     // nunca antes da metade da duracao
@@ -110,16 +109,12 @@ static void cancelarPreparo(int apagar) {
   if (apagar && preAlvo[0])
     fontecache_vod_apagar(preAlvo, "series", "", &preEscopo);
 }
-static int    marcadorReal;          // o player diz: creditos de marcador real, nao estimativa (#331)
 // CENA POS-CREDITOS (TMDB 179430/179431 em CatItem.posCreditos). `aguardaCena`:
 // ha cena e o arquivo ainda nao acabou — o cartao fica no ar mas NAO age (nem
 // contagem, nem troca de titulo). `cenaPendente`: a pessoa escolheu continuar;
 // o cartao volta inteiro no fim real. So a acao da UI espera: visto/progresso
 // seguem no limiar de creditos (player.c, concluiuAgora).
 static int    cenaPendente, cenaNoFim, aguardaCena;
-static Uint32 abriuEm;               // quando o cartao do proximo episodio subiu (#331)
-
-void posplay_marcador_real(int real) { marcadorReal = real; }
 int posplay_visivel(void) { return visivel; }
 // Cartao do proximo episodio: SOBRE o video em tela cheia (o video nao recua).
 // Os relacionados do filme, bem mais altos, continuam recuando o video.
@@ -193,6 +188,15 @@ void posplay_busca_usuario(void) {
   proximopreparo_cancelar();
   preTentou = preVideoTentou = preVideoRenovou = 0;
   aguardaBusca = 1;
+}
+
+void posplay_troca_manual(void) {
+  cancelarPreparo(0);
+  pedT = pedE = 0;
+  pedAutomatico = automaticoEntregue = 0;
+  visivel = 0; fecharEm = 0; foco = 0; dispensado = 1;
+  // Nao chamar proximopreparo_cancelar: consumir/adotar vem antes de fechar
+  // o player. Um pedido de Anterior cancela o alvo diferente no roteador.
 }
 
 // Recuar e pedir para ficar neste episodio. O cartao continua servindo ao OK,
@@ -376,16 +380,12 @@ int posplay_regra_filme(double posSeg, double durSeg, double creditosSeg) {
 }
 
 // A CONTAGEM DO PROXIMO EPISODIO, sem estado (o teste chama direto). Devolve o
-// novo `fecharEm` (0 = sem contagem). Regra (#331, no molde da Netflix):
+// novo `fecharEm` (0 = sem contagem). Regra (#470):
 //   - autoplay desligado: nunca conta, o cartao espera a pessoa;
 //   - ja contando: mantem o instante (cancelar e esconder o cartao, que zera);
-//   - cartao no ar ha PP_ATRASO_MS E o inicio dos creditos vem de um MARCADOR de verdade
-//     (capitulo do MKV ou TheIntroDB deste episodio): arma contagemSeg a partir de agora, com os creditos
-//     ainda rolando. Com a estimativa dos 2 min finais NAO: ali ainda ha historia/cena
-//     pos-creditos, e so conta o fim (regra de sempre);
-//   - resta menos que contagemSeg de relogio: arma o que resta.
+//   - cartao apareceu: arma contagemSeg agora, limitada ao que resta.
 // `restaReal` e o que falta do episodio em segundos de relogio.
-Uint32 posplay_contagem(Uint32 agora, Uint32 abriuEm, Uint32 fecharEm, double restaReal, int autoplay, int marcadorReal, int contagemSeg) {
+Uint32 posplay_contagem(Uint32 agora, Uint32 fecharEm, double restaReal, int autoplay, int contagemSeg) {
   Uint32 alvo = 0;
   int armou = 0;
   if (!autoplay) return 0;
@@ -395,7 +395,7 @@ Uint32 posplay_contagem(Uint32 agora, Uint32 abriuEm, Uint32 fecharEm, double re
   if (restaReal <= (double)contagemSeg) {
     if (restaReal < 0.0) restaReal = 0.0;
     alvo = agora + (Uint32)(restaReal * 1000.0); armou = 1;
-  } else if (marcadorReal && abriuEm && (Uint32)(agora - abriuEm) >= PP_ATRASO_MS) {
+  } else {
     alvo = agora + (Uint32)contagemSeg * 1000u; armou = 1;
   }
   if (armou && !alvo) alvo = 1;   // 0 quer dizer "sem contagem"
@@ -451,7 +451,7 @@ void posplay_atualizar(float dt, Uint32 agora, double posSeg, double durSeg,
     // a usa-la aqui foi o que permitiu apagar aquela caixa — havia DUAS
     // interfaces de proximo episodio na mesma tela, uma feia e uma nova.
     //
-    // A contagem antecipada exige marcador real e autoplay ligado.
+    // A contagem comeca com o cartao se autoplay estiver ligado.
     deveAparecer = janelaSerie && durEstavel >= PP_DUR_ESTAVEL_S;
   } else {
     // FILME: a regra inteira mora em posplay_regra_filme, logo acima, que o
@@ -500,8 +500,7 @@ void posplay_atualizar(float dt, Uint32 agora, double posSeg, double durSeg,
       player_episodio_atual(&t, &e);
       if (!(t > 0 && e > 0) && ci) { t = ci->temporada; e = ci->episodio; }
       if (t > 0 && e > 0 && acharProximo(idx, t, e)) {
-        fecharEm = 0;            // a contagem entra PP_ATRASO_MS depois (posplay_contagem)
-        abriuEm = agora ? agora : 1;
+        fecharEm = 0;            // arma neste quadro, depois de abrir o cartao
         visivel = 1;
       }
       // Sem proximo episodio (fim da serie): nao aparece nada. Mostrar um
@@ -512,14 +511,13 @@ void posplay_atualizar(float dt, Uint32 agora, double posSeg, double durSeg,
     }
   }
 
-  // Arma depois de abrir o cartao: marcador real permite antecipar a contagem;
-  // sem ele, conta apenas os segundos restantes. Desligado, espera OK.
+  // Arma ao abrir o cartao. Desligado, espera OK.
   // Recuo e busca pendente suspendem a mesma contagem configuravel.
   if (visivel && serie && janelaSerie && !recuou && !aguardaBusca) {
     // #202: a 1,5x os segundos do arquivo passam mais depressa que os do relogio.
     double resta = vel_tempo_real(durSeg - posSeg, player_velocidade_efetiva());
     if (aguardaCena) fecharEm = 0;
-    else fecharEm = posplay_contagem(agora, abriuEm, fecharEm, resta, ajustes_proximo_auto(), marcadorReal, ajustes_proximo_contagem());
+    else fecharEm = posplay_contagem(agora, fecharEm, resta, ajustes_proximo_auto(), ajustes_proximo_contagem());
   }
 
   // A contagem so vale para o proximo episodio.
@@ -583,11 +581,17 @@ int posplay_evento(const SDL_Event *e) {
       int alvo = id[0] ? cat_indice_por_imdb(id) : -1;
       if (alvo >= 0) { pedTitulo = alvo; esconder(); }
       // NAO ESTA NO CATALOGO LOCAL, que e o caso NORMAL: o relacionado vem do
-      // Trakt e o catalogo tem os titulos das fileiras da home. Antes o OK
-      // simplesmente nao fazia nada — o "nao da pra clicar" do relatorio.
-      // desc_pedir_titulo e o mesmo caminho que a pagina de titulo ja usa
-      // (detail.c:938) para abrir um relacionado que ainda nao temos.
-      else if (id[0]) { desc_pedir_titulo(id); esconder(); }
+      // Trakt/TMDB. Mesmo caminho do detalhe (detail.c, desc_pedir_titulo_semente):
+      // "tmdb:<n>" (recomendacao do TMDB, sem imdb) abre pelo id do TMDB —
+      // desc_pedir_titulo cortava no ':' e buscava o id "tmdb", o OK morria mudo.
+      else if (!strncmp(id, "tmdb:", 5))
+        { desc_pedir_titulo_semente("", atol(id + 5), "movie", extras_relacionado_titulo(foco),
+                                    extras_relacionado_ano(foco), extras_relacionado_poster(foco));
+          esconder(); }
+      else if (id[0])
+        { desc_pedir_titulo_semente(id, 0, "movie", extras_relacionado_titulo(foco),
+                                    extras_relacionado_ano(foco), extras_relacionado_poster(foco));
+          esconder(); }
       return 1;
     } }
   return 0;
@@ -724,7 +728,7 @@ static void posplay_desenharCorpo_(Uint32 agora, float baseY) {
     if (dur[0]) { size_t k = strlen(num); snprintf(num + k, sizeof num - k, " \xc2\xb7 %s", dur); }
     { TxtLinha l = txt_linha(TXT_MINI, num, 243, 242, 239, 255);
       GfxRect chip = { tr.x + 14.0f, tr.y + tr.h - 14.0f - 32.0f, (float)l.w + 24.0f, 32.0f };
-      if (ajustes_vidro()) gfx_cor(chip, 0.5f, 0.055f, 0.059f, 0.071f, 0.80f * a);
+      if (ajustes_vidro()) gfx_vidro_chip(chip, 0.5f, 0.80f, a);
       else gfx_cor(chip, 0.5f, 0.082f, 0.086f, 0.102f, a);
       txt_desenhar_alpha(l, chip.x + 12.0f, chip.y + (32.0f - (float)l.h) * 0.5f, a); }
     { float tx = tr.x + tr.w + 30.0f, tw = ilha.x + ilha.w - 28.0f - tx, ty = ilha.y + 28.0f;
@@ -742,7 +746,7 @@ static void posplay_desenharCorpo_(Uint32 agora, float baseY) {
         { TxtLinha l = txt_linha_corta(TXT_ILHA_SUB, est, 243, 242, 239, 140, tw);
           txt_desenhar_alpha(l, tx, ty, a); ty += (float)l.h + 10.0f; } }
       if (px && px->sinopse[0])
-        txt_bloco_corta(TXT_ILHA_SUB, px->sinopse, 243, 242, 239, tx, ty, tw, 28.5f, a * 0.68f, 2);
+        sinopse_bloco_corta(TXT_ILHA_SUB, px->sinopse, 243, 242, 239, tx, ty, tw, 28.5f, a * 0.68f, 2);
       { float by = ilha.y + ilha.h - 28.0f - 60.0f;
         if (aguardaCena && proxT) {   // continuar | proximo episodio, foco no OK
           float b0 = plrui_botao(tx, by, "Continuar assistindo", "pl_play-f", foco == 0 ? 1.0f : 0.0f, a);

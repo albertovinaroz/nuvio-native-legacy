@@ -1,4 +1,6 @@
 #!/bin/bash
+export TMPDIR="${TMPDIR:-/tmp}"
+TMPDIR="${TMPDIR%/}"
 # A libnuvio.so do Tizen 4/5 NAO PODE TER TLS DE COMPILADOR (#137, #180).
 #
 # O host NuvioTpk40 pode carrega-la por um carregador de ELF proprio
@@ -34,17 +36,17 @@ docker run --rm --platform linux/arm/v5 -v "$PWD/build/tpk":/t nuvio-tpk-sdk sh 
     hash=$(readelf -dW "$L" | grep -cE "\(HASH\)" || true)
     ghash=$(readelf -dW "$L" | grep -cE "\(GNU_HASH\)" || true)
     echo "$f pt_tls=$tls relocs_tls=$rtls tls_get_addr=$tga dt_hash=$hash gnu_hash=$ghash"
-  done' > /tmp/nv-tpk40-tls.txt
-cat /tmp/nv-tpk40-tls.txt
+  done' > "${TMPDIR:-/tmp}/nv-tpk40-tls.txt"
+cat "${TMPDIR:-/tmp}/nv-tpk40-tls.txt"
 
 falhou=0
 # A .so do 4/5: nada de TLS, e DT_HASH presente.
-grep -q "^libnuvio-tpk40.so pt_tls=0 relocs_tls=0 tls_get_addr=0 dt_hash=1 " /tmp/nv-tpk40-tls.txt ||
+grep -q "^libnuvio-tpk40.so pt_tls=0 relocs_tls=0 tls_get_addr=0 dt_hash=1 " "${TMPDIR:-/tmp}/nv-tpk40-tls.txt" ||
   { echo "FALHA: libnuvio-tpk40.so tem TLS ou nao tem DT_HASH"; falhou=1; }
 # A .so comum: continua como sempre (com TLS de rede.c). Se isto mudar, ou
 # alguem tirou o _Thread_local do caminho comum (nao era para) ou a macro
 # NV_TPK40 vazou para a build comum.
-grep -qE "^libnuvio.so pt_tls=1 relocs_tls=[1-9]" /tmp/nv-tpk40-tls.txt ||
+grep -qE "^libnuvio.so pt_tls=1 relocs_tls=[1-9]" "${TMPDIR:-/tmp}/nv-tpk40-tls.txt" ||
   { echo "FALHA: libnuvio.so comum deveria continuar com PT_TLS (rede.c); a NV_TPK40 vazou?"; falhou=1; }
 # As duas exportam a mesma interface nv_tpk_*.
 docker run --rm --platform linux/arm/v5 -v "$PWD/build/tpk":/t nuvio-tpk-sdk sh -c '
