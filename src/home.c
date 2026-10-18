@@ -6070,10 +6070,17 @@ static void desenhaNumeral(int pos, float px, float py, float h, float vao, floa
   snprintf(rank, sizeof rank, "%d", pos);
   TxtLinha nu = txt_linha(TXT_RANK_GRANDE, rank, NUM_COR);
   if (nu.tex) {
-    float e = vao / ((1.0f - NV_TOP10_NUM_SOB) * (float)nu.w);
+    // O que fica SOB o cartaz e uma fracao de UMA cifra, e nao do numero todo:
+    // no "10" a fracao do numero inteiro escondia quase o "0" (fork, 18/10).
+    float sob = NV_TOP10_NUM_SOB;
+    if (pos >= 10) {
+      TxtLinha um = txt_linha(TXT_RANK_GRANDE, "8", NUM_COR);
+      if (um.w > 0 && nu.w > 0) sob = NV_TOP10_NUM_SOB * (float)um.w / (float)nu.w;
+    }
+    float e = vao / ((1.0f - sob) * (float)nu.w);
     if (e > 1.0f) e = 1.0f;
     { float nw = (float)nu.w * e, nh = (float)nu.h * e;
-      float nx = px + nw * NV_TOP10_NUM_SOB - nw;
+      float nx = px + nw * sob - nw;
       float ny = py + h - nh * NV_TOP10_NUM_BASE;
       gfx_rect((GfxRect){ nx, ny, nw, nh }, nu.tex, GFX_TEXTO, 0, 0, 0, 0.0f,
                1, 1, 1, alfa * NUM_ALFA); }
@@ -6327,8 +6334,22 @@ static void desenhaLinhaTempo(int r, float topoFil, float top, float passo, floa
       if (tempoAno[r] < 1000.0f) tempoAno[r] = (float)ano;
       tempoAno[r] = anim_mola(tempoAno[r], (float)ano, dt, NV_MOLA_FOCO * 0.6f);
       snprintf(s, sizeof s, "%d", (int)(tempoAno[r] + 0.5f));
-      t = txt_linha(TXT_ROW_TITULO, s, (int)(ar * 255), (int)(ag * 255), (int)(ab * 255), 255);
-      if (focada) txt_desenhar(t, NV_TELA_W - NV_HOME_SAFE_RIGHT - 150.0f - t.w, topoFil);
+      // No CORPO do contador "x / n" e centrado na linha do titulo, logo a
+      // esquerda da pilula dele. No corpo do titulo (fork, 18/10) ele descia
+      // abaixo da linha e pisava o selo do topo do cartaz ("Top Rated").
+      t = txt_linha(TXT_HERO_META, s, (int)(ar * 255), (int)(ag * 255), (int)(ab * 255), 255);
+      if (focada) {
+        char pos[32]; TxtLinha lp, th = txt_linha(TXT_ROW_TITULO, "0", 0, 0, 0, 255);
+        snprintf(pos, sizeof pos, "%d / %d", alvo + 1, fl->n);
+        lp = txt_linha(TXT_HERO_META, pos, 0, 0, 0, 255);
+        { float yx = homeConteudoDireita() - lp.w - 16.0f - 18.0f - t.w - 16.0f;
+          float yy = topoFil + (th.h - t.h) * 0.5f;
+          // A mesma pilula escura do contador: o acento direto sobre arte
+          // clara sumia (fork, 18/10).
+          gfx_cor((GfxRect){ yx - 16.0f, yy - 6.0f, t.w + 32.0f, t.h + 12.0f }, 0.5f,
+                  0.04f, 0.045f, 0.055f, 0.62f);
+          txt_desenhar(t, yx, yy); }
+      }
     } }
 }
 
@@ -6542,7 +6563,10 @@ static void desenhaRotuloCard(const CatItem *cItem, TipoFileira tipo, int deitad
   if (tipo != FILEIRA_CONTINUE && tipo != FILEIRA_RETORNO && !editorial(tipo) &&
       (ajustes_rotulos_poster() || tipo == FILEIRA_LARGA) && cItem) {
     const char *nome = cItem->titulo[0] ? cItem->titulo : NULL;
-    const char *sub  = cItem->genero[0] ? cItem->genero : NULL;
+    // Fork: a mesma linha sem o tipo ("2026 · Drama · Thriller").
+    char legenda[192];
+    legendaDeFora(cItem, legenda, sizeof legenda);
+    const char *sub  = legenda[0] ? legenda : NULL;
     if (rotuloDentro(tipo, deitado) && nome) {
       // VEU SO VERTICAL, que chega a ZERO no topo do retangulo. Era o
       // GFX_VEU (base + ESQUERDA): a rampa da esquerda ja vale 0,78 no
@@ -6632,8 +6656,13 @@ static void desenhaEditorialCard(const CatItem *cItem, TipoFileira tipo, float p
   // fileiras COLECAO/SERVICO/SOCIAL nao sao destaque e ficam como estao.
   const int semMeta = (tipo == FILEIRA_DESTAQUE || tipo == FILEIRA_DESTAQUE_QUADRADO)
                     && !ajustes_hero_genero();
+  // Fork (18/10): "2026 · Drama · Thriller" (legendaDeFora), sem o "Filme"/
+  // "Série" do comeco — a fileira ja diz o tipo (titulo/pilula) e ele so
+  // repetia em todo card.
+  char legenda[192] = "";
+  if (ci && !semMeta) legendaDeFora(ci, legenda, sizeof legenda);
   const char *genero = semMeta ? NULL
-                      : (ci && ci->genero[0]) ? ci->genero
+                      : legenda[0] ? legenda
                       : ci ? i18n(!strcmp(ci->tipo, "series") ? "Série" : "Filme") : NULL;
   TxtLinha tg = genero
               ? txt_linha_corta(TXT_HERO_META, genero, 226, 228, 233, 255, w - 64)
@@ -7289,7 +7318,13 @@ void home_desenhar(Uint32 agora) {
       // catalogo cujo nome nao trazia o sufixo ("Trending" de filmes e de
       // series) ficava com dois titulos iguais mesmo com o ajuste ligado.
       // Texto: " - Filme" no titulo; Icone (fork): pilula com claquete/TV.
-      const int temTipo = ajustes_sufixo_tipo() && fileiras[r].catTipo[0];
+      // So fileira de CATALOGO de addon (com base): Continuar assistindo e o
+      // calendario sao mistos (filme e serie) e ganhavam a claquete pelo tipo
+      // interno da fileira (fork, 18/10).
+      const int temTipo = ajustes_sufixo_tipo() && fileiras[r].catTipo[0] &&
+                          fileiras[r].base[0] &&
+                          strcmp(fileiras[r].chave, "continue_watching") &&
+                          strcmp(fileiras[r].chave, "upcoming_section");
       const int tipoIcone = temTipo && ajustes_sufixo_icone();
       // "shows" e o "series" do AIOMetadata (descoberta.c, formatarTitulo).
       const int ehSerie = !strcmp(fileiras[r].catTipo, "series") ||

@@ -649,8 +649,13 @@ static void organizar(void);
 // lista: titulo novo vira linha com a barra e o tempo; titulo ja listado sem
 // progresso ganha o da fileira. So itens com progresso: o "proximo episodio"
 // sem nada visto e assunto da home, nao de "Continuar".
+// TERMINADO NAO E "CONTINUAR" (fork, 18/10): o filme a 100% e o episodio
+// acabado ficavam no topo com "Retomar · 100% assistido". >= 90% e "visto" no
+// app inteiro (o selo do cartaz, cat_visto); aqui ele vira sem progresso: sai
+// de "Continuar" e, se esta salvo, fica na lista como os outros.
+#define SP_FIM 90
 static void preencherDoCat(SPLinha *l, const CatItem *c) {
-  l->progresso = c->progresso;
+  l->progresso = c->progresso >= SP_FIM ? 0 : c->progresso;
   l->temporada = c->temporada;
   l->episodio  = c->episodio;
   l->restanteMin = c->restanteMin;
@@ -670,7 +675,7 @@ static void vistosAgora(void) {
       const CatItem *c = cat_item(k);
       int j, achou = -1;
       SPLinha *l;
-      if (!c || !c->imdb[0] || c->progresso <= 0) continue;
+      if (!c || !c->imdb[0] || c->progresso <= 0 || c->progresso >= SP_FIM) continue;
       // UM LUGAR SO (cwretido.h): o que o cartao da ilha / a faixa "Retomar
       // agora" segura so vira linha daqui quando sair de la.
       if (cw_retido_exclui(c->imdb)) continue;

@@ -448,18 +448,24 @@ float badge_imdb(float x, float y, int nota, int escuro, float a) {
   return BADGE_IMDB_W + BADGE_IMDB_GAP + (float)l.w;
 }
 
+// SELO DE ASSISTIDO, COR FIXA (fork, dono 18/10): o acento "Da arte" mudava
+// o disco de cor a cada cartaz. Disco quase branco com o OLHO grafite: le
+// sobre qualquer arte e nao depende do tema.
+#define NV_VISTO_DISCO 0.96f, 0.96f, 0.97f
+#define NV_VISTO_ICONE 0.09f
+#define NV_VISTO_GLIFO "aj_eye"
+
 // CHECK DE ASSISTIDO (U4, 205): UM desenhador para todos os estilos de cartao.
-// Disco no acento com o check da tinta de contraste e sombra rasa. `d` e o
-// diametro; (cx,cy) o centro. Os estilos so mudam ONDE ele cai.
+// Disco de cor fixa com o olho e sombra rasa (fork; era o check no acento).
+// `d` e o diametro; (cx,cy) o centro. Os estilos so mudam ONDE ele cai.
 void badges_check_disco(float cx, float cy, float d, float a) {
-  float ar, ag, ab, tinta, ic = d * 0.60f;
-  tinta = ajustes_acento_tinta(&ar, &ag, &ab);
+  float tinta = NV_VISTO_ICONE, ic = d * 0.60f;
   gfx_rect((GfxRect){ cx - d * 0.5f - 1, cy - d * 0.5f + 2, d + 2, d + 2 }, 0, GFX_DISCO, 0, 0, 0, 0,
            0, 0, 0, 0.30f * a);
   gfx_rect((GfxRect){ cx - d * 0.5f - 2, cy - d * 0.5f - 2, d + 4, d + 4 }, 0, GFX_DISCO, 0, 0, 0, 0,
            0.05f, 0.055f, 0.067f, 0.85f * a);
-  gfx_rect((GfxRect){ cx - d * 0.5f, cy - d * 0.5f, d, d }, 0, GFX_DISCO, 0, 0, 0, 0, ar, ag, ab, a);
-  gfx_icone((GfxRect){ cx - ic * 0.5f, cy - ic * 0.5f, ic, ic }, "check", tinta, tinta, tinta, a);
+  gfx_rect((GfxRect){ cx - d * 0.5f, cy - d * 0.5f, d, d }, 0, GFX_DISCO, 0, 0, 0, 0, NV_VISTO_DISCO, a);
+  gfx_icone((GfxRect){ cx - ic * 0.5f, cy - ic * 0.5f, ic, ic }, NV_VISTO_GLIFO, tinta, tinta, tinta, a);
 }
 
 // Diametro relativo ao cartao (26..40).
@@ -473,7 +479,7 @@ static float checkDiametro(float w) {
 // e recuo acompanham a largura do cartao (26..32); abaixo de 150 so o check.
 // (mx,my) e o canto superior esquerdo; devolve a borda esquerda.
 static float seloEscritoEm(float mx, float my, float w, float a, int ancora_dir, float *largura) {
-  float h = w * 0.13f, ic, pw, ar, ag, ab;
+  float h = w * 0.13f, ic, pw;
   int compacto = w < 150.0f;
   TxtLinha t = { 0 };
   if (h < 26.0f) h = 26.0f;
@@ -483,11 +489,11 @@ static float seloEscritoEm(float mx, float my, float w, float a, int ancora_dir,
   pw = compacto ? h : h * 0.36f + ic + 6.0f + (float)t.w + h * 0.46f;
   if (largura) *largura = pw;
   if (ancora_dir) mx -= pw;
-  ajustes_acento(&ar, &ag, &ab);
   gfx_cor((GfxRect){ mx, my + 3.0f, pw, h }, 0.5f, 0, 0, 0, 0.28f * a);
   gfx_vidro_ou_solido((GfxRect){ mx, my, pw, h }, 0.5f, GFX_VIDRO_DENS, a, 0.05f, 0.055f, 0.067f, 0.80f);
   { float ix = compacto ? mx + (h - ic) * 0.5f : mx + h * 0.36f;
-    gfx_icone((GfxRect){ ix, my + (h - ic) * 0.5f, ic, ic }, "check", ar, ag, ab, a);
+    // O olho na cor fixa do disco (fork), nao no acento.
+    gfx_icone((GfxRect){ ix, my + (h - ic) * 0.5f, ic, ic }, NV_VISTO_GLIFO, NV_VISTO_DISCO, a);
     if (!compacto) txt_desenhar_alpha(t, ix + ic + 6.0f, my + (h - t.h) * 0.5f, a); }
   return mx;
 }

@@ -9,8 +9,9 @@ name: Build TPK
 # Run workflow (that button shows once this file is on the default branch).
 # A new push to the same branch cancels the build still running for it.
 
+# FORK: so manual. No push ele compilava os tres pacotes (ate 3 h) a cada
+# commit, em paralelo com o "Release desde upstream", que ja gera os .tpk.
 on:
-  push:
   workflow_dispatch:
     inputs:
       pacotes:

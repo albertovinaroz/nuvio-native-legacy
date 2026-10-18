@@ -30,6 +30,11 @@ BIN="${NUVIO_MAC_BIN:-${TMPDIR:-/tmp}/nuvio-native-legacy-mac}"
 # Nucleo EBML/NAL do mkv.c em Rust, ligado por padrao (docs/plans/rust-mapa.md);
 # NUVIO_RUST_MKVCORE=0 volta ao caminho C.
 RUST_D=()
+# Fork: sem cargo no Mac, o caminho C em vez de parar o build (avisa uma vez).
+if [ "${NUVIO_RUST_MKVCORE:-1}" = 1 ] && ! command -v cargo >/dev/null 2>&1; then
+  echo "mac.sh: cargo nao encontrado; compilando o mkv.c em C (NUVIO_RUST_MKVCORE=0)" >&2
+  NUVIO_RUST_MKVCORE=0
+fi
 [ "${NUVIO_RUST_MKVCORE:-1}" = 1 ] && RUST_D=(-DNV_RUST_MKVCORE "$(tools/rust-mkvcore.sh)")
 # NV_GIF_PREVIA (fork): o GIF anima como no .tpk da Samsung (avatar, capa de colecao).
 eval cc src/*.c src/dts/*.c -o "$BIN" -O1 -g -DNV_GIF_PREVIA "$ENV_D" ${RUST_D[@]+'"${RUST_D[@]}"'} \

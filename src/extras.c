@@ -545,6 +545,24 @@ static int mdblistPostProvedor(const char *id, int fonte, long tmdbId, int serie
   return publicarMdbNota(id, fonte, emDecimos(v), tmdbId, serie);
 }
 
+// A NOTA DE UM ITEM de ratings[] do MDBList. Cada item traz `value` (a nota na
+// escala da fonte: 7.9 no IMDb, 90 no Rotten) e `score` (a MESMA nota
+// normalizada para 0-100: 79 no IMDb). Lendo `score` primeiro, toda fonte de
+// escala 0-10 saia multiplicada por 10 — o "IMDb 79.0" da pagina do titulo
+// (fork, 18/10). Escala 0-10: `value`; porcentagem: `score` (igual ao value).
+static double notaMdbItem(const char *p, const char *fim, int fonte) {
+  double v;
+  if (!extras_fonte_percentual(fonte)) {
+    v = js_num(p, fim, "value", -1.0);
+    if (v < 0.0) { v = js_num(p, fim, "score", -1.0); if (v > 0.0) v /= 10.0; }
+  } else {
+    v = js_num(p, fim, "score", -1.0);
+    if (v < 0.0) v = js_num(p, fim, "value", -1.0);
+  }
+  if (v < 0.0) v = js_num(p, fim, "rating", -1.0);
+  return v;
+}
+
 static int aplicarMdblist(const char *id, const char *corpo, long tmdbId,
                           int serie, int *pedidas) {
   const char *p, *fim;
@@ -563,9 +581,7 @@ static int aplicarMdblist(const char *id, const char *corpo, long tmdbId,
       if (f < 0) continue;
       if (pedidas) (*pedidas)++;
       if (f >= EX_METAUSER && !ajustes_nota_titulo(f)) continue;
-      v = js_num(p, fim, "score", -1.0);
-      if (v < 0.0) v = js_num(p, fim, "value", -1.0);
-      if (v < 0.0) v = js_num(p, fim, "rating", -1.0);
+      v = notaMdbItem(p, fim, f);
       if (v < 0.0) continue;
       if (publicarMdbNota(id, f, emDecimos(v), tmdbId, serie)) comNota++;
     }
@@ -2337,9 +2353,7 @@ static void *lacoResumo(void *ignorado) {
               if (g && g->r.cru[f] > 0 && f == EX_TRAKT) { pthread_mutex_unlock(&exrTrava); continue; } }
             pthread_mutex_unlock(&exrTrava);
             if (cortado) break;
-            v = js_num(p, fim, "score", -1.0);
-            if (v < 0.0) v = js_num(p, fim, "value", -1.0);
-            if (v < 0.0) v = js_num(p, fim, "rating", -1.0);
+            v = notaMdbItem(p, fim, f);
             if (v < 0.0) continue;
             cru = emDecimos(v);
             pthread_mutex_lock(&exrTrava);
