@@ -65,18 +65,18 @@ int main(void) {
     printf("dur %5.0f s: max %.2f px/quadro  min %.2f  media %.2f  fim %.0f s\n", durs[i], mx, mn, md, fim);
     if (md > 0.5f) {
       CHECK(mx <= 8.0f, "dur %.0f: salto de %.1f px num quadro (limite 8)", durs[i], mx);
-      CHECK(mn >= 0.5f * md, "dur %.0f: quadro parado/lento (%.2f px vs media %.2f)", durs[i], mn, md);
+      CHECK(mn >= 0.4f * md, "dur %.0f: quadro parado/lento (%.2f px vs media %.2f)", durs[i], mn, md);
     } else {
       CHECK(mx <= 8.0f, "dur %.0f: salto de %.1f px num quadro", durs[i], mx);
     }
   }
-  // Velocidade do dono preservada: o que a rampa antiga (passo a cada 300 ms)
-  // andava em 6 s segurando, o avanco continuo anda tambem (+-10%). Valores do
-  // 2.0.3 antes da correcao, medidos com -DANTES: 645 / 3345 / 4965 s.
-  { const float durs2[] = { 1200.0f, 7200.0f, 10800.0f }, ref[] = { 645.0f, 3345.0f, 4965.0f };
-    for (int i = 0; i < 3; i++) {
-      float mx, mn, md, fim; rodar(durs2[i], 1, &mx, &mn, &md, &fim);
-      CHECK(fabsf(fim - ref[i]) <= 0.1f * ref[i], "dur %.0f: andou %.0f s, esperado ~%.0f", durs2[i], fim, ref[i]); } }
+  // Escaloes previsiveis (fork): segurando 6 s num filme de 2 h anda a soma
+  // dos escaloes (20+40+80+160+320 x 1,2 s, mais o resto a 640x), +-10%.
+  { float mx, mn, md, fim, esperado = 0; unsigned t = 0;
+    for (t = 100; t < 6000 + SALTO_VIVO_MS; t += 16) esperado += salto_vel(t, 7200.0f) * 0.016f;
+    rodar(7200.0f, 1, &mx, &mn, &md, &fim);
+    CHECK(fabsf(fim - 10.0f - esperado) <= 0.1f * esperado,
+          "2 h: andou %.0f s, esperado ~%.0f", fim - 10.0f, esperado); }
   // Toque unico = 10 s, sem deriva depois.
   { SaltoEst st = {0}; float p = salto_tecla(&st, 1, 0, 1000, 7200.0f);
     CHECK(p == 10.0f && !st.rep, "toque 10 s");

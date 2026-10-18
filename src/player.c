@@ -212,6 +212,17 @@ static int    scrubbing, scrubPassos, scrubTocava, scrubDir, scrubToque;
 static double scrubInicio;
 static Uint32 scrubUltimo;
 static SaltoEst scrubSalto;   // rajada do teclado (salto.h)
+// FORK (18/10): o TOQUE nao pausa mais — o video segue e so salta no fim da
+// rajada. So SEGURAR pausa (scrubPausou). scrubBase anda com o video enquanto
+// ele toca, para o salto contar a partir de onde o filme ESTA, e para a
+// pilula dizer "+30 s" sem contar o tempo que passou entre os toques.
+static int    scrubPausou;
+static double scrubBase;
+// A PILULA do avanco: "+30 s" nos toques, "40x · +4:30" segurando. Guarda o
+// ultimo estado para apagar com ele depois do fim.
+static float  pilSaltoA;
+static double pilSaltoDelta;
+static int    pilSaltoNivel = -1, pilSaltoDir = 1;
 // BUSCA SUAVE: o que a BARRA mostra durante o avanco. posSeg anda em degraus
 // (10 s, 30 s, 60 s, 120 s por passo, ~3 passos por segundo) e desenhar direto dele fazia
 // o preenchimento saltar aos trancos. posVis persegue posSeg por mola de
@@ -3431,8 +3442,12 @@ static void iniciarSalto(int toque) {
   scrubbing = 1;
   scrubPassos = 0;
   scrubTocava = tocando || retomandoSalto;
+  scrubBase = scrubInicio;
+  scrubPausou = 0;
   pausao_fechar();
-  if (tocando && comVideo) { video_pausar(1); tocando = 0; }
+  // So o arrasto da barra (toque na tela) pausa de cara; as setas pausam
+  // quando a tecla e SEGURADA (saltar).
+  if (toque && tocando && comVideo) { video_pausar(1); tocando = 0; scrubPausou = 1; }
   posplay_busca_usuario();
 }
 
@@ -3451,6 +3466,10 @@ static void saltar(int dir, int repeticao) {
   // Repeticao de tecla segurada entre dois passos: so mantem o avanco vivo (scrubUltimo), nao anda.
   float passo = salto_tecla(&scrubSalto, novo, repeticao, agora, duracaoSeg);
   scrubUltimo = agora;
+  // Segurou: agora sim pausa, e a posicao anda pelos escaloes (salto_quadro).
+  if (scrubSalto.rep && !scrubPausou && tocando && comVideo) {
+    video_pausar(1); tocando = 0; scrubPausou = 1;
+  }
   // Repeticao so mantem o avanco vivo: quem anda e salto_quadro, por quadro.
   if (passo <= 0.0f || scrubSalto.rep) return;
   scrubPassos++;
@@ -3473,9 +3492,25 @@ static void terminarSalto(void) {
   if (comVideo) {
     if (posSeg >= scrubInicio) creditosauto_buscar(&creditosAuto, posSeg);
     buscarUsuario(posSeg);
-    if (scrubTocava) { video_pausar(0); tocando = 1; }
+    if (scrubTocava && !tocando) { video_pausar(0); tocando = 1; }
   }
-  scrubToque = 0; scrubInicio = 0.0;
+  scrubToque = 0; scrubInicio = 0.0; scrubPausou = 0;
+}
+
+// ATRAS no meio do avanco CANCELA (fork, 18/10): volta para onde o filme
+// estava, sem busca nenhuma. O video nunca saiu do lugar (o avanco so mexe no
+// alvo); se ele foi pausado por segurar a tecla, volta a tocar.
+static void cancelarSalto(void) {
+  if (!scrubbing) return;
+  scrubbing = 0;
+  retomandoSalto = 0;
+  pausao_fechar();
+  seekr_ocioso();
+  posSeg = comVideo ? video_pos() : scrubInicio;
+  posVis = (float)posSeg; posVisV = 0.0f; posVisSolto = 0;
+  if (comVideo && scrubTocava && !tocando) { video_pausar(0); tocando = 1; }
+  pilSaltoDelta = 0.0; pilSaltoNivel = -1;
+  scrubToque = 0; scrubInicio = 0.0; scrubPausou = 0;
 }
 
 static int ativarBotao(int i, int repetiu) {
@@ -3562,6 +3597,12 @@ void player_evento(const SDL_Event *e) {
   // away. Called before any handler returns.
   pausao_activity();
 
+  if (scrubbing && (k == SDLK_ESCAPE || k == SDLK_AC_BACK || k == SDLK_BACKSPACE ||
+                    k == SDLK_DELETE)) {
+    cancelarSalto();
+    acordar();
+    return;
+  }
   if (k == SDLK_ESCAPE || k == SDLK_AC_BACK || k == SDLK_BACKSPACE ||
       k == SDLK_DELETE) {
 #ifdef NV_ANDROID
@@ -4080,6 +4121,8 @@ void player_atualizar(float dt, Uint32 agora) {
   // depois de soltar; no resto do tempo e a posicao de verdade, sem atraso.
   if (scrubbing) {
     posVisSolto = 1;
+    // Toques com o video tocando: o alvo anda junto com o filme.
+    if (!scrubPausou && tocando && comVideo && !scrubToque) { posSeg += dt; scrubBase += dt; }
     double de = posSeg;
     posSeg = anim_clamp(posSeg + salto_quadro(&scrubSalto, scrubDir, agora, dt, duracaoSeg),
                         0.0f, duracaoSeg);
@@ -4094,6 +4137,14 @@ void player_atualizar(float dt, Uint32 agora) {
       posVisSolto = 0;
   }
   if (!posVisSolto) { posVis = posSeg; posVisV = 0.0f; }
+  // A pilula do avanco acompanha o avanco por teclas e apaga depois dele.
+  if (scrubbing && !scrubToque) {
+    pilSaltoDelta = posSeg - scrubBase;
+    pilSaltoNivel = salto_nivel_atual(&scrubSalto, agora, duracaoSeg);
+    pilSaltoDir = scrubDir ? scrubDir : 1;
+  }
+  pilSaltoA = anim_mola(pilSaltoA, scrubbing && !scrubToque && !ehCanal() ? 1.0f : 0.0f, dt,
+                        scrubbing ? NV_MOLA_FOCO : NV_MOLA_FOCO * 0.6f);
 
   // TRAKT "NOW WATCHING" (#179). Ate a 1.5.3 o Trakt so ouvia pause/stop, ao
   // SAIR: nunca havia /scrobble/start, e sem ele o episodio nao aparece em
@@ -4411,6 +4462,53 @@ static void seekrStatus(float bx, float bw, float frac, float yBarra, float a, i
     txt_desenhar_alpha(l, x + (w - (float)l.w) * 0.5f,
                        y + 16.0f + (float)k * 30.0f + (30.0f - (float)l.h) * 0.5f, a);
   }
+}
+
+// A PILULA DO AVANCO (fork, 18/10): o que cada toque ou o segurar esta
+// fazendo, no centro da tela, no material das ilhas do player. Toque:
+// "+30 s" com a seta circular; segurando: os chevrons, o escalao ("40x") e o
+// quanto ja andou. So numeros: nada para traduzir.
+static void tempoRelativo(char *dst, size_t tam, double d) {
+  int t = (int)(fabs(d) + 0.5), h = t / 3600, m = (t / 60) % 60, sg = t % 60;
+  const char *sinal = d < 0 ? "\xe2\x88\x92" : "+";
+  if (t < 60) snprintf(dst, tam, "%s%d s", sinal, t);
+  else if (!h) snprintf(dst, tam, "%s%d:%02d", sinal, m, sg);
+  else snprintf(dst, tam, "%s%d:%02d:%02d", sinal, h, m, sg);
+}
+static void desenhaPilulaSalto(void) {
+  char delta[32], nivel[16];
+  float a = pilSaltoA, h = 76.0f, ic = 34.0f, gap = 14.0f, w, x, y;
+  int segurando = pilSaltoNivel >= 0, tras = pilSaltoDir < 0;
+  TxtLinha ld, ln = {0};
+  if (a < 0.02f) return;
+  tempoRelativo(delta, sizeof delta, pilSaltoDelta);
+  ld = txt_linha(TXT_G30B, delta, 245, 246, 249, 255);
+  if (segurando) {
+    snprintf(nivel, sizeof nivel, "%.0f\xc3\x97", SALTO_NIVEIS[pilSaltoNivel]);
+    ln = txt_linha(TXT_G30M, nivel, 190, 194, 202, 255);
+  }
+  w = 30.0f + (segurando ? ic * 1.5f : ic) + gap + (float)ld.w + 30.0f +
+      (segurando ? gap * 1.6f + (float)ln.w : 0.0f);
+  x = (NV_VTELA_W - w) * 0.5f;
+  y = NV_VTELA_H * 0.40f - h * 0.5f + (1.0f - a) * 10.0f;
+  plrui_material((GfxRect){ x, y, w, h }, h * 0.5f, 0, a);
+  { float cx = x + 30.0f, cy = y + (h - ic) * 0.5f;
+    if (segurando) {
+      const char *chev = tras ? "pl_chevron-left" : "pl_chevron-right";
+      gfx_icone((GfxRect){ cx, cy, ic, ic }, chev, 1, 1, 1, a);
+      gfx_icone((GfxRect){ cx + ic * 0.5f, cy, ic, ic }, chev, 1, 1, 1, a);
+      cx += ic * 1.5f + gap;
+    } else {
+      gfx_icone((GfxRect){ cx, cy, ic, ic }, tras ? "pl_rotate-ccw" : "aj_rotate-cw", 1, 1, 1, a);
+      cx += ic + gap;
+    }
+    if (segurando) {
+      txt_desenhar_alpha(ln, cx, y + (h - (float)ln.h) * 0.5f, a);
+      cx += (float)ln.w + gap * 0.8f;
+      gfx_cor((GfxRect){ cx, y + h * 0.5f - 3.0f, 6.0f, 6.0f }, 0.5f, 1, 1, 1, 0.45f * a);
+      cx += gap * 0.8f;
+    }
+    txt_desenhar_alpha(ld, cx, y + (h - (float)ld.h) * 0.5f, a); }
 }
 
 static void seekrMiniatura(float bx, float bw, float frac, float yBarra, float a) {
@@ -6117,6 +6215,7 @@ static void desenharOsdCorpo(Uint32 agora, float a, float ac, const CatItem *c) 
     } }
   // Depois do titulo: a miniatura fica POR CIMA dele enquanto a pessoa procura.
   seekrMiniatura(bx, bw, frac, yBarra, a);
+  desenhaPilulaSalto();
 
   // --- fileira de BOTOES ---------------------------------------------------
   // Discos de 68 no material da ilha; o focado vira PILULA cheia no acento com

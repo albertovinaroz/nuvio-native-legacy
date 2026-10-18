@@ -291,13 +291,38 @@ int  video_registro_negado(void) { return 0; }
 int video_luna(const char *uri, const char *carga, void (*cb)(const char *, void *), void *ctx) {
   (void)uri; (void)carga; (void)cb; (void)ctx; return 0;
 }
-int  video_tocar(const char *u) { snprintf(urlAtual, sizeof urlAtual, "%s", u ? u : ""); return SIM.aceita; }
+// VIDEO FALSO DO MAC (fork): NUVIO_VIDEO_FALSO=1 faz toda fonte "abrir" como um
+// filme de 2 h sem imagem, com um relogio de verdade por tras — para testar o
+// OSD do player (avanco, pausa, barra) no simulador. Sem a variavel, o coto
+// mudo de sempre (as capturas continuam usando video_simular).
+static int falsoLigado;
+static double falsoBase, falsoT0;
+static double falsoAgora(void) { return SDL_GetTicks() / 1000.0; }
+int  video_tocar(const char *u) {
+  snprintf(urlAtual, sizeof urlAtual, "%s", u ? u : "");
+  if (getenv("NUVIO_VIDEO_FALSO") && !strcmp(getenv("NUVIO_VIDEO_FALSO"), "1")) {
+    falsoLigado = 1;
+    SIM.aceita = SIM.pronto = SIM.tocando = 1; SIM.iniciando = 0;
+    SIM.duracao = 7200.0; falsoBase = 0.0; falsoT0 = falsoAgora();
+  }
+  return SIM.aceita;
+}
 void video_bombear(void) {}
-void video_parar(void) {}
-void video_pausar(int p) { (void)p; }
+void video_parar(void) {
+  if (falsoLigado) { falsoLigado = 0; memset(&SIM, 0, sizeof SIM); }
+}
+void video_pausar(int p) {
+  if (!falsoLigado) return;
+  if (p && SIM.tocando) { falsoBase += falsoAgora() - falsoT0; SIM.tocando = 0; }
+  else if (!p && !SIM.tocando) { falsoT0 = falsoAgora(); SIM.tocando = 1; }
+}
 int  video_pausa_confirmada(void) { return 0; }
 void video_volume(int pct) { (void)pct; }
-void video_buscar(double s) { (void)s; }
+void video_buscar(double s) {
+  if (!falsoLigado) return;
+  falsoBase = s < 0 ? 0 : s > SIM.duracao ? SIM.duracao : s; falsoT0 = falsoAgora();
+  printf("[video] falso: busca para %.1f s\n", falsoBase);
+}
 void video_janela(int x,int y,int w,int h) { (void)x;(void)y;(void)w;(void)h; }
 // Coto que FALTAVA: a funcao existia so no ramo do aparelho, entao o build do
 // Mac quebrava no link com "_video_janela_fonte, referenced from
@@ -310,7 +335,13 @@ void video_janela_fonte(int sx,int sy,int sw,int sh,int dx,int dy,int dw,int dh)
 }
 void video_recorte_reaplicar(void) {}
 void video_escala_definir(int sw, int sh) { (void)sw; (void)sh; }
-double video_pos(void) { return SIM.pos; }
+double video_pos(void) {
+  if (falsoLigado) {
+    double t = falsoBase + (SIM.tocando ? falsoAgora() - falsoT0 : 0.0);
+    return t > SIM.duracao ? SIM.duracao : t;
+  }
+  return SIM.pos;
+}
 double video_duracao(void) { return SIM.duracao; }
 // Sem pipeline nao ha arquivo para ler capitulos: no Mac o pos-reproducao cai
 // no plano B dos ultimos minutos, que e o mesmo caminho de um MKV sem

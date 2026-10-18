@@ -17,27 +17,26 @@
 #define NUVIO_SALTO_H
 
 #define SALTO_SEG           10.0f
-#define SALTO_INTERVALO_MS  300u     // ~3 passos por segundo, qualquer repeticao
-#define SALTO_T1_MS        1500u     // ate aqui: 10 s por passo (o toque e a primeira volta)
-// RAMPA PROPORCIONAL A DURACAO (#340). Depois de T1 a velocidade (segundos de
-// midia por segundo segurado) sobe linear de V0 (o ritmo de 10 s a cada 300 ms)
-// ate DURACAO/SALTO_VMAX_DIV, em SALTO_RAMPA_MS. Atravessar o arquivo inteiro
-// leva ~9-11 s para 20 min, 2 h ou 3 h; antes eram 120 s por passo no teto, ou
-// seja, ~7 min de aperto num filme de 2 h.
-#define SALTO_RAMPA_MS     3000u
-#define SALTO_VMAX_DIV     7.0f
-#define SALTO_V0           (SALTO_SEG * 1000.0f / SALTO_INTERVALO_MS)
 
-// Passo (segundos) para quem esta com a tecla ha `heldMs` numa midia de
-// `duracaoSeg`. Funcao pura: o player so soma e o clamp [0,dur] e dele.
-static inline float salto_passo(unsigned heldMs, float duracaoSeg) {
-  float vmax = duracaoSeg > 0.0f ? duracaoSeg / SALTO_VMAX_DIV : 0.0f;
-  if (heldMs < SALTO_T1_MS || vmax <= SALTO_V0) return SALTO_SEG;
-  float f = (float)(heldMs - SALTO_T1_MS) / (float)SALTO_RAMPA_MS;
-  if (f > 1.0f) f = 1.0f;
-  float v = SALTO_V0 + (vmax - SALTO_V0) * f;
-  float p = v * SALTO_INTERVALO_MS / 1000.0f;
-  return p < SALTO_SEG ? SALTO_SEG : p;
+// SEGURAR = ESCALOES FIXOS DE VELOCIDADE (fork, 18/10). A rampa continua
+// proporcional a duracao (#340) era imprevisivel: em 1,5 s o avanco passava de
+// devagar a ~17 min por segundo, e nada na tela dizia a quanto se andava. Agora
+// e como o Apple TV / Plex: a velocidade dobra a cada SALTO_NIVEL_MS segurando,
+// e o escalao em vigor aparece na tela ("20x", "40x"...). A unidade e "segundos
+// de video por segundo segurado", que e exatamente o "Nx" de quem ve.
+#define SALTO_NIVEL_MS 1200u
+static const float SALTO_NIVEIS[] = { 20.0f, 40.0f, 80.0f, 160.0f, 320.0f, 640.0f };
+#define SALTO_N_NIVEIS ((int)(sizeof SALTO_NIVEIS / sizeof SALTO_NIVEIS[0]))
+// Teto pela duracao: atravessar o arquivo inteiro nunca leva menos que isto
+// (um episodio de 20 min nao chega a 640x — a barra so piscaria).
+#define SALTO_TRAVESSIA_MIN_S 8.0f
+
+// O escalao (0..N-1) de quem esta com a tecla ha `heldMs` numa midia de `dur`.
+static inline int salto_nivel(unsigned heldMs, float duracaoSeg) {
+  int n = (int)(heldMs / SALTO_NIVEL_MS), teto = 0;
+  float vmax = duracaoSeg > 0.0f ? duracaoSeg / SALTO_TRAVESSIA_MIN_S : SALTO_NIVEIS[0];
+  while (teto + 1 < SALTO_N_NIVEIS && SALTO_NIVEIS[teto + 1] <= vmax) teto++;
+  return n < teto ? n : teto;
 }
 
 // ESTADO DA RAJADA e a regra de quem e toque e quem e tecla segurada.
@@ -72,9 +71,9 @@ static inline float salto_tecla(SaltoEst *st, int novo, int flagRepeat,
     st->inicio = agoraMs; st->ultimoPasso = agoraMs;
     return SALTO_SEG;
   }
-  if (agoraMs - st->ultimoPasso < SALTO_INTERVALO_MS) return 0.0f;
-  st->ultimoPasso = agoraMs;
-  return salto_passo(agoraMs - st->inicio, duracaoSeg);
+  // Repeticao (tecla segurada) nao soma passo: quem anda e salto_quadro.
+  (void)duracaoSeg;
+  return 0.0f;
 }
 
 
@@ -84,7 +83,9 @@ static inline float salto_tecla(SaltoEst *st, int novo, int flagRepeat,
 // do Seekr e acertar o ponto ("1 s de atraso antes de aplicar"). Com o Seekr
 // ligado a espera e 1 s; sem miniatura nao ha o que olhar e ficam os 420 ms,
 // para o filme voltar a tocar logo depois de um toque so.
-#define SALTO_FIM_MS        420u
+// Fork: 700 ms entre toques ainda somam no mesmo salto ("+30 s"), e o video
+// segue tocando enquanto isso (o toque nao pausa mais).
+#define SALTO_FIM_MS        700u
 #define SALTO_FIM_SEEKR_MS 1000u
 static inline unsigned salto_fim_ms(int seekrLigado) {
   return seekrLigado ? SALTO_FIM_SEEKR_MS : SALTO_FIM_MS;
@@ -103,7 +104,12 @@ static inline unsigned salto_fim_ms(int seekrLigado) {
 
 // Velocidade (s de midia por s real) de quem esta com a tecla ha `heldMs`.
 static inline float salto_vel(unsigned heldMs, float duracaoSeg) {
-  return salto_passo(heldMs, duracaoSeg) * 1000.0f / SALTO_INTERVALO_MS;
+  return SALTO_NIVEIS[salto_nivel(heldMs, duracaoSeg)];
+}
+// O escalao em vigor para a TELA: -1 quando nao ha tecla segurada.
+static inline int salto_nivel_atual(const SaltoEst *st, unsigned agoraMs, float duracaoSeg) {
+  if (!st->rep || agoraMs - st->ultimaTecla > SALTO_VIVO_MS) return -1;
+  return salto_nivel(agoraMs - st->inicio, duracaoSeg);
 }
 
 // Quanto a posicao anda neste quadro (segundos, ja com o sinal de `dir`).
