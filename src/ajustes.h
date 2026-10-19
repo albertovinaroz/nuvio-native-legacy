@@ -413,6 +413,8 @@ enum { AJ_SALVOS_LOCAL = 0, AJ_SALVOS_TRAKT = 1, AJ_SALVOS_SIMKL = 2 };
 enum { AJ_CWF_AMBAS = 0, AJ_CWF_CONTA = 1, AJ_CWF_TRAKT = 2, AJ_CWF_SIMKL = 3 };
 // Envio automatico do registro (Sobre). 1 = ligado.
 int   ajustes_envio_auto(void);
+// Fork: 1 = "Enviar registro" vai ao receptor do Mac (NV_LOG_MAC), nao ao servico.
+int   ajustes_log_mac(void);
 // Forca da vinheta do fundo do titulo, 0..1 (1 = a medida do web).
 float ajustes_detalhe_veu(void);
 int   ajustes_trailer_auto(void);      // trailer mudo no fundo da pagina de titulo

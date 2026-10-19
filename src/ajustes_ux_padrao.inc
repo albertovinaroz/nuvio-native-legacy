@@ -129,6 +129,7 @@
   // chave, e e dele que sai a triagem. No Tizen o cartao de consentimento
   // (telemetria.c) continua perguntando na primeira abertura, e o nao grava.
   0, 0, 0, 0,       /* versao, atualizar, registro, envio sozinho: LIGADO */
+  0,                /* fork: enviar registro para: servico do Nuvio */
   0,                /* espaco */
   0,                /* memoria para imagens: automatico */
 

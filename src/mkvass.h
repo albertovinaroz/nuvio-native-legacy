@@ -199,4 +199,11 @@ int  mkvass_ocupado(void);
 // so cresce — e pode passar de `total` depois de varios seeks.
 void mkvass_estatisticas(long *pedidos, long *bytes, int *colhidos, int *total);
 
+// Fork (19/10): ate que tempo (s), a partir do playhead, o overlay ja tem a
+// legenda colhida — o tempo do primeiro bloco indexado ainda pendente; 1e9 com
+// a faixa completa; -1 quando nao se sabe (varredura, preparando, pre-busca).
+// faixas.c usa para a TV desenhar POR ENQUANTO quando o playhead alcanca um
+// buraco, em vez de a legenda sumir ate a colheita chegar.
+double mkvass_coberto_ate(void);
+
 #endif

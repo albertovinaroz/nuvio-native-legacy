@@ -284,6 +284,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_VER_REGISTRO: return "aj_scroll-text";
     case AJ_ENVIAR_LOG: return "aj_send";
     case AJ_ENVIO_AUTO: return "aj_scroll-text";
+    case AJ_LOG_DESTINO: return "aj_send";
 #if defined(NV_TPK) || defined(NV_ANDROID)
     case AJ_GPU_EFEITOS: return "aj_zap";
 #endif

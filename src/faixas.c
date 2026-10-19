@@ -138,8 +138,20 @@ static Uint32 legAutoDesde;
 static int legOverlayFalhas, legOverlayRecusas, legOverlayNoGoEstado;
 static int legOverlayTV, legOverlayColhidos;
 
+// BURACO NA COLHEITA (fork, 19/10): o mkvass segue colhendo, mas o playhead
+// alcancou um bloco que ainda nao chegou (o debrid limita conexoes e a
+// colheita fica para tras). Em vez de a legenda sumir ate ele chegar, a TV
+// desenha a faixa nativa POR ENQUANTO e o overlay se cala; quando o colhido
+// volta a ficar BURACO_FOLGA_S a frente, o app reassume. Nao e falha: nao
+// conta tentativa nem mostra aviso. `legBuracoTroca` segura a troca por
+// BURACO_TROCA_MS para a legenda nao piscar entre os dois.
+#define BURACO_FOLGA_S  4.0
+#define BURACO_TROCA_MS 3000u
+static int legOverlayBuraco;
+static Uint32 legBuracoTroca;
+
 int faixas_legenda_overlay(void) {
-  return !legOverlayTV;
+  return !legOverlayTV && !legOverlayBuraco;
 }
 
 static Uint32 legOverlayRetomar;       // 0 = nada agendado
@@ -414,7 +426,7 @@ static void reiniciarFaixas(int preservarPrebusca) {
   legsync_definir_trocador(autoTroca);
   legExterna = -1; legExternaId[0] = 0; legOverlay = legOverlayNoGo = legOverlayEsperando = -1; aberta = 0;
   legOverlayFalhas = legOverlayRecusas = legOverlayNoGoEstado = 0; legOverlayRetomar = 0;
-  legOverlayTV = legOverlayColhidos = 0;
+  legOverlayTV = legOverlayColhidos = legOverlayBuraco = 0;
   if (!preservarPrebusca) mkvass_parar();
   legenda_desligar(); legenda_pre_reiniciar();
   legAuto = 1; legAutoDesde = 0; pilZerar(); pil.espera = 0;
@@ -818,7 +830,7 @@ static void escolherLegenda(int i) {
     // v1.4.7), adota o fio vivo com o que ele ja leu antes do video — parar
     // aqui jogaria isso fora.
     if (!vaiAoApp) mkvass_parar();
-    legOverlay = -1; legOverlayEsperando = -1; legOverlayRetomar = 0; legOverlayTV = 0;
+    legOverlay = -1; legOverlayEsperando = -1; legOverlayRetomar = 0; legOverlayTV = legOverlayBuraco = 0;
     if (i < 0)        { pilZerar(); pil.espera = 0; video_escolher_legenda(-1); legenda_desligar(); legExterna = -1; legExternaId[0] = 0;
                         legsync_primaria_outra(0); }   // F05: sem externa, sem AutoSync
     else if (i < emb) {
@@ -1362,7 +1374,7 @@ void faixas_atualizar(float dt, Uint32 agora) {
       // ficou tempo demais sem legenda. Nos dois casos a TV desenha POR
       // ENQUANTO, e a tentativa seguinte que entregar traz a faixa de volta.
       if (!legOverlayTV && (col == 0 || legOverlayFalhas > MKVASS_TENTATIVAS_OVERLAY)) {
-        legOverlayTV = 1;
+        legOverlayTV = 1; legOverlayBuraco = 0;
         printf("[legenda] faixa %d: a TV desenha POR ENQUANTO (%d colhidos), o app segue tentando\n", i, col);
         fflush(stdout);
         player_toast_ex(i18n("Legenda ASS: a TV desenha por enquanto (falha de rede); o app tenta de novo"), 6000, "aj_wifi-off", 1);
@@ -1371,7 +1383,7 @@ void faixas_atualizar(float dt, Uint32 agora) {
       }
     } else {
       int estavaNaTV = legOverlayTV;
-      legOverlay = -1; legOverlayNoGo = i; legOverlayNoGoEstado = e; legOverlayTV = 0;
+      legOverlay = -1; legOverlayNoGo = i; legOverlayNoGoEstado = e; legOverlayTV = legOverlayBuraco = 0;
       printf("[legenda] mkvass no-go %d (%s, HTTP %d, curl %d) na faixa %d: a legenda VOLTA para a TV "
              "(nativa religada)\n", e, motivoNoGo(e), http, curl, i);
       fflush(stdout);
@@ -1381,7 +1393,26 @@ void faixas_atualizar(float dt, Uint32 agora) {
       // O overlay tinha o que colheu antes de desistir: sai, senao a TV e o
       // app desenhariam a mesma fala.
       legenda_desligar();
-      if (!estavaNaTV) video_escolher_legenda(i);
+      if (!estavaNaTV) video_escolher_legenda(i);   // no buraco ja estava: repetir e inofensivo
+    }
+  }
+  // Buraco na colheita (ver legOverlayBuraco). So com o overlay desenhando de
+  // fato: falha e recuo ja tem o "TV por enquanto" deles.
+  if (legOverlay >= 0 && !legOverlayTV && !legOverlayRetomar && !mkvass_nogo() &&
+      agora - legBuracoTroca >= BURACO_TROCA_MS) {
+    double cob = mkvass_coberto_ate(), pos = video_pos();
+    if (!legOverlayBuraco && cob >= 0 && cob < 1e8 && pos >= cob - 0.5) {
+      legOverlayBuraco = 1; legBuracoTroca = agora;
+      printf("[legenda] faixa %d: buraco na colheita em %.0f s (playhead %.0f s): a TV desenha ate chegar\n",
+             legOverlay, cob, pos);
+      fflush(stdout);
+      video_escolher_legenda(legOverlay);
+    } else if (legOverlayBuraco && cob > pos + BURACO_FOLGA_S) {
+      legOverlayBuraco = 0; legBuracoTroca = agora;
+      printf("[legenda] faixa %d: a colheita alcancou o playhead (%.0f s): o app reassume\n",
+             legOverlay, pos);
+      fflush(stdout);
+      video_escolher_legenda(-1);
     }
   }
   // A sonda voltou para uma faixa escolhida antes dela: agora da para decidir.
@@ -2133,7 +2164,7 @@ void faixas_escolher_externa(const Legenda *l) {
   if (!l || !l->url[0]) return;
   legAuto = 0;
   mkvass_parar();
-  legOverlay = -1; legOverlayEsperando = -1; legOverlayRetomar = 0; legOverlayTV = 0;
+  legOverlay = -1; legOverlayEsperando = -1; legOverlayRetomar = 0; legOverlayTV = legOverlayBuraco = 0;
   video_escolher_legenda(-1);
   legsync_primaria_externa(l->url, l->idioma, l->provedor);   // F05: carrega e vira documento do AutoSync
   // emTroca = o AutoSync trocando sozinho: nao e escolha da pessoa.

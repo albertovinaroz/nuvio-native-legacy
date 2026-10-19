@@ -3026,7 +3026,7 @@ static int automaticoDaFolhaModo(void) {
 
 
 
-static int grupo, filtro, soMp4, soCache, soDub;
+static int grupo, filtro, soMp4, soCache, soDub, soQual;
 // soDub: 0 desligado, 1 so fontes com audio no codigo filtroCod ("es" ou "en").
 static char filtroCod[6];
 
@@ -3042,23 +3042,38 @@ static char filtroCod[6];
 // picotaria a lista em grupos de 1 ou 2 fontes. Em cache = o debrid ja tem o
 // arquivo (Stream.foraCache e 0), toca agora; Audio = idioma escolhido, ou o
 // idioma da interface (que em Automatico acompanha conta/aparelho).
-enum { BT_RECARREGAR, BT_SEM_HDR, BT_SO_MP4, BT_CACHE, BT_DUB, BT_FECHAR };
+//
+// "QUALIDADE" (fork, 19/10): mesmo ciclo do Dublado, num toque — desligado ->
+// 4K -> 1080p -> desligado. Faixas de altura, nao "1080p ou melhor": quem
+// pede 1080p quer o arquivo menor/mais estavel, nao o 4K de volta. Fonte sem
+// resolucao conhecida (altura 0) sai com o filtro ligado.
+enum { BT_RECARREGAR, BT_SEM_HDR, BT_SO_MP4, BT_CACHE, BT_DUB, BT_QUAL, BT_FECHAR };
+#define BT_MAX 7
 static int botaoDe(int i) {
   if (!video_pode_forcar_sdr()) i++;
   if (i == 0) return BT_SEM_HDR;
   if (i == 1) return BT_SO_MP4;
   if (i == 2) return BT_CACHE;
   if (i == 3) return BT_DUB;
-  if (i == 4) return BT_RECARREGAR;
+  if (i == 4) return BT_QUAL;
+  if (i == 5) return BT_RECARREGAR;
   return BT_FECHAR;
 }
-static int nBotoes(void) { return video_pode_forcar_sdr() ? 6 : 5; }
+static int nBotoes(void) { return video_pode_forcar_sdr() ? BT_MAX : BT_MAX - 1; }
+// soQual: 0 desligado, 1 = 4K, 2 = 1080p.
+static const char *const QUAL_ROTULO[] = { "Qualidade", "4K", "1080p" };
+static int passaQualidade(const Stream *s) {
+  if (soQual == 1) return s->altura >= 1800;
+  if (soQual == 2) return s->altura >= 900 && s->altura < 1800;
+  return 1;
+}
 static const char *nomeIdiomaFonte(const char *cod);
 static const char *rotuloBotao(int b) {
   if (b == BT_SEM_HDR) return "Sem HDR";
   if (b == BT_SO_MP4)  return "Só MP4";
   if (b == BT_CACHE)   return "Em cache";
   if (b == BT_DUB)     return soDub ? nomeIdiomaFonte(filtroCod) : "Dublado";
+  if (b == BT_QUAL)    return QUAL_ROTULO[soQual];
   return NULL;
 }
 // O BOTAO "DUBLADO" SO TEM ESPANHOL E INGLES (fork, pedido do dono 16/10):
@@ -3083,7 +3098,8 @@ static void filtroIdiomaProximo(void) {
   snprintf(filtroCod, sizeof filtroCod, "%s", c ? c : "");
 }
 static int botaoLigado(int b) {
-  return (b == BT_SO_MP4 && soMp4) || (b == BT_CACHE && soCache) || (b == BT_DUB && soDub);
+  return (b == BT_SO_MP4 && soMp4) || (b == BT_CACHE && soCache) || (b == BT_DUB && soDub) ||
+         (b == BT_QUAL && soQual);
 }
 static const char *iconeBotao(int b) {
   return b == BT_RECARREGAR ? "aj_rotate-cw" : b == BT_FECHAR ? "aj_x" : NULL;
@@ -3097,6 +3113,7 @@ static int passaChips(int i) {
   if (!canalFolha && !stream_filtro_permite(&lista[i])) return 0;
   if (soMp4 && !lista[i].mp4) return 0;
   if (soCache && !cacheConfirmado(&lista[i])) return 0;
+  if (!passaQualidade(&lista[i])) return 0;
   if (soDub && !audioExato(&lista[i], filtroCod)) return 0;
   return 1;
 }
@@ -4177,7 +4194,7 @@ void stream_folha_abrir(void) {
 #endif
   int excl, aut, alvo;
   fitAbrir();
-  aberta=1; escolha=-1; grupo=1; filtro=0; soMp4=0; soCache=0; soDub=0; recarregar=0;
+  aberta=1; escolha=-1; grupo=1; filtro=0; soMp4=0; soCache=0; soDub=0; soQual=0; recarregar=0;
   folhaGeometria();
   atualizarProvedores();
   ondever_apps_atualizar();
@@ -4379,6 +4396,7 @@ void stream_folha_evento(const SDL_Event *e) {
         case BT_SO_MP4:     soMp4 = !soMp4; rolagem=0;velRol=0; break;
         case BT_CACHE:      soCache = !soCache; rolagem=0;velRol=0; break;
         case BT_DUB:        filtroIdiomaProximo(); rolagem=0;velRol=0; break;
+        case BT_QUAL:       soQual = (soQual + 1) % 3; rolagem=0;velRol=0; break;
         default:            aberta=0; break;
       }
     }
@@ -4683,12 +4701,12 @@ static void chipFolha(GfxRect r, const char *rot, float rotW, const char *icone,
 //      kicker explica o que ele faz em qualquer caso.
 // No degrau 2 o filtro ligado continua no acento, entao "qual esta ativo" se
 // le sem foco. Se nem os discos couberem (titulo enorme), o titulo e cortado.
-static float bwCab[6], rotWCab[6], titMaxCab, gapCab;
-static const char *rotCab[6], *icoCab[6];
+static float bwCab[BT_MAX], rotWCab[BT_MAX], titMaxCab, gapCab;
+static const char *rotCab[BT_MAX], *icoCab[BT_MAX];
 static int nivelCab;
 static const char *iconeFiltro(int b) {
   return b == BT_SEM_HDR ? "aj_sun-dim" : b == BT_SO_MP4 ? "aj_film"
-       : b == BT_CACHE ? "aj_zap" : b == BT_DUB ? "aj_languages" : NULL;
+       : b == BT_CACHE ? "aj_zap" : b == BT_DUB ? "aj_languages" : b == BT_QUAL ? "aj_sparkles" : NULL;
 }
 static void medirCabecalho(void) {
   float rw = FOLHA_W - FOLHA_PAD_E - FOLHA_PAD_D;
@@ -4708,6 +4726,9 @@ static void medirCabecalho(void) {
         icoCab[i] = NULL; rotCab[i] = rotuloBotao(b);
         rotWCab[i] = (float)txt_linha(TXT_HERO_META, rotCab[i], 255, 255, 255, 255).w;
         bwCab[i] = rotWCab[i] + 2 * pad;
+        // Qualidade leva o icone antes do rotulo (dono, 19/10): "4K"/"1080p"
+        // sozinhos nao diziam que o chip e um filtro.
+        if (b == BT_QUAL) { icoCab[i] = iconeFiltro(b); bwCab[i] += FOLHA_CHIP_H * .42f + 10.0f; }
       } else {
         icoCab[i] = iconeFiltro(b); rotCab[i] = NULL; bwCab[i] = FOLHA_CHIP_H;
       }
@@ -4893,6 +4914,16 @@ static void corpoFolha(float x, float w, float anim, Uint32 agora, int ilha) {
         snprintf(ajudaIdioma,sizeof ajudaIdioma,i18n("Só fontes com áudio em %s. OK tira o filtro."),
                  nomeIdiomaFonte(filtroCod));
       ajuda=ajudaIdioma;
+    }
+    else if(botaoDe(foco)==BT_QUAL) {
+      static char ajudaQual[200];
+      if(!soQual)
+        snprintf(ajudaQual,sizeof ajudaQual,"%s",i18n("Filtra por qualidade: 4K ou 1080p. OK liga o filtro."));
+      else if(soQual==1)
+        snprintf(ajudaQual,sizeof ajudaQual,i18n("Só fontes em %s. OK: %s."),QUAL_ROTULO[1],QUAL_ROTULO[2]);
+      else
+        snprintf(ajudaQual,sizeof ajudaQual,i18n("Só fontes em %s. OK tira o filtro."),QUAL_ROTULO[2]);
+      ajuda=ajudaQual;
     }
     else if(botaoDe(foco)==BT_SO_MP4)
       ajuda=soMp4

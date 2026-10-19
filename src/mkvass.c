@@ -378,6 +378,10 @@ struct MkvassPreparo {
   long     pedidos, bytes;
   int      nPontos, nColhidos;
   int      varredura;      // 0 pelo indice; 1 varrendo Clusters (ver MKVASS_VARRE_CH)
+  // Fork (19/10): o tempo (s) do PRIMEIRO ponto ainda nao colhido a partir do
+  // playhead; ate ali o overlay tem a legenda. -1 = nao se sabe (varredura,
+  // preparando). Ver mkvass_coberto_ate.
+  double   cobertoAte;
   double   folga;          // buffer de video a frente (s); < 0 = desconhecido
   unsigned fontesLegG;     // geracao da legenda em que as fontes do MKV entraram (0 = nenhuma)
   // O QUE A URL ENSINOU, guardado entre as tentativas (mkvass_retomar) da
@@ -2199,6 +2203,16 @@ static int lerCues(Fio *f) {
 static double segundosDe(const Fio *f, unsigned long unidades) {
   return (double)unidades * (double)f->escala / 1e9;
 }
+// Ate onde, a partir de `pos`, todos os pontos indexados ja foram colhidos: o
+// tempo do primeiro pendente, ou 1e9 se nao falta nenhum. Desistidos (2) nao
+// tem texto a esperar e contam como colhidos.
+static double cobertoDesde(const Fio *f, double pos) {
+  int i = 0;
+  while (i < f->nPontos && segundosDe(f, f->pontos[i].tempo) < pos - 0.5) i++;
+  for (; i < f->nPontos; i++)
+    if (f->pontos[i].colhido == 0) return segundosDe(f, f->pontos[i].tempo);
+  return 1e9;
+}
 
 // Cabecalho do Cluster: largura (id + tamanho) e o Timestamp, que e o primeiro
 // filho em tudo que os muxers produzem. Um Range de 24 bytes por Cluster
@@ -3612,6 +3626,7 @@ static void *trabalhar(void *arg) {
     // Publica os colhidos ATE AGORA, contando os que o despejo devolveu a fila
     // (#384): faixas.c mede progresso por este numero crescer.
     pos = estadoDoFio(f)->pos; estadoDoFio(f)->nColhidos = f->nColhidos + (int)f->despejados; f->folgaJan = estadoDoFio(f)->folga;
+    estadoDoFio(f)->cobertoAte = cobertoDesde(f, pos);
     pthread_mutex_unlock(&estadoDoFio(f)->trava);
     while (feitos < MKVASS_RANGES_POR_SEG && minhaVez(f)) {
       double t; int j, noJanela;
@@ -3874,7 +3889,7 @@ static int iniciarFioDe(MkvassPreparo *s, const char *url, int numeroFaixa, int 
   s->estado = MKVASS_PREPARANDO;
   s->parar = 0;
   s->pedidos = s->bytes = 0;
-  s->nPontos = s->nColhidos = 0; s->varredura = 0; s->folga = -1.0;
+  s->nPontos = s->nColhidos = 0; s->varredura = 0; s->folga = -1.0; s->cobertoAte = -1.0;
   s->prebusca = f->prebusca; s->prebuscaFase = f->prebusca ? 1 : 0;
   s->prebuscaOrdinal = -1; s->adotar = 0;
   if (f->prebusca) s->pos = 0.0;
@@ -4077,6 +4092,17 @@ int mkvass_ocupado(void) {
   pthread_mutex_lock(&s->trava); v = s->vivos; pthread_mutex_unlock(&s->trava);
   soltarEstado(s);
   return v > 0;
+}
+
+double mkvass_coberto_ate(void) {
+  MkvassPreparo *s = reterAtivo();
+  double c;
+  pthread_mutex_lock(&s->trava);
+  c = s->estado == MKVASS_COMPLETO ? 1e9
+    : (s->estado == MKVASS_COLHENDO && !s->varredura && !s->prebusca) ? s->cobertoAte : -1.0;
+  pthread_mutex_unlock(&s->trava);
+  soltarEstado(s);
+  return c;
 }
 
 void mkvass_estatisticas(long *pedidos, long *bytes, int *colhidos, int *total) {

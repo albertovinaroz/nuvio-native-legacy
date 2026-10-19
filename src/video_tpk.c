@@ -20,6 +20,7 @@
 // "[video] tpk: first subtitle cue ..." ou "... no subtitle cue in 60 s ...".
 #ifdef NV_TPK
 #include "video.h"
+#include "proxycab.h"
 #include "video_reconexao.h"
 #include "idioma.h"
 #include "linguas.h"
@@ -503,7 +504,18 @@ static int abrirSessao(void) {
       if (ms > 0) snprintf(pre, sizeof pre, "X-Nuvio-Prebuffer: %d", ms);
       hAbrir(cv.url, pre); }
   } else {
-    hAbrir(urlAtual, cabecalhos);
+    const char *url = urlAtual;
+#ifndef NV_TPK40
+    // CABECALHO QUE O PLAYER NAO MANDA (Referer, Origin...): o player le do
+    // proxy local, que repete cada pedido na fonte com eles (proxycab.h). Os
+    // cabecalhos continuam indo ao player: o User-Agent/Cookie valem para o
+    // 127.0.0.1 e nao fazem mal.
+    static char viaProxy[96];
+    if (proxycab_precisa(cabecalhos) && proxycab_url(urlAtual, cabecalhos, viaProxy, sizeof viaProxy))
+      url = viaProxy;
+    else proxycab_parar();
+#endif
+    hAbrir(url, cabecalhos);
   }
   // Depois do hAbrir: o host troca de sessao nele, e um aviso da sessao velha
   // emitido antes disso nao pode sobrar para matar a nova.
@@ -1346,6 +1358,9 @@ void video_parar(void) {
   reconAlvoMs = buscaAlvoMs = -1;
   atomic_store(&playerPreso, -2); // aviso de antes da saida nao reabre o video
   if (ativo && hParar) hParar();
+#ifndef NV_TPK40
+  proxycab_parar();   // conexoes do proxy em voo largam a fonte
+#endif
   ativo = pronto = tocando = 0;
 }
 void video_pausar(int p) { pausaPedida = p != 0; vigiaAtiva = 0; if (nv_recon_ativa(&recon) && (recon.pendente || reconErroPend || !pronto || reconBuscarMs >= 0)) reconPausa = pausaPedida; else if (hPausar) hPausar(p); }

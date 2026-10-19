@@ -791,7 +791,7 @@ static float ajPreviaCarta(int op, float x, float y, float w) {
   switch (op) {
     case AJ_ICONE_APP: return ajPreviaIconeApp(x, y, w);
     case AJ_TRAKT: case AJ_SIMKL: return ajPreviaServico(op, x, y, w);
-    case AJ_ENVIAR_LOG: case AJ_VER_REGISTRO: case AJ_ENVIO_AUTO:
+    case AJ_ENVIAR_LOG: case AJ_VER_REGISTRO: case AJ_ENVIO_AUTO: case AJ_LOG_DESTINO:
       registro_pacote(x, y, w, 300, 9, i18n("últimos 200 KB"), 1); return 300;
     case AJ_CW_LIGADO: case AJ_CW_OK: case AJ_CW_ESTILO: case AJ_CW_THUMB: case AJ_CW_BLUR_PROX:
     case AJ_CW_ORDEM: case AJ_CW_NAO_EXIBIDOS: case AJ_CW_FURTHEST: case AJ_CW_CONCLUIDO: case AJ_CW_MINIMO: case AJ_CW_RETIDO_TAMBEM:

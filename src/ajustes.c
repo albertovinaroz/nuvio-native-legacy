@@ -240,7 +240,7 @@ typedef enum {
   AJ_XTREAM_CONTA, AJ_EPG_PAIS,
   AJ_SALVOS_DEST, AJ_TRAKT, AJ_SIMKL, AJ_SAIR,
   // Sobre
-  AJ_VERSAO_I, AJ_ATUALIZAR, AJ_ENVIAR_LOG, AJ_ENVIO_AUTO, AJ_ESPACO, AJ_TEX_MB,
+  AJ_VERSAO_I, AJ_ATUALIZAR, AJ_ENVIAR_LOG, AJ_ENVIO_AUTO, AJ_LOG_DESTINO, AJ_ESPACO, AJ_TEX_MB,
   // Integracoes — TMDB (tmdb_settings do blob da conta, ver
   // profileSettingsSyncService.js do web)
   AJ_TMDB_LIGADO, AJ_TMDB_IDIOMA, AJ_TMDB_ARTE, AJ_TMDB_BASICO, AJ_TMDB_FICHA,
@@ -936,6 +936,11 @@ static const char *V_SUFIXO_ESTILO[] = { "Texto", "Ícone" };
 static const char *V_ROTULO_POS[]    = { "Automático", "Abaixo", "Dentro" };
 // So o card deitado: o cartaz em pe ja traz o nome impresso na arte, e o logo
 // por cima dele saia repetido (dono, 16/10).
+// FORK (19/10): para onde "Enviar registro" manda. O Mac e o receptor da rede
+// de casa (tools/receptor-log.py, NV_LOG_MAC), para ler o log sem compilar a
+// versao de diagnostico. So o envio MANUAL muda de destino: o automatico e o
+// relato de queda continuam indo ao servico.
+static const char *V_LOG_DESTINO[]   = { "Serviço do Nuvio", "Mac da rede local" };
 static const char *V_LOGO_CARDS[]    = { "Desligado", "Cards deitados" };
 static const char *V_DESCOBRIR[] = { "Mostrar na Busca", "Na barra lateral", "Desligado" };
 // `homeImdbRatingsVisibility` — normalizeHomeImdbRatingsVisibility so aceita
@@ -1349,6 +1354,7 @@ static const Opcao OPCOES[AJ_N] = {
   // Tizen pergunta (telemetria.c) e grava aqui. Ligado, avisos.c manda o
   // registro da sessao anterior no arranque e o desta a cada minuto.
   ESC("Enviar registros sozinho",   V_LIGA, 2),
+  ESC("Enviar registro para",       V_LOG_DESTINO, 2),   // local: registroDestinoLocal
   LER("Memória usada por imagens"),
   ESC("Memória para imagens",       V_TEX_MB, 7),
 
@@ -1721,7 +1727,7 @@ static const char *CHAVE[] = {
   // A grade e LOCAL e sem "-": o app oficial nao tem a escolha (#158).
   "-xtreamConta", "epgPaisLocal",
   "salvosDestino", "-trakt", "-simkl", "-sair",
-  "-versao", "-atualizar", "-registro", "envioAuto", "-espaco", "texturasMB",
+  "-versao", "-atualizar", "-registro", "envioAuto", "registroDestinoLocal", "-espaco", "texturasMB",
   // Integracoes: os nomes sao exatamente os que profileSettingsSyncService.js
   // exporta dentro de tmdb_settings / mdblist_settings — a conta aplica e a
   // TV respeita a escolha feita no app web, e vice-versa.
@@ -3087,6 +3093,7 @@ int   ajustes_trailer_qualidade(void) { static const int t[] = { 0, 1080, 720, 4
 // Fonte do trailer: o TRF_* de trailerfonte.h. Fora da lista le Automatico.
 int   ajustes_trailer_fonte(void)     { int v = valor[AJ_TRAILER_FONTE]; return (v >= 0 && v < nValores(AJ_TRAILER_FONTE)) ? v : 0; }
 int  ajustes_envio_auto(void)         { return lig(AJ_ENVIO_AUTO); }
+int  ajustes_log_mac(void)            { return valor[AJ_LOG_DESTINO] == 1; }
 int  ajustes_menu_explorar(void)      { return lig(AJ_MENU_EXPLORAR); }
 int  ajustes_menu_guia(void)          { return lig(AJ_MENU_GUIA); }
 int  ajustes_menu_agenda(void)        { return lig(AJ_MENU_AGENDA); }
@@ -5117,6 +5124,7 @@ static int somenteDesteAparelho(int op) {
     case AJ_TEX_MB:         /* teto de memoria de imagem: depende da RAM */
     case AJ_QUALIDADE_IMG:  /* resolucao da arte decodificada: idem */
     case AJ_ENVIO_AUTO:     /* consentimento de envio de registro deste aparelho */
+    case AJ_LOG_DESTINO:    /* fork: o Mac e o desta casa */
     case AJ_ANIM:           /* animacoes reduzidas: acessibilidade nesta TV */
     case AJ_IDIOMA:         /* idioma da interface deste aparelho */
     case AJ_FIL_LIMITE:     /* fileiras da home: por aparelho (fileirasui-p<N>.txt) */
@@ -6810,6 +6818,7 @@ static const char *ajudaOpcaoBase(int op) {
     case AJ_NOVIDADES20: return "O tour do que mudou na 2.0, capítulo por capítulo, com o que vale neste aparelho. Abre do começo.";
     case AJ_APOIAR: return "Se o Nuvio te ajuda e você quiser apoiar quem faz o app, aponte a câmera do celular para um dos códigos. É opcional: nada muda no app.";
     case AJ_ENVIAR_LOG: return "Manda os últimos 200 KB do registro desta sessão (sem senhas nem chaves) para quem faz o app. Use quando algo estiver errado agora.";
+    case AJ_LOG_DESTINO: return "Para onde \"Enviar registro\" manda o log desta sessão. Mac da rede local: o receptor no computador de casa, sem precisar de conta.";
     case AJ_ENVIO_AUTO: return "Ligado, o app manda o registro sozinho: o da sessão anterior ao abrir e o desta a cada minuto. Sem senhas nem chaves; serve para achar o que trava a Samsung. Desligue quando quiser.";
     case AJ_DIAGNOSTICO: return "Testa manifestos, fontes e artes dos addons, mede os tempos e aplica um perfil seguro de Qualidade ou Desempenho. O teste não marca títulos como assistidos.";
     case AJ_MENU_EXPLORAR: case AJ_MENU_GUIA: case AJ_MENU_AGENDA: case AJ_MENU_PERFIL:
@@ -9247,7 +9256,7 @@ static AjPreview familiaPreviaOpcao(int op) {
     case AJ_SALVOS_DEST: case AJ_TRAKT: case AJ_SIMKL: case AJ_DISCORD: case AJ_HIST_CONTA: case AJ_SOCIAL:
       return AJPV_RASTREIO;
     case AJ_VERSAO_I: case AJ_ATUALIZAR: case AJ_ENVIAR_LOG: case AJ_GUIA: case AJ_NOVIDADES20: case AJ_DICASCONTROLE: case AJ_APOIAR:
-    case AJ_ENVIO_AUTO: case AJ_VER_REGISTRO:
+    case AJ_ENVIO_AUTO: case AJ_LOG_DESTINO: case AJ_VER_REGISTRO:
 #ifdef NV_ANDROID
     case AJ_BAIXAR_REGISTRO:
 #endif

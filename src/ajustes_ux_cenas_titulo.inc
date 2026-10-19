@@ -855,7 +855,7 @@ static int ajcNovaTitulo(int sec, int op) {
     case AJ_VERSAO_I: ajcT_versao(); return 1;
     case AJ_ATUALIZAR: ajcT_atualizar(); return 1;
     case AJ_VER_REGISTRO: ajcT_verRegistro(); return 1;
-    case AJ_ENVIAR_LOG: case AJ_ENVIO_AUTO: ajcT_enviarLog(op); return 1;
+    case AJ_ENVIAR_LOG: case AJ_LOG_DESTINO: case AJ_ENVIO_AUTO: ajcT_enviarLog(op); return 1;
     default: return 0;
   }
 }

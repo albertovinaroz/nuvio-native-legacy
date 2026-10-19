@@ -49,6 +49,14 @@
 #ifndef NV_REC_URL
 #define NV_REC_URL ""
 #endif
+// FORK (19/10): o receptor do Mac da rede de casa (tools/receptor-log.py), para
+// onde "Enviar registro" manda com Ajustes > Enviar registro para > Mac.
+// -DNV_LOG_MAC=http://<ip>:<porta> na compilacao troca o endereco.
+#ifndef NV_LOG_MAC
+#define NV_LOG_MAC "http://192.168.1.33:8787"
+#endif
+// A base do envio MANUAL. O automatico e o relato de queda usam NV_REC_URL.
+static const char *baseManual(void) { return ajustes_log_mac() ? NV_LOG_MAC : NV_REC_URL; }
 
 // O canal do dono: um arquivo no proprio repositorio. Sem servidor novo e sem
 // segredo: qualquer um pode ler, e e essa a intencao de um aviso.
@@ -500,6 +508,7 @@ static void *enviarRegistro(void *u) {
   int status = 0;
   int manual = (u == &ATUAL || u == &AUTO_ATUAL);
   int automatico = (u == &AUTO_ATUAL || u == &AUTO_ANTERIOR);
+  int paraMac = u == &ATUAL && ajustes_log_mac();
 #ifdef __EMSCRIPTEN__
   { const char *fonte = manual ? logAtual : logAnterior;
     if (fonte) { texto = strdup(fonte); if (texto) nTexto = strlen(texto); } }
@@ -527,8 +536,12 @@ static void *enviarRegistro(void *u) {
     if (hAuto == ultimoHashAuto) { free(texto); envioEstado = 0; return NULL; }
   }
   if (!idHead(cab, aut, sizeof aut, via, sizeof via, chave, sizeof chave)) {
-    if (!automatico) { pthread_mutex_lock(&trava); envMotivo = AVISOS_ENVIO_CONTA; envHttp = 0; pthread_mutex_unlock(&trava); }
-    free(texto); envioEstado = automatico ? 0 : 3; return NULL;
+    // O Mac nao confere conta: sem login, vai so com o Content-Type.
+    if (paraMac) { cab[0] = "Content-Type: application/json"; cab[1] = NULL; }
+    else {
+      if (!automatico) { pthread_mutex_lock(&trava); envMotivo = AVISOS_ENVIO_CONTA; envHttp = 0; pthread_mutex_unlock(&trava); }
+      free(texto); envioEstado = automatico ? 0 : 3; return NULL;
+    }
   }
   corpo = malloc(nTexto * 2 + 512);
   if (!corpo) { free(texto); envioEstado = 3; return NULL; }
@@ -565,7 +578,7 @@ static void *enviarRegistro(void *u) {
   free(texto);
   { char url[300];
     Uint32 t0 = SDL_GetTicks();
-    snprintf(url, sizeof url, "%s/v1/registro", NV_REC_URL);
+    snprintf(url, sizeof url, "%s/v1/registro", paraMac ? NV_LOG_MAC : NV_REC_URL);
     resp = rede_postar_repetindo(url, 30, cab, corpo, &status, 3);
     if (automatico && status >= 200 && status < 300) ultimoHashAuto = hAuto;
     if (!automatico) {
@@ -1862,9 +1875,10 @@ void avisos_enviar_registro_atual(void) {
   if (envioEstado == 1) return;
   envQuando = time(NULL);
   envCodigo[0] = 0; envHttp = 0;
-  if (!NV_REC_URL[0]) { envMotivo = AVISOS_ENVIO_INDISPONIVEL; envioEstado = 3; return; }
+  if (!baseManual()[0]) { envMotivo = AVISOS_ENVIO_INDISPONIVEL; envioEstado = 3; return; }
   // Sem internet (redesaude.h) nem tenta: diz o porque e espera a rede voltar.
-  if (rede_saude_offline()) {
+  // O Mac e da rede local: internet fora nao o impede.
+  if (!ajustes_log_mac() && rede_saude_offline()) {
     envMotivo = AVISOS_ENVIO_OFFLINE; envPendenteRede = 1; envioEstado = 3;
     { FILE *f; const char *arq = registro_arquivo();
       envBytes = 0; envLinhas = 0;
@@ -1901,7 +1915,7 @@ void avisos_enviar_registro_atual(void) {
 int avisos_envio_info(AvisosEnvio *o) {
   char *s;
   memset(o, 0, sizeof *o);
-  o->disponivel = NV_REC_URL[0] != 0;
+  o->disponivel = baseManual()[0] != 0;
   pthread_mutex_lock(&trava);
   o->estado = envioEstado; o->motivo = envMotivo; o->http = envHttp;
   o->bytes = envBytes; o->linhas = envLinhas; o->quando = envQuando;
