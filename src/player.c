@@ -218,6 +218,16 @@ static SaltoEst scrubSalto;   // rajada do teclado (salto.h)
 // pilula dizer "+30 s" sem contar o tempo que passou entre os toques.
 static int    scrubPausou;
 static double scrubBase;
+// PRE-CARGA DO ALVO (fork, 19/10): com os toques, a busca sai logo que a
+// pessoa para de tocar (PLR_PRE_BUSCA_MS), e nao so no fim da janela — o
+// pipeline ja vai enchendo o buffer do ponto novo enquanto ela confirma. No
+// maximo uma busca a cada PLR_PRE_BUSCA_MIN_MS, sempre a ultima: este arquivo
+// ja viu uma rajada de seeks derrubar o pipeline (webOS). Segurando, nada:
+// la a posicao muda a cada quadro e a busca e uma so, no fim.
+#define PLR_PRE_BUSCA_MS      250u
+#define PLR_PRE_BUSCA_MIN_MS  400u
+static double scrubBuscaAlvo = -1.0;   // ultima posicao mandada nesta busca (-1 = nenhuma)
+static Uint32 scrubBuscaEm;
 // A PILULA do avanco: "+30 s" nos toques, "40x · +4:30" segurando. Guarda o
 // ultimo estado para apagar com ele depois do fim.
 static float  pilSaltoA;
@@ -3445,9 +3455,11 @@ static void iniciarSalto(int toque) {
   scrubBase = scrubInicio;
   scrubPausou = 0;
   pausao_fechar();
-  // So o arrasto da barra (toque na tela) pausa de cara; as setas pausam
-  // quando a tecla e SEGURADA (saltar).
-  if (toque && tocando && comVideo) { video_pausar(1); tocando = 0; scrubPausou = 1; }
+  scrubBuscaAlvo = -1.0;
+  // A IMAGEM PARA NO PRIMEIRO TOQUE (fork, 19/10: "que la imagen se pare en el
+  // momento"): o ponto novo ja vai sendo carregado (pre-carga, abaixo) e o
+  // filme volta a tocar no fim da janela.
+  if (tocando && comVideo) { video_pausar(1); tocando = 0; scrubPausou = 1; }
   posplay_busca_usuario();
 }
 
@@ -3491,7 +3503,8 @@ static void terminarSalto(void) {
   seekr_ocioso();   // solta a folha decodificada (~22 MB), fica o JPEG
   if (comVideo) {
     if (posSeg >= scrubInicio) creditosauto_buscar(&creditosAuto, posSeg);
-    buscarUsuario(posSeg);
+    // A pre-carga ja mandou este alvo: nao repete a busca.
+    if (scrubBuscaAlvo < 0.0 || fabs(posSeg - scrubBuscaAlvo) > 0.5) buscarUsuario(posSeg);
     if (scrubTocava && !tocando) { video_pausar(0); tocando = 1; }
   }
   scrubToque = 0; scrubInicio = 0.0; scrubPausou = 0;
@@ -3506,7 +3519,10 @@ static void cancelarSalto(void) {
   retomandoSalto = 0;
   pausao_fechar();
   seekr_ocioso();
-  posSeg = comVideo ? video_pos() : scrubInicio;
+  // A pre-carga pode ja ter levado o pipeline a outro ponto: volta ao de antes.
+  if (comVideo && scrubBuscaAlvo >= 0.0) buscarUsuario(scrubInicio);
+  posSeg = comVideo && scrubBuscaAlvo < 0.0 ? video_pos() : scrubInicio;
+  scrubBuscaAlvo = -1.0;
   posVis = (float)posSeg; posVisV = 0.0f; posVisSolto = 0;
   if (comVideo && scrubTocava && !tocando) { video_pausar(0); tocando = 1; }
   pilSaltoDelta = 0.0; pilSaltoNivel = -1;
@@ -3980,6 +3996,13 @@ void player_atualizar(float dt, Uint32 agora) {
   }
 #endif
   if (scrubbing && agora - scrubUltimo > salto_fim_ms(ajustes_seekr_ligado())) terminarSalto();
+  // Pre-carga do alvo dos toques (ver PLR_PRE_BUSCA_MS).
+  if (scrubbing && comVideo && !scrubToque && !scrubSalto.rep &&
+      agora - scrubUltimo >= PLR_PRE_BUSCA_MS && agora - scrubBuscaEm >= PLR_PRE_BUSCA_MIN_MS &&
+      (scrubBuscaAlvo < 0.0 || fabs(posSeg - scrubBuscaAlvo) > 0.5)) {
+    buscarUsuario(posSeg);
+    scrubBuscaAlvo = posSeg; scrubBuscaEm = agora;
+  }
 
   medirAssistido();
   if (fontePrincipal() && video_ativo()) {
@@ -6100,6 +6123,9 @@ void player_desenhar(Uint32 agora) {
 
 // O CORPO DO OSD (barra, titulo, Seekr, botoes, tempo, selos e o botao de
 // pular), na camada ampliada: tudo aqui mede pela tela virtual.
+// O TEMPO ESCRITO E O ALVO (fork, 19/10): posSeg, nunca a barra deslizando
+// (posVis). De 0:30 para 0:20 o numero salta direto, sem contar 29, 28...
+// e sem animacao nas cifras (o dono nao quis o efeito de rolo).
 static void desenharOsdCorpo(Uint32 agora, float a, float ac, const CatItem *c);
 static void desenharOsd(Uint32 agora, float a, float ac, const CatItem *c) {
   ESCALA_INI();
@@ -6268,7 +6294,7 @@ static void desenharOsdCorpo(Uint32 agora, float a, float ac, const CatItem *c) 
     }
     if (transporteCurto && !barraFoco && transporteHabilitado(botao)) {
       char atual[24], dur[24], total[32];
-      plrui_tempo(atual, sizeof atual, posVisSolto ? posVis : posSeg);
+      plrui_tempo(atual, sizeof atual, posSeg);
       plrui_tempo(dur, sizeof dur, duracaoSeg); snprintf(total, sizeof total, "/ %s", dur);
       float reserva = txt_largura(TXT_G22M, atual) + txt_largura(TXT_G22M, total) + 32.0f;
       if (cw > reserva) {
@@ -6289,7 +6315,7 @@ static void desenharOsdCorpo(Uint32 agora, float a, float ac, const CatItem *c) 
       TxtLinha l = txt_linha(TXT_ILHA_NOME, i18n("AO VIVO"), 243, 242, 239, 235);
       txt_desenhar_alpha(l, cx + cw - l.w, cyTempo - (float)l.h * 0.5f, a);
     } else {
-      plrui_tempo(t1, sizeof t1, posVisSolto ? posVis : posSeg);
+      plrui_tempo(t1, sizeof t1, posSeg);
       plrui_tempo(d, sizeof d, duracaoSeg);
       snprintf(t2, sizeof t2, "/ %s", d);
       if (cheio > 0.01f) {

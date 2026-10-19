@@ -39,6 +39,10 @@ int main(int argc, char **argv) {
   segurando(4000, 3100, -1, 4000);
   assert(pilSaltoNivel == 3);
   salvar("salto-segurando-tras-160x");
+  // O tempo escrito e o ALVO, sem passar pelos segundos do meio.
+  toque(30, 30, -1);
+  posSeg = 20; quadros(4);
+  salvar("salto-tempo-alvo");
   // Atras cancela: sem busca, posicao de antes, pilula some.
   cancelarSalto();
   assert(!scrubbing);

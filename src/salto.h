@@ -83,8 +83,8 @@ static inline float salto_tecla(SaltoEst *st, int novo, int flagRepeat,
 // do Seekr e acertar o ponto ("1 s de atraso antes de aplicar"). Com o Seekr
 // ligado a espera e 1 s; sem miniatura nao ha o que olhar e ficam os 420 ms,
 // para o filme voltar a tocar logo depois de um toque so.
-// Fork: 700 ms entre toques ainda somam no mesmo salto ("+30 s"), e o video
-// segue tocando enquanto isso (o toque nao pausa mais).
+// Fork: 700 ms entre toques ainda somam no mesmo salto ("+30 s"). A imagem
+// para no primeiro toque e o player ja pre-carrega o alvo (player.c).
 #define SALTO_FIM_MS        700u
 #define SALTO_FIM_SEEKR_MS 1000u
 static inline unsigned salto_fim_ms(int seekrLigado) {
