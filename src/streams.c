@@ -3414,7 +3414,7 @@ static int passaChips(int i) {
 static int chipsOcultos(char *nomes, size_t nn) {
   int k = 0;
   if (nomes && nn) nomes[0] = 0;
-  if (filtro < 0 || !(soMp4 || soCache || soDub)) return 0;
+  if (filtro < 0 || !(soMp4 || soCache || soDub || soQual)) return 0;
   for (int i = 0; i < n; i++)
     if ((canalFolha || stream_filtro_permite(&lista[i])) && !chipsOk(i) &&
         (filtro <= 0 || filtro >= nProvedores || !strcmp(lista[i].provedor, provedores[filtro]))) k++;
@@ -3426,8 +3426,8 @@ static int chipsOcultos(char *nomes, size_t nn) {
       }
   return k;
 }
-// A linha de aviso dos filtros (grupo 2) e o OK nela: tira os tres filtros.
-static void limparChips(void) { soMp4 = soCache = soDub = 0; rolagem = 0; velRol = 0; grupo = 1; foco = 0; }
+// A linha de aviso dos filtros (grupo 2) e o OK nela: tira os filtros (Qualidade tambem).
+static void limparChips(void) { soMp4 = soCache = soDub = soQual = 0; rolagem = 0; velRol = 0; grupo = 1; foco = 0; }
 static const char *fraseDicaChips(void) {
   static char frase[256];
   char nomes[128];
