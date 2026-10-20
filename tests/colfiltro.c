@@ -11,6 +11,7 @@ int ajustes_ocultar_nao_lancados(void) { return ocultar; }
 static int ocultarVistos;
 int ajustes_ocultar_filmes_vistos(void) { return ocultarVistos; }
 unsigned cat_revisao_itens(void) { return 0; }               // #366: a projecao le a revisao
+#define NV_DUBLE_SESSAO
 #include "../src/descoberta.c"
 // descoberta.c passou a traduzir os rotulos que monta ("Filme", "Serie", a
 // data por extenso) e este teste nao linka idioma.c: linkar puxaria
@@ -34,6 +35,9 @@ const char *nuvem_trakt_cliente(void) { return ""; }
 char *rede_baixar_com(const char *u, int t, const char *const *c) {
   (void)c; return rede_baixar(u, t); }
 int trakt_enfeitar_lote(CatItem *s, int n) { (void)s; (void)n; return 0; }
+int trakt_enfeitar_lote_sessao(CatItem *s, int n, uint64_t session) {
+  (void)session; return trakt_enfeitar_lote(s, n);
+}
 // Origem do item (CatItem.origem): sem addons neste teste, a origem fica vazia.
 int addons_n(void) { return 0; }
 int addons_base_desligada(const char *b) { (void)b; return 0; }   // 203-desligados
@@ -51,6 +55,12 @@ const char *addons_base_por_id(const char *id) { (void)id; return ""; }
 #define LST_SO_ITENS
 #include "../src/listas.c"
 
+char *rede_baixar_st(const char *url, int timeout, const char *const *headers, int *status) {
+  (void)headers;
+  char *body = rede_baixar(url, timeout);
+  *status = body ? 200 : 0;
+  return body;
+}
 char *rede_baixar(const char *url,int timeout) {
   (void)timeout;
   if(strstr(url,"skip=3"))return strdup("{\"metas\":[{\"id\":\"tt4\",\"name\":\"Quarto\",\"poster\":\"p.jpg\",\"releaseInfo\":\"2019\"}]}");

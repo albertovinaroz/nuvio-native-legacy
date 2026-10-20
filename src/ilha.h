@@ -196,6 +196,10 @@ int  ilha_ponto_pediu(void);
 // Onde o relogio pode ficar, decidido por quadro por app.c (a home tem o topo
 // esquerdo livre; Ajustes e Explorar tem titulo ali).
 void ilha_relogio_visivel(int visivel);
+// O roteador concede foco ao sair pelo topo de uma pagina; nao altera os
+// cartoes nem o caminho existente de toque/AZUL/CH+.
+void ilha_relogio_focar(int foco);
+int  ilha_relogio_focado(void);
 
 // PONTO UNICO DA POSICAO. Sem chamada, a ilha fica no topo esquerdo, na coluna
 // do conteudo — ou no topo direito no layout Dinamica, onde a pilula fechada
@@ -307,5 +311,7 @@ typedef void (*IlhaCorpo)(GfxRect r, float a, void *u);
 void  ilha_corpo(float w, float h, IlhaCorpo corpo, void *u);
 // 0 = pilula, 1 = painel assentado (passa um pouco de 1 no repique).
 float ilha_corpo_t(void);
+// Chamar logo depois de ilha_corpo: este corpo (e a saida dele) sem sombra caida.
+void  ilha_corpo_sem_sombra(void);
 
 #endif

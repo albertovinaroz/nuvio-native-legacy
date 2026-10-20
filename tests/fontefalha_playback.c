@@ -8,9 +8,18 @@ static int fake_join(pthread_t, void **);
 #define pthread_create fake_create
 #define pthread_join fake_join
 #include "../src/app.c"
+#include "stub_m3u.h"
 #undef pthread_create
 #undef pthread_join
 #include <assert.h>
+
+long memlog_livre_mb(void) { return 1024; }
+int memlog_pode_reabrir(long (*livre)(void), void (*aliviar)(void)) { (void)livre; (void)aliviar; return 1; }
+void tex_aliviar(void) {}
+void txt_aliviar(void) {}
+void mkvass_parar(void) {}
+void assrender_aliviar(void) {}
+void memlog_devolver(void) {}
 
 static Uint32 agora;
 static unsigned lista = 41;
@@ -43,6 +52,7 @@ int player_aberto(void) { return aberto; }
 int player_mini_ativo(void) { return mini; }
 int player_quer_sair(void) { return sair; }
 const char *player_id_canal(void) { return ""; }
+const char *player_tipo_canal(void) { return ""; }
 int player_carregando(void) { return carregando; }
 int player_fonte_falhou(void) { return playerFalhou; }
 void player_voltar_a_esperar(void) {
@@ -66,7 +76,9 @@ unsigned video_bufferando_ms(void) { return (unsigned)bufferMs; }
 double video_pos(void) { return posicao; }
 double video_buffer_fim(void) { return bufferFim; }
 const char *video_url_atual(void) { return ""; }
+#ifndef I613_APP
 const char *video_erro_texto(void) { return "fixture playback error"; }
+#endif
 int stream_atual(void) { return 0; }
 unsigned stream_lista_geracao(void) { return lista; }
 int stream_n(void) { return 2; }
@@ -83,12 +95,28 @@ void marco(const char *s) { (void)s; }
 uint64_t badges_bit(const char *s) { (void)s; return 0; }
 int player_indice(void) { return 0; }
 void player_episodio_atual(int *t, int *e) { *t = *e = 0; }
+#ifndef I613_APP
+AddonsConsulta *addons_consulta_capturar(void) { return NULL; }
+int addons_consulta_atual(const AddonsConsulta *c) { (void)c; return 0; }
+void addons_consulta_liberar(AddonsConsulta *c) { (void)c; }
+int stream_vod_renovar(const AddonsConsulta *c, const char *id, const char *tipo,
+                       int i, unsigned g, int (*cancelado)(void *), void *ctx, Stream *s) {
+  (void)c; (void)id; (void)tipo; (void)i; (void)g; (void)cancelado; (void)ctx; (void)s;
+  assert(!"legacy failover must not renew VOD implicitly"); return 0;
+}
+int stream_vod_renovada_aplicar(int i, unsigned g, const Stream *s, uint64_t sessao) {
+  (void)i; (void)g; (void)s; (void)sessao; return 0;
+}
+void video_definir_cabecalhos(const char *s) { (void)s; }
 const CatItem *cat_item(int i) { (void)i; return NULL; }
+#endif
 int cat_id_stream(int i, int t, int e, char *url, unsigned n) {
   (void)i; (void)t; (void)e; (void)n; url[0] = 0; return 0;
 }
 void stream_definir_lista(const Stream *s, int n) { (void)s; (void)n; assert(!"VOD policy must not replace list"); }
+#ifndef I613_APP
 void stream_definir_atual(int i) { (void)i; assert(!"VOD consumer opens in the later UI phase"); }
+#endif
 int stream_automatico_disponivel(int i) { (void)i; return 1; }
 Uint32 stream_idade_ms(void) { return 0; }
 int stalker_resolver(const char *id, char *url, unsigned n) {
@@ -100,6 +128,10 @@ int stream_automatico_canal(void) { assert(!"VOD policy must not dispatch channe
 int stream_primeira_boa(int n) { (void)n; legadas++; assert(!"VOD policy must bypass legacy selection"); return -1; }
 int stream_primeira_boa_sessao(int n, uint64_t sessao) {
   (void)sessao; return stream_primeira_boa(n);
+}
+int stream_filtro_permite(const Stream *s) { (void)s; return 1; }
+void stream_filtro_dados(const Stream *s, FonteFiltroDados *dados) {
+  *dados = s ? s->filtro : (FonteFiltroDados){0};
 }
 int stream_verificar_proxima_vod(int i, int n, int *conferidas) {
   (void)i; (void)n; legadas++; *conferidas = 1; return 1;

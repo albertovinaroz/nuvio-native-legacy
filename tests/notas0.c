@@ -52,6 +52,11 @@ void cat_marcar_pos_creditos(const char *i, int v) { (void)i; (void)v; }
 int  contalib_vistos_do_titulo(const char *i, int *d) { (void)i; *d = 0; return 0; }
 const char *desc_chave_tmdb(void)  { return ""; }   // sem TMDB: caminho do bug
 const char *desc_tmdb_idioma(void) { return "pt-BR"; }
+const char *ajustes_trailer_audio(void) { return ""; }
+uint64_t perfis_sessao_geracao(void) { return 0; }
+int perfis_sessao_atual(uint64_t g) { return g == 0; }
+int perfis_sessao_travar(uint64_t g) { return g == 0; }
+void perfis_sessao_destravar(void) {}
 int  desc_tmdb_pos_creditos(const char *j) { (void)j; return 0; }
 void imdbnota_publicar(const char *i, int r)            { (void)i; (void)r; }
 void imdbnota_alias_tmdb(const char *i, long t, int s)  { (void)i; (void)t; (void)s; }
@@ -71,6 +76,10 @@ void marco(const char *m) { (void)m; }
 int  vistoep_fonte(const char *i, int t, int e, int v, long long q,
                    VistoFonte *c) {
   (void)i; (void)t; (void)e; (void)v; (void)q; (void)c; return 0;
+}
+int vistoep_fonte_se_sessao(const char *i, int t, int e, int v, long long q,
+                            VistoFonte *c, uint64_t sessao) {
+  return sessao == 0 ? vistoep_fonte(i, t, e, v, q, c) : 0;
 }
 void vistoep_fonte_log(const char *i, const char *f, const VistoFonte *c) {
   (void)i; (void)f; (void)c;

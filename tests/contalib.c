@@ -19,8 +19,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include "contalib.h"
+#include "vistoep.h"
 #include "catalogo.h"
+uint64_t perfis_sessao_geracao(void) { return 0; }
+int perfis_sessao_travar(uint64_t g) { return !g; }
+void perfis_sessao_destravar(void) {}
+int contapend_estado(const char *i, const char *tipo, int t, int e, long long ms, int v) {
+  static int unmark;
+  if (ms < 0) { int r = unmark; unmark = 0; return r; }
+  if (i && !strcmp(i, "tt14688458") && t == 2 && e == 6) return 0;
+  (void)v;(void)tipo; return 1;
+}
+int contapend_reenviar(void) { return 0; }
+void contapend_reenviar_com(int (*f)(const char *, const char *, const VistoPar *, int, int, int, const int *, int)) { (void)f; }
 
+int ajustes_fonte_biblioteca(void) { return 0; }
 static int falhas;
 
 static void confere(const char *o_que, int obtido, int esperado) {

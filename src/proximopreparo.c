@@ -137,7 +137,7 @@ int proximopreparo_agendar(int catalogo, int t, int e, const char *atual,
                           const char *alvo, const FontecacheEscopo *escopo) {
   if (!atual || !*atual || !alvo || !*alvo || !strcmp(atual, alvo) ||
       strlen(atual) >= sizeof ((ProximoJob *)0)->atual ||
-      strlen(alvo) >= sizeof ((ProximoJob *)0)->alvo || !escopo || t < 1 || e < 1 ||
+      strlen(alvo) >= sizeof ((ProximoJob *)0)->alvo || !escopo || t < 0 || e < 1 ||
       !ajustes_fonte_precarregar() || ajustes_fonte_manual()) return 0;
   if (proximo && !strcmp(proximo->atual, atual) && !strcmp(proximo->alvo, alvo) &&
       contextoAtual(proximo)) return 1;

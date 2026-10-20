@@ -97,6 +97,9 @@ void dados_desc_zerar(void);
 // devolver ao aparelho a escrita que ele mesmo acabou de fazer — sem um id
 // estavel, cada arranque parece um aparelho novo e o eco volta.
 const char *dados_cliente_id(void);
+// Hardware identity for account device settings; survives app-data removal.
+// Empty when unavailable: never fall back to model or an installation UUID.
+const char *dados_aparelho_id(void);
 
 // UUID v4 novo a cada chamada. MEDIDO contra o servidor: a RPC
 // start_tv_login_session recusa com "Invalid device nonce" qualquer nonce que

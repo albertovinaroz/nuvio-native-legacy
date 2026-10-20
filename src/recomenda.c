@@ -479,7 +479,9 @@ void recomenda_iniciar(void) {
   char usuario[80], jwt[3000];
   int identidade = sessao_identidade_local_copiar(usuario, sizeof usuario, jwt, sizeof jwt);
   memset(jwt, 0, sizeof jwt);
-  if (!identidade) { perfis_sessao_destravar(); return; }
+  // Sem login (ou sem modulo de conta) o dono e vazio: o cache local carrega,
+  // e so o cache de OUTRA conta e descartado abaixo.
+  if (identidade <= 0) usuario[0] = 0;
   b = dados_ler(REC_ARQ_DONO);
   if (b) {
     b[strcspn(b, "\r\n")] = 0;

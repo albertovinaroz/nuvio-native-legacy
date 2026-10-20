@@ -50,6 +50,8 @@ void trailer_recorte(int vw, int vh, float z, float dw, float dh,
                      int *sx, int *sy, int *sw, int *sh);
 void trailer_fechar(void);
 int  trailer_aberto(void);
+// Tests (desktop): fake native trailer. -1 off, 0 open but no image (stall), 1 playing.
+void trailer_teste_falso(int tocando);
 // Muda a cada fonte de trailer aberta: uma sessao principal anterior perdeu
 // o pipeline, mesmo se o trailer ja terminou ou usou a mesma URL.
 unsigned trailer_geracao(void);

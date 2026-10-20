@@ -9,11 +9,16 @@
 
 #define PES_MAX 24
 
-// Pede a ficha de `tmdbId`. Nao bloqueia. Repetir com o mesmo id nao refaz.
+// Pede a ficha de `tmdbId`. Nao bloqueia. Reuses a completed matching id.
+// Com `tmdbId` 0, chame pessoa_contexto_titulo antes: resolve pelo TMDB
+// (creditos deste titulo, depois /search/person pelo nome exato).
 void pessoa_pedir(long tmdbId, const char *nomeConhecido, const char *foto);
+void pessoa_contexto_titulo(const char *imdb, const char *tipo);
 
 // 1 quando ja ha o que desenhar.
 int  pessoa_pronta(void);
+// Latest request failed; selecting the person again retries it.
+int pessoa_falhou(void);
 const char *pessoa_nome(void);
 const char *pessoa_foto(void);
 const char *pessoa_bio(void);

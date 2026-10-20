@@ -41,6 +41,7 @@ TraEstado   traktauth_estado(void);
 const char *traktauth_codigo(void);    // user_code, para exibir
 const char *traktauth_url(void);       // verification_url
 const char *traktauth_erro(void);
+int traktauth_aguardando(void);
 
 void traktauth_cancelar(void);
 
@@ -65,5 +66,8 @@ int  traktauth_perfil(void);
 
 // Esquece o vinculo de TODOS os perfis (chamado ao sair da conta).
 void traktauth_esquecer(void);
+// Disconnect only this profile; keep the local opt-out across account sync.
+void traktauth_desconectar(void);
+int traktauth_desconectado(void);
 
 #endif

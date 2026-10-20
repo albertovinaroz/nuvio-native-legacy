@@ -31,10 +31,10 @@ typedef enum {
   // 14/10: o pôster 3:4 grande da Apple TV, com logo, gênero, classificação
   // e sinopse na base, sobre o véu da COR PREDOMINANTE do cartaz.
   FILEIRA_POSTER_GRANDE,
-  // Fork: "Pôster" escolhido a mao em Fileiras da Home. E a fileira comum
-  // sempre EM PE: a FILEIRA_NORMAL segue "Posteres deitados", e escolher
-  // pôster numa home deitada dava cartao deitado.
-  FILEIRA_CARTAZ
+  // 16/10: o painel deitado do foco a esquerda (arte, logo e ficha) e a fila
+  // de cartazes a direita; o painel segue o foco da fileira.
+  FILEIRA_HEROI_DIVIDIDO,
+  FILEIRA_POSTER       // Explicit portrait row style, independent of global landscape.
 } TipoFileira;
 
 // O item sob o foco, com o retangulo que ele ocupa na tela NESTE quadro. A
@@ -66,6 +66,9 @@ const char *home_arte(int i);
 const char *home_backdrop(int i);   // arte do titulo i do catalogo
 void home_evento(const SDL_Event *e);
 void home_atualizar(float dt, Uint32 agora);
+// Palco: o veu da tela inteira com a luz no titulo em foco; por cima de tudo
+// da home (barra inclusive), antes dos menus e da pagina do titulo.
+void home_holofote_desenhar(Uint32 agora);
 // Poe a home no topo (destaque, fileira 0, sem rolagem) e esquece a posicao
 // lembrada da sessao. Usado ao entrar num perfil novo.
 void home_ir_topo(void);
@@ -126,7 +129,8 @@ void home_pedir_abrir(void);   // pede a pagina do titulo focado (menu do cartao
 int  home_foco_retomada(void); // card focado e de retomada (OK nele toca)
 int  home_pediu_tocar(void);   // OK num card de retomada com "OK no card" = Retomar
 int  home_pediu_menu(void);    // ESQUERDA na primeira coluna: chama o menu
-int  home_pediu_ilha(void);   // CIMA no alto da home: foco na ilha (#495), como o CH+
+int  home_pediu_relogio(void); // CIMA alem do topo; consumido pelo roteador
+int  home_pediu_ilha(void);   // CIMA no alto da home: foco na ilha (#495)
 int home_pediu_social(void);
 int home_pediu_pessoa_social(CatItem *saida);
 // OK numa fileira de canal ("Ver tudo" dela, ou num cartao de canal — que ai

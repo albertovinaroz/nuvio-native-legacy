@@ -11,12 +11,9 @@
 #undef main
 
 // Dubles que montagem_cedo.c ainda nao tem (descoberta.c cresceu).
-void addons_lista_travar(void) {}
-void addons_lista_destravar(void) {}
 void addons_manifesto_lido_base(int i, const char *base, const char *destino,
                                 unsigned versao, const char *corpo) {
   (void)i; (void)base; (void)destino; (void)versao; (void)corpo; }
-int ajustes_ocultar_filmes_vistos(void) { return 0; }
 void ws_destino(const char *base, const char *usuario, int perfil, char out[20]) {
   (void)base; (void)usuario; (void)perfil; out[0] = 0; }
 

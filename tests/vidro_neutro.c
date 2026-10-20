@@ -79,7 +79,7 @@ static void neutro(const char *nome, double m[3]) {
 int main(int argc, char **argv) {
   const char *dir = argc > 1 ? argv[1] : NULL;
   GfxRect painel = { 1240, 140, 560, 760 }, folha = { 160, 140, 560, 760 };
-  double m[3];
+  double m[3], gray[3] = {0};
   int k;
   SDL_SetHint("SDL_MAC_BACKGROUND_APP", "1");
   assert(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) == 0);
@@ -106,10 +106,35 @@ int main(int argc, char **argv) {
     gfx_vidro_folha(folha, 36.0f / folha.h, 1.0f);
     snprintf(n, sizeof n, "painel/%s/q%d", nf, k & 1);
     media((int)painel.x + 40, (int)painel.y + 40, (int)painel.w - 80, (int)painel.h - 80, m); neutro(n, m);
+    if (k == 1) memcpy(gray, m, sizeof gray);
+    if (k == 2) confere(m[1] > gray[1] + 20.0, "hard cut updates the frost on the same frame");
     snprintf(n, sizeof n, "folha/%s/q%d", nf, k & 1);
     media((int)folha.x + 40, (int)folha.y + 40, (int)folha.w - 80, (int)folha.h - 80, m); neutro(n, m);
     if (k == 0) salvar(dir, "vidro-cinza.bmp");
     if (k == 2) salvar(dir, "vidro-branco.bmp");
+  }
+
+  // Settle a small region, then open a distant panel after foreground drew.
+  // Both the miss and the following regional frame must use backdrop only.
+  {
+    GfxRect small = { 100, 40, 300, 90 }, expanded = { 1100, 250, 600, 600 };
+    double miss[3], settled[3];
+    for (int i = 0; i < 35; i++) {
+      if (i == 34) gfx_vidro_sujar();
+      quadro(.5f);
+      gfx_vidro_painel(small, .3f, .8f, 1);
+      if (i == 34) confere(gfx_vidro_capturas == 1 && gfx_vidro_fill > 0 && gfx_vidro_fill < .1,
+                           "neutral test reaches regional blur before the miss");
+    }
+    for (int i = 0; i < 2; i++) {
+      quadro(.5f);
+      gfx_vidro_painel(small, .3f, .8f, 1);
+      gfx_cor((GfxRect){1000, 200, 800, 800}, 0, 0, 1, 0, 1);
+      gfx_vidro_painel(expanded, .06f, .8f, 1);
+      media(1250, 400, 200, 200, i ? settled : miss);
+    }
+    neutro("regional miss excludes foreground", miss);
+    confere(fabs(miss[1] - settled[1]) <= 1.0, "region expansion has no source pop");
   }
 
   // O vidro desfoca o que esta atras: metade esquerda preta, direita branca,
@@ -120,13 +145,33 @@ int main(int argc, char **argv) {
     double v[4][3];
     int i, sobe = 1;
     quadro(0.0f);
-    gfx_cor((GfxRect){ 960, 0, 960, 1080 }, 0, 1, 1, 1, 1.0f);
+    // Full-screen backdrop draw clipped to its white half. A half-size COR
+    // draw is foreground and would close the backdrop before painting white.
+    gfx_recorte(960, 0, 960, 1080);
+    gfx_cor((GfxRect){ 0, 0, 1920, 1080 }, 0, 1, 1, 1, 1.0f);
+    gfx_sem_recorte();
     gfx_vidro_painel(p, 36.0f / p.h, 0.30f, 1.0f);
     for (i = 0; i < 4; i++) media(944 + 10 * i, 500, 2, 40, v[i]);
     for (i = 0; i < 3; i++) sobe &= v[i + 1][1] > v[i][1] + 2.0;
     printf("borda sob o vidro: %.1f %.1f | %.1f %.1f\n", v[0][1], v[1][1], v[2][1], v[3][1]);
     confere(sobe, "o vidro desfoca o backdrop real (a borda vira degrade)");
     salvar(dir, "vidro-borda.bmp");
+  }
+  // Top bar, glass on + frost OFF: still see-through. Left half black, right
+  // half white behind a bar spanning x = 960; opaque draws both halves equal.
+  {
+    GfxRect b = { 560, 40, 800, 96 };
+    double e[3], d[3];
+    setenv("NUVIO_SHOT_VIDRO_FOSCO", "0", 1); ajustes_teste_vidro_env();
+    assert(ajustes_vidro() && !ajustes_vidro_fosco());
+    quadro(0.0f);
+    gfx_cor((GfxRect){ 960, 0, 960, 1080 }, 0, 1, 1, 1, 1.0f);
+    gfx_chrome(b, 0.5f, 1.0f);
+    media(700, 70, 40, 30, e); media(1180, 70, 40, 30, d);
+    printf("barra fosco off: esq %.1f dir %.1f\n", e[1], d[1]);
+    confere(d[1] > e[1] + 12.0, "barra do topo, vidro sem fosco, deixa o fundo passar");
+    confere(e[1] < 60.0 && d[1] < 200.0, "barra sem fosco segue escura o bastante para o texto");
+    salvar(dir, "barra-fosco-off.bmp");
   }
   printf("vidro_neutro: %s\n", falhas ? "FALHA" : "ok");
   return falhas ? 1 : 0;

@@ -593,7 +593,11 @@ void __wrap_SDL_Delay(Uint32 ms) { fio1_dormir_ms((double)ms); }
 // fecha o link; se disparar mesmo assim (emscripten_is_main_browser_thread
 // mudou de comportamento numa versao futura do emsdk, por exemplo), avisa no
 // log em vez de travar silenciosamente sem nunca criar o Worker de decode.
+#ifdef NV_TIZEN3_LITE
+void emscripten_async_run_in_main_runtime_thread_(int sig, void *func_ptr, ...) {
+#else
 void __wrap_emscripten_async_run_in_main_runtime_thread_(int sig, void *func_ptr, ...) {
+#endif
   (void)sig; (void)func_ptr;
   printf("[fio1] emscripten_async_run_in_main_runtime_thread chamado sem -pthread — "
         "nao deveria (so ha um fio de JS neste build; ver comentario em fio1.c)\n");

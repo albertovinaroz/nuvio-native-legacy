@@ -50,6 +50,8 @@ static char chaveLocal[SN][200];
 static int  alvoT, alvoE;
 static pthread_mutex_t chaveTrava = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t sessaoAtual;
+static atomic_uint tbGeracao;
+unsigned debrid_tb_geracao(void) { return atomic_load(&tbGeracao); }
 
 // RECUSA DE CONTA POR BUSCA. recusado[q] guarda o status HTTP da recusa (0 =
 // nenhuma); `geracao` sobe a cada debrid_nova_busca. Atomicos porque
@@ -190,6 +192,7 @@ static void efetiva(int q) {
   const char *k = chaveLocal[q][0] ? chaveLocal[q] : chaveConta[q];
   pthread_mutex_lock(&contaMutex);
   if (strcmp(chave[q], k)) {
+    if (q == STB) atomic_fetch_add(&tbGeracao, 1u);
     atomic_fetch_add(&geracao, 1u);
     atomic_store(&recusado[q], 0);
     atomic_store(&semPlano[q], 0); atomic_store(&avisado[q], 0);
@@ -230,6 +233,7 @@ void debrid_abrir_sessao(uint64_t sessao) {
   int q;
   pthread_mutex_lock(&chaveTrava);
   sessaoAtual = sessao;
+  atomic_fetch_add(&tbGeracao, 1u);
   atomic_fetch_add(&geracao, 1u);
   memset(chaveConta, 0, sizeof chaveConta); alvoT = alvoE = 0;
   atomic_store(&foraCache, 0);
@@ -318,6 +322,7 @@ int debrid_ativo(void) {
 void debrid_esquecer(void) {
   int q;
   pthread_mutex_lock(&chaveTrava);
+  atomic_fetch_add(&tbGeracao, 1u);
   atomic_fetch_add(&geracao, 1u);
   // Logout: a chave DA CONTA sai; a digitada nesta TV fica (ver chaveLocal).
   memset(chaveConta, 0, sizeof chaveConta); alvoT = alvoE = 0;
@@ -660,10 +665,10 @@ static int ehVideo(const char *nome) {
 static const char *escolherArquivo(const char *files, int fileIdx,
                                    const char *kNome, const char *kTam) {
   char pad1[16] = "", pad2[16] = "";
-  const char *p, *melhor = NULL; int idx = 0; double melhorTam = -1;
+  const char *p, *melhor = NULL; int idx = 0, porIndice = 0; double melhorTam = -1;
   int temporada = 0, episodio = 0;
   debrid_episodio(&temporada, &episodio);
-  if (temporada > 0 && episodio > 0) {
+  if (temporada >= 0 && episodio > 0) {
     snprintf(pad1, sizeof pad1, "s%02de%02d", temporada, episodio);
     snprintf(pad2, sizeof pad2, "%dx%02d", temporada, episodio);
   }
@@ -675,9 +680,12 @@ static const char *escolherArquivo(const char *files, int fileIdx,
     minusc(nome);
     if (!ehVideo(nome)) continue;
     if (pad1[0] && (strstr(nome, pad1) || strstr(nome, pad2))) return p;
-    if (idx == fileIdx && fileIdx >= 0) { melhor = p; melhorTam = 1e18; continue; }
+    if (idx == fileIdx && fileIdx >= 0) { melhor = p; melhorTam = 1e18; porIndice = 1; continue; }
     if (tam > melhorTam) { melhor = p; melhorTam = tam; }
   }
+  // Sem correspondencia ou indice publicado, nao trocar um especial pelo
+  // maior episodio regular de um pacote. A falha permite outra fonte.
+  if (temporada == 0 && episodio > 0 && !porIndice) return NULL;
   return melhor;
 }
 
@@ -780,12 +788,11 @@ static int resolverRD(const char *infoHash, int fileIdx, char *url, unsigned n,
 
 // `soCache` 1 = add_only_if_cached (o automatico); 0 = a pessoa escolheu o
 // torrent fora de cache e o TorBox deve BAIXAR — e o "P2P" do TorBox.
-static char *tb_criar(const char *magnet, int soCache, int *st) {
+static char *tbCriarCom(const char *chaveTB, const char *magnet, int soCache, int *st) {
   char url[300], auth[260], corpo[1200];
   const char *cab[3];
-  if (!contextoVale()) { if (st) *st = 0; return NULL; }
   snprintf(url, sizeof url, TB "/torrents/createtorrent");
-  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chaveDoFio(STB));
+  snprintf(auth, sizeof auth, "Authorization: Bearer %s", chaveTB);
   cab[0] = auth;
   cab[1] = "Content-Type: multipart/form-data; boundary=" BND;
   cab[2] = NULL;
@@ -798,6 +805,10 @@ static char *tb_criar(const char *magnet, int soCache, int *st) {
            "--" BND "\r\nContent-Disposition: form-data; name=\"add_only_if_cached\"\r\n\r\n%s\r\n"
            "--" BND "--\r\n", magnet, soCache ? "true" : "false");
   return rede_postar_st(url, 15, cab, corpo, st);
+}
+static char *tb_criar(const char *magnet, int soCache, int *st) {
+  if (!contextoVale()) { if (st) *st = 0; return NULL; }
+  return tbCriarCom(chaveDoFio(STB), magnet, soCache, st);
 }
 
 // PRONTO PARA requestdl? Em cache o mylist ja vem com download_finished (ou
@@ -1460,4 +1471,94 @@ int debrid_resolver_escolhido(const char *infoHash, int fileIdx, char *url,
   }
   if (abriu) debrid_contexto_sair();
   return r == 1 || r == DEBRID_BAIXANDO ? r : 0;
+}
+
+// ---------------------------------------------------------------- TorBox: arquivos de uma fonte
+//
+// A LISTA DE ARQUIVOS DE UMA FONTE (partes.h, dono 16/10/2026): o addon manda
+// UM link por titulo, e um filme cortado em 4 episodios dentro do mesmo
+// torrent aparecia so com a parte 1. Estas quatro chamadas leem o item na
+// conta TorBox da pessoa e pedem o link de qualquer arquivo dele.
+//
+// NAO DEPENDEM DA BUSCA EM CURSO (contextoVale): a lista e pedida com a folha
+// aberta, e o link da parte seguinte no meio do filme — uma busca nova (o
+// Recarregar, a busca de fundo do Retomar) nao muda a conta nem a chave. A
+// chave e copiada sob a trava na hora; logout a apaga e a chamada seguinte
+// sai "sem chave".
+static int tbChave(char *dst, size_t n) {
+  int ok;
+  pthread_mutex_lock(&chaveTrava);
+  snprintf(dst, n, "%s", chave[STB]);
+  ok = dst[0] != 0;
+  pthread_mutex_unlock(&chaveTrava);
+  return ok;
+}
+
+int debrid_tb_disponivel(void) {
+  char k[200];
+  if (!tbChave(k, sizeof k)) return 0;
+  return atomic_load(&semPlano[STB]) ? -1 : 1;
+}
+
+char *debrid_tb_mylist(int usenet, int id, int pagina, int fresco, int *st) {
+  char url[300], auth[260], k[200];
+  const char *cab[2];
+  if (st) *st = 0;
+  if (!tbChave(k, sizeof k)) return NULL;
+  if (id > 0)
+    snprintf(url, sizeof url, TB "/%s/mylist?id=%d%s", usenet ? "usenet" : "torrents", id,
+             fresco ? "&bypass_cache=true" : "");
+  else
+    snprintf(url, sizeof url, TB "/%s/mylist?offset=%d&limit=%d%s", usenet ? "usenet" : "torrents",
+             pagina * DEBRID_TB_PAGINA, DEBRID_TB_PAGINA, fresco ? "&bypass_cache=true" : "");
+  snprintf(auth, sizeof auth, "Authorization: Bearer %s", k);
+  cab[0] = auth; cab[1] = NULL;
+  return rede_baixar_st(url, 20, cab, st);
+}
+
+// O requestdl leva o token NA QUERY (ver resolverTB): esta URL nunca vai para
+// log. O que volta em `url` e o link do CDN (*.tb-cdn.st), que toca direto.
+int debrid_tb_link(int usenet, int id, int arquivo, char *url, unsigned n) {
+  char u[1200], k[200];
+  const char *cab[1];
+  char *r; int st = 0, ok;
+  if (url && n) url[0] = 0;
+  if (!url || n == 0 || id <= 0 || arquivo < 0 || !tbChave(k, sizeof k)) return 0;
+  cab[0] = NULL;
+  if (usenet)
+    snprintf(u, sizeof u, TB "/usenet/requestdl?token=%s&usenet_id=%d&file_id=%d&redirect=false", k, id, arquivo);
+  else
+    snprintf(u, sizeof u, TB "/torrents/requestdl?token=%s&torrent_id=%d&file_id=%d&redirect=false", k, id, arquivo);
+  r = rede_baixar_st(u, 15, cab, &st);
+  ok = ok2xx(r, st) && js_texto_raiz(r, "data", url, n) && !strncmp(url, "http", 4);
+  if (!ok) {
+    // O texto do proprio TorBox (sem chave nem URL): "error"/"detail" dizem se
+    // foi o item que sumiu, o plano, ou o servidor (dono, 16/10, log 19).
+    char erro[96] = "", det[160] = "";
+    if (r) { js_texto_raiz(r, "error", erro, sizeof erro); js_texto_raiz(r, "detail", det, sizeof det); }
+    printf("[partes] TorBox requestdl (%s): HTTP %d%s%s%s%s%s\n", usenet ? "usenet" : "torrent", st,
+           r && debrid_eh_sem_plano(st, r) ? " (conta sem plano para a API)" : "",
+           erro[0] ? ", error=" : "", erro, det[0] ? ", detail=" : "", det);
+    if (url && n) url[0] = 0;
+  }
+  free(r);
+  return ok;
+}
+
+int debrid_tb_adicionar(const char *hash) {
+  char h[80], magnet[300], k[200];
+  char *r; int st = 0, tid;
+  if (!hash || !*hash || !tbChave(k, sizeof k)) return -1;
+  hashMin(h, sizeof h, hash);
+  snprintf(magnet, sizeof magnet, "magnet:?xt=urn:btih:%s", h);
+  r = tbCriarCom(k, magnet, 1, &st);
+  tid = ok2xx(r, st) ? (int)js_num(r, NULL, "torrent_id", -1) : -1;
+  if (tid < 0) {
+    char erro[96] = "", det[160] = "";
+    if (r) { js_texto_raiz(r, "error", erro, sizeof erro); js_texto_raiz(r, "detail", det, sizeof det); }
+    printf("[partes] TorBox createtorrent (so em cache): HTTP %d%s%s%s%s\n", st,
+           erro[0] ? ", error=" : "", erro, det[0] ? ", detail=" : "", det);
+  }
+  free(r);
+  return tid;
 }

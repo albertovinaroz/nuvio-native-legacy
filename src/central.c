@@ -558,7 +558,7 @@ static void cartaoTocando(GfxRect r, const char *tit, const char *meta, float a)
 }
 
 // UM BOTAO: icone em cima, nome curto e, quando nao e interruptor, o valor.
-// Interruptor ligado = botao cheio no acento; foco = superficie clara e anel.
+// Active tiles keep their accent; focus adds frost, a top light and the ring.
 // `ligF` (0..1) e `f` (0..1) sao MOLAS: o realce liga/desliga e o anel entra
 // em ~120 ms (NV_MOLA_FOCO), em vez de trocar num quadro. A tinta do TEXTO
 // troca no ponto medio (rasterizado nao recolor por quadro); icone, superficies
@@ -572,9 +572,14 @@ static void botao(GfxRect r, const char *icone, const char *rot, const char *val
                         : (float)tinta / 255.0f;
   TxtLinha l, v;
   ajustes_acento(&ar, &ag, &ab);
-  if (ligado >= 0 && ligF > 0.005f) gfx_cor(r, CC_BOTAO_R / r.h, ar, ag, ab, a * ligF);
-  if (ligado < 0 || ligF < 0.995f) superficie(r, CC_BOTAO_R, f, a * (1.0f - ligF));
-  if (f > 0.01f) gfx_anel_fora(r, CC_BOTAO_R / r.h, 3.0f, 2.5f, 1, 1, 1, 0.95f * f * a);
+  // Share the cached frost even with interface glass off; never blur per tile.
+  if (f > 0.01f) gfx_vidro_folha(r, CC_BOTAO_R / r.h, f * a);
+  if (ligado >= 0 && ligF > 0.005f) gfx_cor(r, CC_BOTAO_R / r.h, ar, ag, ab, a * ligF * (1.0f - 0.08f * f));
+  if (ligado < 0 || ligF < 0.995f) superficie(r, CC_BOTAO_R, f, a * (1.0f - ligF) * (1.0f - f));
+  if (f > 0.01f) {
+    gfx_brilho_topo(r, CC_BOTAO_R / r.h, 0.45f, 1, 1, 1, 0.16f * f * a);
+    gfx_anel_fora(r, CC_BOTAO_R / r.h, 3.0f, 2.5f, 1, 1, 1, 0.95f * f * a);
+  }
   gfx_icone((GfxRect){ r.x + 14.0f, r.y + 14.0f, CC_ICONE, CC_ICONE }, icone, ti, ti, ti,
             anim_mistura(0.88f, 1.0f, ligado >= 0 ? ligF : 0.0f) * a);
   // Nome em 16/600; se nao couber (alemao, russo), um degrau menor; sem
@@ -687,7 +692,7 @@ static void desenhaEdicao(float x, float y, float w, float h, float a) {
 #ifdef NV_TOUCH_UI
   toquerol_vincular(&toqueCentral, (GfxRect){x, y, w, h}, gfx_escala(), 0, maxR, 1, &rolaEd);
   if (aberta && a > 0.5f) ponteiro_rolagem(toqueCentralRolar);
-  if (!toqueCentral.livre)
+  if (!toquerol_livre(&toqueCentral))
 #endif
   rolaEd = alvo;
   gfx_recorte(x - 8.0f, y, w + 16.0f, h);
@@ -710,10 +715,11 @@ static void desenhaEdicao(float x, float y, float w, float h, float a) {
     } else gfx_icone(ic, "aj_plus", 0.953f, 0.949f, 0.937f, 0.45f * a);
     if (aberta && a > 0.5f && ponteiro_ativo()) {
 #ifdef NV_TOUCH_UI
+      if (layout_modo_mobile())
       ponteiro_alvo_faixa(r.x, r.y, r.w, r.h, y, y + h, ptFoco, ptOk, j, 1);
-#else
-      ponteiro_alvo(r.x, r.y, r.w, r.h, ptFoco, ptOk, j, 1);
+      else
 #endif
+      ponteiro_alvo(r.x, r.y, r.w, r.h, ptFoco, ptOk, j, 1);
     }
   }
   gfx_sem_recorte();

@@ -46,9 +46,7 @@ int main(void) {
                     "\"episode\":{\"season\":5,\"number\":3},\"progress\":42.46}"));
   { ScrobbleEpIds ids = { "10600123", "5234501", "9923456" };
     scrobble_corpo_ep(c, sizeof c, "tt29422052:2:1", 10.0, &ids);
-    assert(strstr(c, "\"tvdb\":10600123"));
-    assert(strstr(c, "\"season\":2"));
-    assert(strstr(c, "\"number\":1")); }
+    assert(!strcmp(c, "{\"episode\":{\"ids\":{\"tvdb\":10600123,\"trakt\":9923456}},\"progress\":10.00}")); }
   scrobble_corpo(c, sizeof c, "tt1375666", 120.0);
   assert(!strcmp(c, "{\"movie\":{\"ids\":{\"imdb\":\"tt1375666\"}},\"progress\":100.00}"));
   assert(!strcmp(scrobble_nome(SCR_START), "start"));

@@ -58,6 +58,8 @@ static float dsA;
 #ifdef NV_SHOT_HOOKS
 static time_t horaFixa;
 void plrilha_shot_hora(time_t t) { horaFixa = t; }
+static GfxRect shotCentro;
+int plrilha_shot_centro(GfxRect *r) { *r = shotCentro; return r->w > 0; }
 static float shotTxtX, shotFimX;
 static int shotTemFim;
 void plrilha_shot_linha(float *t, float *f, int *tf) { *t = shotTxtX; *f = shotFimX; *tf = shotTemFim; }
@@ -280,18 +282,25 @@ static void cartaoCentro(Uint32 agora) {
     cenCorpoA = anim_mola(cenCorpoA, quer ? 1.0f : 0.0f, dt, quer ? 10.0f : 26.0f);
   }
   temCen = 0;
+#ifdef NV_SHOT_HOOKS
+  shotCentro = (GfxRect){0};
+#endif
   if (cenA < 0.01f) { cenA = cenCorpoA = 0.0f; cenW = cenH = 0.0f; cenVW = cenVH = 0.0f; return; }
   { const PlrIlhaPedido *c = &cenUlt;
     float w = cenW < 8.0f ? 8.0f : cenW, h = cenH < 8.0f ? 8.0f : cenH;
     GfxRect R = { (NV_TELA_W - w) * 0.5f, (NV_TELA_H - h) * 0.5f, w, h };
     GfxRect F = { (NV_TELA_W - c->w) * 0.5f, (NV_TELA_H - c->h) * 0.5f, c->w, c->h };
+#ifdef NV_SHOT_HOOKS
+    shotCentro = R;
+#endif
     if (c->ancoraTopo) F.y = R.y;   // o conteudo desce/sobe com a forma (nao salta para o centro novo)
     // O raio acompanha a forma como na ilha: da pilula (meia altura) ao do corpo.
     float cresce = anim_clamp((h - PIL_H) / 120.0f, 0.0f, 1.0f);
     float raio = RAIO_CORPO * cresce + h * 0.5f * (1.0f - cresce);
     if (raio > h * 0.5f) raio = h * 0.5f;
     if (raio > w * 0.5f) raio = w * 0.5f;
-    plrui_material(R, raio, c->modal, cenA);
+    if (c->video) plrui_material_video(R, raio, cenA);
+    else plrui_material_s(R, raio, c->modal, cenA, c->semSombra);
     gfx_recorte(R.x, R.y, R.w, R.h);
     // O corpo fica no tamanho final e o recorte da forma o corta (centrado, ou
     // preso ao topo da forma com `ancoraTopo`).
@@ -379,7 +388,8 @@ static void plrilha_desenharCorpo_(Uint32 agora) {
     // ele mesmo, na camada da folha, quando a ilha o chama abaixo.
     if (p->ponteiroOk && !corpo && A > 0.99f && fabsf(W - alvoW) < 1.0f && fabsf(H - alvoH) < 1.0f)
       ponteiro_alvo(R.x, R.y, R.w, R.h, p->ponteiroOk, NULL, 0, 0);
-    plrui_material(R, raioPx, (temUlt ? ult.modal : 0), A);
+    if (temUlt && ult.video) plrui_material_video(R, raioPx, A);
+    else plrui_material_s(R, raioPx, (temUlt ? ult.modal : 0), A, temUlt ? ult.semSombra : 0);
     central_segurar_desenhar(R, raioPx / (R.h > 1.0f ? R.h : 1.0f), A, agora);
     gfx_recorte(R.x, R.y, R.w, R.h);
     { float cabH = h < CAB_H ? h : CAB_H;

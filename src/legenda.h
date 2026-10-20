@@ -25,8 +25,8 @@ typedef struct {
 
   // --- O QUE O ARQUIVO ASS DIZ SOBRE ESTE BLOCO -----------------------------
   //
-  // Tudo aqui nasce ZERADO no caminho SRT/VTT, e o desenho trata zero como
-  // "o arquivo nao disse nada" — e ai quem manda e a preferencia da pessoa.
+  // SRT/VTT also supplies bold/italic emphasis; other style fields stay
+  // unset. Zero means the file did not specify a value: use user settings.
 
   // Ancora ASS 1..9 (1 = base-esquerda, 5 = meio-centro, 9 = topo-direita).
   // 0 = o arquivo nao declarou; usa a posicao escolhida na folha de faixas.

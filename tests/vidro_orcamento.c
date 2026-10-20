@@ -1,8 +1,10 @@
 // Orcamento do vidro por quadro (a ideia de widgets_glass_budget_tests.rs do
 // PlxNative: as superficies de vidro de um quadro convergem numa captura so).
 // A barra do topo (trilha + circulo do perfil), a ilha do relogio e um painel
-// de vidro, com a pagina por baixo MUDANDO a cada quadro (rolagem): no maximo
-// UMA captura e as 5 passadas dela por quadro. Com a pagina parada, nenhuma.
+// de vidro, com a pagina por baixo MUDANDO a cada quadro (rolagem). The
+// glasses read only the backdrop layer (docs/fosco-nova.md): rows scrolling
+// over a static backdrop cost no capture; a changing backdrop costs ONE
+// capture and its 5 passes per frame. With nothing moving, none.
 //   bash tests/vidro_orcamento.sh
 #include "gfx.h"
 #include "ajustes.h"
@@ -29,10 +31,12 @@ static void confere(int ok, const char *nome) {
 
 // Um quadro da home: a pagina (um degrade que desce `rola` px), a barra, a
 // ilha e um painel de vidro por cima da pagina.
+static float fundo = 0.05f;   // the backdrop layer: a full-screen color
 static void quadro(float rola, Uint32 agora) {
   int i;
   gfx_novo_quadro();
   glClearColor(0, 0, 0, 1); glClear(GL_COLOR_BUFFER_BIT);
+  gfx_cor((GfxRect){ 0, 0, 1920, 1080 }, 0, fundo, fundo, fundo * 1.2f, 1.0f);
   for (i = 0; i < 12; i++)
     gfx_cor((GfxRect){ 0, i * 90.0f - rola, 1920, 90 }, 0, .1f + .06f * i, .2f, .5f - .03f * i, 1.0f);
   menu_atualizar(0.016f, agora);
@@ -78,7 +82,7 @@ int main(void) {
   // molas da barra (alfa da capsula) assentam em ~2 s.
   for (k = 0; k < 150; k++) quadro(0.0f, 16u * k);
 
-  // Rolando: a pagina muda todo quadro, o vidro tem de recapturar, UMA vez.
+  // Rolando: the rows change every frame, the backdrop does not: no capture.
   // O ms (com glFinish) so informa: a GPU do Mac nao e a da TV.
   cap = pas = 0;
   glFinish(); t0 = SDL_GetPerformanceCounter();
@@ -90,14 +94,25 @@ int main(void) {
   glFinish();
   printf("rolando: ate %d capturas e %d passadas por quadro, %.2f ms/quadro\n", cap, pas,
          (double)(SDL_GetPerformanceCounter() - t0) * 1000.0 / SDL_GetPerformanceFrequency() / 20.0);
+  confere(cap == 0 && pas == 0, "rows scrolling over a static backdrop: no capture");
+
+  // The backdrop itself changes every frame (hero crossfade): ONE capture.
+  cap = pas = 0;
+  for (k = 0; k < 20; k++) {
+    fundo = 0.05f + 0.01f * (k + 1);
+    quadro(80.0f, 16u * (170 + k));
+    if (gfx_vidro_capturas > cap) cap = gfx_vidro_capturas;
+    if (gfx_vidro_passadas > pas) pas = gfx_vidro_passadas;
+  }
+  printf("fundo mudando: ate %d capturas e %d passadas por quadro\n", cap, pas);
   confere(cap == 1, "barra, perfil, ilha e painel dividem uma captura por quadro");
   confere(pas <= PASSADAS_POR_CAPTURA, "no maximo as 5 passadas de uma captura");
 
   // Parada: nada atras mudou, o backdrop desfocado do quadro anterior serve.
-  quadro(80.0f, 16u * 170);
+  quadro(80.0f, 16u * 190);
   cap = pas = 0;
   for (k = 0; k < 5; k++) {
-    quadro(80.0f, 16u * 170);
+    quadro(80.0f, 16u * 190);
     cap += gfx_vidro_capturas; pas += gfx_vidro_passadas;
   }
   printf("parada: %d capturas, %d passadas em 5 quadros\n", cap, pas);

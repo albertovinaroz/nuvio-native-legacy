@@ -5,6 +5,7 @@
 #include "idioma.h"
 #include "player.h"
 #include "video.h"
+#include "xtream.h"
 #include "addons.h"
 #include "gfx.h"
 #include "text.h"
@@ -167,9 +168,9 @@ static int ehAss(const VideoFaixa *f) {
 #else
 #define FX_TEXTO_OVERLAY 1
 #endif
-// PGS: so o .tpk decodifica e desenha (imgsub); as outras plataformas seguem.
+// PGS: o app decodifica e desenha (imgsub) no .tpk e na LG; as outras seguem.
 static int ehPgs(const VideoFaixa *f) {
-#ifdef NV_TPK
+#if defined(NV_TPK) || defined(NV_WEBOS)
   return f && faixasmkv_imagem_overlay(f->codec);
 #else
   (void)f; return 0;
@@ -186,6 +187,7 @@ static int vaiOverlay(const VideoFaixa *f) {
 // desenhando por cima, o firmware ignorou o setSubtitleEnable, e isso e
 // outro bug (a resposta do uMS sai logo abaixo como "[video] {...}").
 static void overlayAssumir(int i, int ord) {
+  if (xtream_url_limitada(video_url_atual())) { video_escolher_legenda(i); return; }
   const VideoFaixa *f = video_legenda(i);
   int texto = f && f->numero >= 0 && !ehAss(f) && !ehPgs(f);
   // Texto: a TV segura a legenda enquanto a rede ainda nao entregou cues.
@@ -944,9 +946,13 @@ static void aplicar(void) {
   if (coluna == 0) {
     // F06: outra faixa de audio = outras falas; a escuta em curso nao vale mais.
     if (video_audio_atual() != foco[0]) legsync_audio_trocou();
-    // A ordem automatica (audioescolha.h) volta a esta faixa nesta reproducao.
+    // A ordem automatica (audioescolha.h) volta a esta faixa neste titulo, e
+    // nos outros episodios: gravada no perfil (audiomemoria.h), com o numero
+    // dela para a mesma release (bingeGroup).
     { const VideoFaixa *f = video_audio(foco[0]);
-      if (f && !player_id_canal()[0]) audioesc_lembrar(f->idioma, f->codec, f->rotulo, f->canais); }
+      if (f && !player_id_canal()[0])
+        audioesc_lembrar_faixa(f->idioma, f->codec, f->rotulo, f->canais,
+                              video_audio_numero_memoria(f)); }
     video_escolher_audio(foco[0]);
   } else {
     // A pessoa escolheu: a automatica nao mexe mais nesta sessao, nem se a
@@ -1001,7 +1007,7 @@ static void legendaAutomatica(Uint32 agora) {
   const VideoFaixa *fa;
   const CatItem *ci;
   const LegMem *mt;
-  char tit[64];
+  char tit[64], addIdiomas[LEG_MAX][sizeof ((Legenda *)0)->idioma];
   int tipos[NV_FAIXA_MAX];
   int nEmb, nAdd = 0, embFechado, addFechado = 1, i, r, soForcada, origem, forcadaAuto;
   Uint32 passou;
@@ -1052,7 +1058,11 @@ static void legendaAutomatica(Uint32 agora) {
   if (ci && ci->imdb[0]) {
     nAdd = addons_n_legendas();
     if (nAdd > LEG_MAX) nAdd = LEG_MAX;
-    for (i = 0; i < nAdd; i++) { const Legenda *l = addons_legenda(i); add[i] = l ? l->idioma : ""; }
+    for (i = 0; i < nAdd; i++) {
+      const Legenda *l = addons_legenda(i);
+      snprintf(addIdiomas[i], sizeof addIdiomas[i], "%s", l ? l->idioma : "");
+      add[i] = addIdiomas[i];
+    }
     addFechado = addons_legendas_prontas();
   }
   if (passou >= FX_AUTO_FIM_MS) embFechado = addFechado = 1;
@@ -1464,7 +1474,7 @@ static void ajustarRolagem(void) {
 #define IL_W        720.0f
 #define IL_PAD_X     18.0f
 #define IL_PAD_Y     22.0f
-#define IL_TIT_H     64.0f
+#define IL_TIT_H     42.0f
 #define IL_LN_H      88.0f
 #define IL_LN_VAO     4.0f
 #define IL_PE_H      47.0f
@@ -1497,11 +1507,6 @@ static float estiloCelulaH(void) {
 static float estiloPadX(void) { return telefoneui_ativo() ? 12.0f : IL_PAD_X; }
 #define IL_EST_CEL_H estiloCelulaH()
 #define IL_EST_TOPO  56.0f
-
-static const char *tituloSessao(void) {
-  const CatItem *c = cat_item(player_indice());
-  return c && c->titulo[0] ? c->titulo : "";
-}
 
 // "Ingles  ·  Atmos 7.1" -> "Ingles" e "Atmos 7.1": o nome na linha forte, o
 // resto do rotulo (canal, Atmos) embaixo, como no mockup.
@@ -1753,10 +1758,9 @@ static void ponteiroFaixa(int i, int b) {
 static void corpoLista(GfxRect c, float a) {
   int col = modo ? 1 : 0, n = nLinhas(col), r, fim, i;
   float x0 = c.x + IL_PAD_X, w = c.w - IL_PAD_X * 2.0f, y = c.y + IL_PAD_Y;
-  // Kicker + titulo; a direita, a contagem (audio) ou o segmentado (legendas).
-  plrui_kicker(tituloSessao(), x0 + 10.0f, y, 115, 115, 113, a);
+  // Titulo (o filme ja esta no cabecalho); a direita, a contagem (audio) ou o segmentado (legendas).
   { TxtLinha t = txt_linha(TXT_ILHA_PERGUNTA, modo ? "Legendas" : "\xc3\x81udio", 243, 242, 239, 255);
-    float ty = y + 22.0f;
+    float ty = y;
     txt_desenhar_alpha(t, x0 + 10.0f, ty, a);
     if (!modo) {
       char q[32];
@@ -1779,7 +1783,7 @@ static void corpoLista(GfxRect c, float a) {
   visiveis = IL_VIS_COL(col);
 #ifdef NV_TOUCH_UI
   if (telefoneui_ativo()) {
-    if (!toqueAudio.livre) {
+    if (!toquerol_livre(&toqueAudio)) {
       ajustarRolagem();
       toqueAudioOffset = rolagem[col] * (IL_LN_H + IL_LN_VAO);
     }

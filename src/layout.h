@@ -23,6 +23,8 @@ extern float nv_layout_h;
 // TV starts with the original 1920x1080 canvas. Mobile preserves the physical
 // aspect ratio, with a virtual short edge of 1080. Changing mode reuses the
 // last valid drawable size, including when Android does not emit a resize.
+// TV=0 and Mobile=1 are retained; all other choices follow device detection.
+int layout_modo_resolver(int preferencia, int automaticoMobile);
 void layout_tela_definir(int width, int height);
 void layout_modo_definir(int mobile);
 int layout_modo_mobile(void);
@@ -328,16 +330,12 @@ int layout_modo_mobile(void);
 #define NV_DIN_LARGA_VEU  0.62f    // altura do veu da legenda na faixa deitada
 #define NV_DIN_LARGA_PAD  20.0f    // recuo da legenda dentro da faixa
 #define NV_DIN_PAINEL_RAIO 36.0f   // canto do painel de vidro de cada fileira
-// Fileira "Herói" (#205): um cartão só do tamanho da fileira — o banner
-// largo entre fileiras que a Apple TV usa. A altura sai da largura, porque a
-// largura é a fileira inteira (homeLarguraUtil): 0,24 é a proporção medida
-// na foto do dono (fotos1014/appletv-hero-card.jpg) com folga para o selo, o
-// título e as duas linhas.
-#define NV_HEROI_ASPECT  0.24f
-#define NV_HEROI_PAD     28.0f    // recuo do selo, do título e do texto
-#define NV_HEROI_VEU_F   0.82f     // escuro→claro de baixo para cima, para o texto
-#define NV_HEROI_VEU_A   0.72f
-#define NV_HEROI_LOGO_W  0.42f     // o título nunca passa desta fração da largura
+// Hero A: 372px at the reference width, two lines below logo and metadata.
+#define NV_HEROI_ASPECT  (372.0f / 1744.0f)
+#define NV_HEROI_PAD     56.0f
+#define NV_HEROI_VEU_F   0.46f
+#define NV_HEROI_VEU_A   0.70f
+#define NV_HEROI_LOGO_W  0.44f
 
 // Faixa do numeral do Top 10: o numeral mora no vao a esquerda do cartaz e o
 // cartaz cobre a ponta direita dele (a Apple faz assim), entao o passo da
@@ -355,6 +353,17 @@ int layout_modo_mobile(void);
 // Fileira redonda (pessoas): diametro do disco. O nome vai abaixo, no bloco do rotulo.
 #define NV_REDONDA_D       200.0f
 #define NV_PALCO_VIZ       0.66f
+// Palco, 17/10 (dono: "mais informacoes do filme a direita do poster, tipo a
+// splitview"): a ficha mora no vao a direita do foco e empurra os vizinhos da
+// direita por NV_PALCO_INFO_W + NV_PALCO_INFO_VAO. Holofote: o veu da tela
+// inteira com a fileira em foco e a luz no titulo (GFX_HOLOFOTE).
+#define NV_PALCO_INFO_W    480.0f
+#define NV_PALCO_INFO_VAO  36.0f
+#define NV_PALCO_MOVE_MS   340u
+#define NV_PALCO_START_MS   40u
+#define NV_PALCO_TEXT_MS   200u
+#define NV_PALCO_TEXT_DELAY_MS 80u
+#define NV_HOLOFOTE_VEU    0.62f
 // FILEIRA "PÔSTER GRANDE" (home.c): o card 3:4 grande do pedido de 14/10
 // ("o pôster só que do tamanho do grande tipo o 3:4 grande"). A base do card
 // leva logo, gênero, classificação e duas linhas de sinopse sobre um véu na
@@ -363,6 +372,15 @@ int layout_modo_mobile(void);
 #define NV_POSTER_G_W       (NV_POSTER_G_H * 3.0f / 4.0f)
 #define NV_POSTER_G_VEU_F    0.58f   // quanto da altura o véu da base cobre
 #define NV_POSTER_G_VEU_A    0.94f
+// FILEIRA "HERÓI DIVIDIDO" (home.c, 16/10): o painel deitado do foco ocupa
+// esta fração da largura útil; a fila de cartazes começa depois do vão; a
+// ficha (meta, chips, sinopse, elenco) mora abaixo da arte do painel.
+#define NV_DIV_PAINEL_F     0.45f
+#define NV_DIV_VAO          36.0f
+#define NV_DIV_META_H       150.0f
+// Em foco: logo no lugar do card, no maximo isto, alinhado a esquerda/base.
+#define NV_DIV_LOGO_W       690.0f
+#define NV_DIV_LOGO_H       270.0f
 // O numeral: corpo do TXT_RANK_GRANDE (os algarismos da Inter medem ~0,73 do
 // corpo, ~190 px contra o cartaz de 322 — perto de 60%, a proporcao da Apple),
 // quanto da largura dele fica POR BAIXO do cartaz, e a folga minima ate o

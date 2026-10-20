@@ -89,6 +89,19 @@ static void testeSimkl(void) {
   CONFERE(!strcmp(v[0].meta, "2022"), "ano em meta (veio %s)", v[0].meta);
   CONFERE(!strcmp(v[1].imdb, "tt6710474"), "imdb do segundo");
   free(j);
+
+  // Anime e um TERCEIRO tipo no Simkl: na lista de TV a resposta tem a raiz
+  // "anime" (e o objeto interno "anime"), que o leitor tem de juntar com o
+  // "shows" — era o que faltava no relato: "Simkl has anime too".
+  j = ler("tests/fixtures/simkl_plantowatch_series_anime.json");
+  n = lst_ler_simkl_itens(j, 1, v, 16);
+  CONFERE(n == 2, "show + anime; o sem imdb fora (veio %d)", n);
+  CONFERE(!strcmp(v[0].titulo, "Shogun") && !strcmp(v[0].tipo, "series"),
+          "a serie primeiro (veio %s)", v[0].titulo);
+  CONFERE(!strcmp(v[1].imdb, "tt22248376") && !strcmp(v[1].tipo, "series"),
+          "o anime vira series (veio %s)", v[1].imdb);
+  CONFERE(!strcmp(v[1].meta, "2023"), "ano do anime em meta (veio %s)", v[1].meta);
+  free(j);
 }
 
 // ------------------------------------------------- 2. fixar sobrevive ao boot

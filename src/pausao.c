@@ -101,11 +101,7 @@ int pausao_evento(const SDL_Event *e) {
   if (!visivel || !e || e->type != SDL_KEYDOWN) return PAUSAO_LIVRE;
   k = e->key.keysym.sym;
 
-  // O Back NAO e tratado aqui, e essa e uma divergencia deliberada do web. La
-  // (:22138) o Back derruba o painel e ainda segue para a regra seguinte;
-  // aqui o Back e a unica saida da reproducao, e roubar o primeiro toque para
-  // fechar um painel informativo faria a pessoa apertar duas vezes para sair de
-  // um filme. Quem quer sair, sai.
+  // player_evento dismisses this panel on Back before reaching this handler.
   if (k == SDLK_ESCAPE || k == SDLK_AC_BACK || k == SDLK_BACKSPACE ||
       k == SDLK_DELETE) return PAUSAO_LIVRE;
 

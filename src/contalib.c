@@ -1,9 +1,13 @@
 #include "contalib.h"
+#define NV_DUBLE_SESSAO
+#define NV_DUBLE_CONTAPEND
+#include "perfisessao.h"
 #include "vistoep.h"
 #include <time.h>
 #include "catalogo.h"
 #include "js.h"
 #include "idioma.h"
+#include "ajustes.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -326,6 +330,7 @@ static void montarItem(CatItem *d, const ContaLibItem *s) {
   snprintf(d->meta, sizeof d->meta, "%s", s->meta);
   d->nota = s->nota;
   d->naLista = 1;
+  d->listaFontes = 1u << AJ_SALVOS_LOCAL;
   if (s->poster[0]) snprintf(d->poster, sizeof d->poster, "%s", s->poster);
   if (s->backdrop[0]) snprintf(d->backdrop, sizeof d->backdrop, "%s", s->backdrop);
   snprintf(d->backdropCatalogo, sizeof d->backdropCatalogo, "%s", d->backdrop);
@@ -357,6 +362,7 @@ int contalib_aplicar_catalogo(void) {
   int i, marcados = 0, nFaltam = 0, ultimo = -1;
 
   if (nItens < 1) return 0;
+  if (!ajustes_fonte_traz_conta(ajustes_fonte_biblioteca())) return 0;
   // Catalogo vazio nao aceita acrescimo (cat_acrescentar_lote recusa com n<1) e
   // nao tem onde marcar. Sair aqui, sem tocar na marca, faz a reconciliacao
   // tentar de novo assim que o catalogo existir.
@@ -414,7 +420,7 @@ void contalib_reconciliar(void) {
   // os acrescentados ficam no fim do vetor.
   if (marcaIdx < 0 || marcaIdx >= cat_n()) return;
   c = cat_item(marcaIdx);
-  if (c && !strcmp(c->imdb, marcaId) && c->naLista) return;
+  if (c && !strcmp(c->imdb, marcaId) && (c->listaFontes & (1u << AJ_SALVOS_LOCAL))) return;
   contalib_aplicar_catalogo();
 }
 
@@ -456,16 +462,19 @@ int contalib_aplicar_vistos(void) {
     // `continue` abaixo pulava a linha inteira. E por isso que o app nunca
     // soube quais episodios a pessoa viu, so quais SERIES.
     if (vistos[i].temporada > 0 || vistos[i].episodio > 0) {
-      // PELA PORTA DAS FONTES (vistoep.h): o jornal acima so segura a linha
-      // ate a conta confirmar o delete e a entrada ser podada (contapend_podar).
-      // Uma linha que ainda venha depois disso — copia guardada, pagina velha,
-      // delete aceito e nao aplicado — re-marcava o episodio. A desmarcacao da
-      // pessoa fica guardada a parte e e consultada aqui, com o watched_at da
-      // linha: so um visto MAIS NOVO que o gesto volta a marcar.
+      // Watched intent remains in the journal after confirmation and pruning.
+      // Its gate above rejects stale rows; vistoep_fonte also checks the
+      // separate unmark evidence when that gate is absent or has no entry.
+      // Only a watched_at newer than the gesture can mark the episode again.
       VistoFonte um;
       memset(&um, 0, sizeof um);
-      vistoep_fonte(vistos[i].id, vistos[i].temporada, vistos[i].episodio, 1,
-                    vistos[i].vistoMs, &um);
+      int estado = contapend_estado ?
+          contapend_estado(vistos[i].id, vistos[i].tipo, vistos[i].temporada, vistos[i].episodio,
+                           vistos[i].vistoMs, -1) : 1;
+      if (estado < 0) estado = 1;
+      vistoep_fonte(vistos[i].id, vistos[i].temporada, vistos[i].episodio,
+                    estado, vistos[i].vistoMs, &um);
+      if (!estado) um.bloqueados++;
       total.vistos += um.vistos;
       total.venceu += um.venceu;
       if (um.bloqueados) {
@@ -497,7 +506,7 @@ int contalib_aplicar_vistos(void) {
   if (ke || total.bloqueados || total.venceu || jornal) {
     printf("[vistoep] conta: +%d episodios (bloqueados %d; remoto mais novo %d)",
            total.vistos, total.bloqueados, total.venceu);
-    if (jornal) printf(" | %d seguros pelo jornal (delete ainda nao podado)", jornal);
+    if (jornal) printf(" | %d seguros pelo jornal (intencao de visto preservada)", jornal);
     printf("\n");
   }
   for (j = 0; j < nBarrado; j++) {

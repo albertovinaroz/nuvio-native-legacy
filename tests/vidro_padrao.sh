@@ -41,11 +41,18 @@ src/diagnostico.c|gfx_vidro_ou_solido
 src/telefonecartao.h|gfx_vidro_ou_solido
 src/streams.c|gfx_vidro_folha
 src/amigosfil.c|gfx_vidro_folha
+src/ctxmenu.c|gfx_vidro_folha
+src/agendaui.c|gfx_vidro_folha
+src/plrilha.c|plrui_material
 '
 while IFS='|' read -r f re; do
   [ -z "$f" ] && continue
   grep -qE "$re" "$f" || { echo "FAIL $f: missing $re"; fail=1; }
 done <<< "$need"
+
+# 3) No opaque base may sit under a glass sheet (it hides the frost): quick menu
+#    (ctxmenu.c ilhaCtx), agenda panel. Parental guide goes via plrilha -> plrui_material.
+if grep -n "opaque base under the glass sheet" src/*.c; then echo "FAIL: opaque base under glass"; fail=1; fi
 
 [ "$fail" -eq 0 ] && echo "vidro padrao: PASS"
 exit $fail

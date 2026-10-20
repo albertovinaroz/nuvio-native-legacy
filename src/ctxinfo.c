@@ -311,7 +311,7 @@ static float fazer(const CatItem *ci, const CtxInfoEstado *st, float x, float y,
   if (arte) {
     GfxRect r = { x + PAD, y, w - 2.0f * PAD, ARTE_H };
     if (desenhar) {
-      GLuint t = tex_obter_larg(arte, r.w * gfx_escala_ui());
+      GLuint t = tex_obter_larg(arte, r.w);
       float raio = 22.0f / r.h;
       if (t) {
         gfx_tex_aspect_atual = tex_aspecto(arte);

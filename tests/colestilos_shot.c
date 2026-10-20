@@ -81,6 +81,8 @@ static void quadros(int n, const char *bmp) {
     home_desenhar(agora);
     ctx_atualizar(1.0f / 60.0f, agora);
     ctx_desenhar(agora);
+    // NV_HOLOFOTE=1: o holofote do Palco por cima de tudo, como app.c.
+    if (getenv("NV_HOLOFOTE") && !ctx_aberto()) home_holofote_desenhar(agora);
     if (bmp && i == n - 1) gravar(bmp);
     SDL_GL_SwapWindow(janela);
     SDL_Delay(8);
@@ -205,6 +207,13 @@ int main(int argc, char **argv) {
     snprintf(c->backdrop, sizeof c->backdrop, "deploy/app/art/%02d.jpg", i);
     snprintf(c->poster, sizeof c->poster, "deploy/app/art/poster/%02d.jpg", i);
     c->progresso = 15 + i * 20;
+    // Ficha de verdade: a Ficha e o Palco mostram genero, selos e sinopse.
+    snprintf(c->meta, sizeof c->meta, "202%d · 1%d2 min", i, i);
+    snprintf(c->genero, sizeof c->genero, "Drama · Suspense · Mistério");
+    snprintf(c->classificacao, sizeof c->classificacao, "14");
+    snprintf(c->sinopse, sizeof c->sinopse, "Sinopse de enchimento, comprida o bastante para ocupar as "
+             "linhas que a ficha reserva para ela, como num titulo de verdade, e mais um pouco.");
+    c->nota = 68 + i;
   }
   assert(col_definir_json(JS) == 4);
   cat_definir_tudo(itens, 4, fils, 2);
@@ -262,7 +271,7 @@ int main(int argc, char **argv) {
       for (i = 0; i < 1080; i++)
         if (fabsf(lumaLinha[i] - lumaPoster[i]) > pior) { pior = fabsf(lumaLinha[i] - lumaPoster[i]); yPior = i; }
       printf("[shot] cat-palco: fundo difere do Poster em ate %.1f (y=%d)\n", pior, yPior);
-      assert(pior < 8.0f);
+      assert(getenv("NV_HOLOFOTE") || pior < 8.0f);   // o veu escurece de proposito
     }
   }
   SDL_Quit();

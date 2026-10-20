@@ -250,14 +250,19 @@
       }
     } catch (e) { console.log("[NV-DIAG] falhou: " + e); }
 
+    function fatal(text) {
+      mostrar(text, 1);
+      mostrar("Close and reopen Nuvio to recover. If this repeats, save this diagnostic.", 1);
+      if (painel) { painel.hidden = false; pintar(); }
+    }
     window.addEventListener("error", function (ev) {
       var t = "ERRO: " + (ev.message || ev.type) +
               " @ " + (ev.filename || "?") + ":" + (ev.lineno || 0);
-      console.log("[NV-ERRO] " + t); mostrar(t, 1);
+      console.log("[NV-ERRO] " + t); fatal(t);
     });
     window.addEventListener("unhandledrejection", function (ev) {
       var t2 = "ERRO promessa: " + (ev.reason && ev.reason.message ? ev.reason.message : ev.reason);
-      console.log("[NV-ERRO] " + t2); mostrar(t2, 1);
+      console.log("[NV-ERRO] " + t2); fatal(t2);
     });
 
     setTimeout(function () {

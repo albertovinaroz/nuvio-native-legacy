@@ -1,8 +1,8 @@
 #!/bin/bash
 # Compile/link the webOS GLES2 target offline. No arm.sh, packaging or device.
 set -eu
-cd "$(dirname "$0")/.."
-docker run --rm --pull=never --network none -v "$PWD:/work:ro" -w /work \
+cd "$(dirname "$0")/.." && source tools/ctr.sh
+ctr_run --rm --network none -v "$PWD:/work:ro" -w /work \
   nuvio-webos-sdk sh -ec '
   sr=$NUVIO_SYSROOT
   arm-webos-linux-gnueabi-gcc -c src/p2pmotor.c -o /tmp/p2pmotor.o \

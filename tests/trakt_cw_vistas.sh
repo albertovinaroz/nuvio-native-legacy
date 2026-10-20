@@ -8,4 +8,6 @@ trap 'rm -rf "$dir"' EXIT
 cc src/trakt.c src/metaep.c tests/stub_fichameta.c src/js.c src/metaprov.c tests/trakt_cw_vistas.c \
   -Isrc -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
   -o "$dir/teste" -O1 -g -Wall -Wextra -Wl,-dead_strip -lpthread
-"$dir/teste" | grep -E 'trakt-cw-vistas|PASS'
+for mode in current missing stale; do
+  TRAKT_META="$mode" "$dir/teste" | grep -E 'trakt-cw-vistas|PASS'
+done

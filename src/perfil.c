@@ -153,7 +153,7 @@ static float pfDy(void) {
 }
 
 static PerfilDados dados;
-static int aberto, sair, carregando, temDados;
+static int aberto, sair, carregando, temDados, pediuRelogio;
 static int temIdentidade;
 static int secao, item, escolhido = -1;
 static int dia, pedirAtualizar;
@@ -268,7 +268,7 @@ static void cartao(GfxRect r, float a) {
 // cinza opaco da regra 2 no solido. Sem aro e sem realce: o foco e superficie.
 static void linhaFoco(GfxRect r, float raio, float f, float a) {
   if (f <= 0.01f) return;
-  if (ajustes_vidro()) gfx_cor(r, raio, 1, 1, 1, .12f * f * a);
+  if (ajustes_vidro()) { if (!gfx_foco_placa(r, raio, f, a)) gfx_cor(r, raio, 1, 1, 1, .12f * f * a); }
   else gfx_cor(r, raio, .169f, .176f, .204f, f * a);
 }
 static void numero(char *s, size_t n, int v) { snprintf(s, n, "%d", v < 0 ? 0 : v); }
@@ -285,7 +285,7 @@ static int nCards(void) {
 
 int perfil_iniciar(void) {
   memset(&dados, 0, sizeof(dados));
-  aberto = sair = temDados = temIdentidade = carregando = 0;
+  aberto = sair = temDados = temIdentidade = carregando = pediuRelogio = 0;
   estado = PF_CARREGANDO;
   secao = item = 0; escolhido = -1;
   dia = pedirAtualizar = 0; erro[0] = 0;
@@ -303,14 +303,15 @@ void perfil_abrir(void) {
   // aberta antes de o snapshot chegar da worker, entao nDias ainda e 0 e o foco
   // nascia na coluna da direita. Quem corrige o estado impossivel e
   // perfil_definir_dados, que e quem sabe o que chegou.
-  aberto = 1; sair = 0; escolhido = -1; item = 0; secao = 0;
+  aberto = 1; sair = 0; pediuRelogio = 0; escolhido = -1; item = 0; secao = 0;
   pedirAtualizar = 0;
   amigo = 0; modo = PF_RESUMO; pedirAmigo = dTemPedido = 0;
   tCena = tBarra = 0;
 }
-void perfil_fechar(void) { aberto = 0; sair = 1; }
+void perfil_fechar(void) { aberto = 0; sair = 1; pediuRelogio = 0; }
 int perfil_aberto(void) { return aberto; }
 int perfil_quer_sair(void) { int q = sair; sair = 0; return q; }
+int perfil_pediu_relogio(void) { int v = pediuRelogio; pediuRelogio = 0; return v; }
 void perfil_definir_carregando(int v) {
   carregando = !!v;
   if(carregando) estado=temDados?PF_ATUALIZANDO:PF_CARREGANDO;
@@ -444,7 +445,7 @@ static void toquePerfilRepetir(int a, int b) { (void)a; (void)b; if (!carregando
 static void eventoDuelo(SDL_Keycode k, int ok) {
   int n = socialvis_n_amigos();
   if (dLinha == 0) {
-    if (k == SDLK_UP && ajustes_menu_topo()) { sair = 1; return; }
+    if (k == SDLK_UP) { if (ajustes_menu_topo()) sair = 1; else pediuRelogio = 1; return; }
     if (k == SDLK_LEFT)  { if (amigo > 0) duelo(amigo - 1, 0); return; }
     if (k == SDLK_RIGHT) { if (amigo + 1 < n) duelo(amigo + 1, 0); return; }
     if (k == SDLK_DOWN)  { if (cartazesCabem() > 0) dLinha = 1; return; }
@@ -482,6 +483,7 @@ int perfil_pediu_amigo(char *id, size_t tam) {
 // perfil_desenhar e perfil_evento retornam cedo quando !aberto. Voltar continua
 // fechando (perfil_fechar) e levando para a Home.
 void perfil_evento(const SDL_Event *e) {
+  pediuRelogio = 0;
   if (!aberto || !e || e->type != SDL_KEYDOWN) return;
 #ifdef NV_TOUCH_UI
   if (toquerol_navegacao(e)) toquerol_limpar(&pfToque);
@@ -499,7 +501,7 @@ void perfil_evento(const SDL_Event *e) {
     if(!carregando)pedirAtualizar=1;
     return;
   }
-  if (!temDados) return;
+  if (!temDados) { if (k == SDLK_UP) pediuRelogio = 1; return; }
   // DUAS paradas de verdade, lado a lado: o calendario a esquerda e a lista de
   // mais vistos a direita. Esquerda/direita troca de coluna quando a coluna
   // atual acaba; dentro do calendario as setas andam dia a dia, com
@@ -509,14 +511,14 @@ void perfil_evento(const SDL_Event *e) {
     if (k==SDLK_RIGHT) { if (dia+1<dados.nDias) { dia++; return; }
                          if (nCards()) secao=1; else if (rostosCabem()>0) secao=2;
                          return; }
-    if (k==SDLK_UP)    { if (dia>=7) dia-=7; else if (ajustes_menu_topo()) sair = 1; return; }
+    if (k==SDLK_UP)    { if (dia>=7) dia-=7; else if (ajustes_menu_topo()) sair = 1; else pediuRelogio = 1; return; }
     if (k==SDLK_DOWN)  { if (dia+7<dados.nDias) dia+=7; return; }
     return;
   }
   if (secao == 1) {
     if (k==SDLK_LEFT)  { if (dados.nDias>0) secao=0; else sair = 1; return; }
     if (k==SDLK_RIGHT) { if (rostosCabem()>0) secao=2; return; }
-    if (k==SDLK_UP)    { if (item>0) item--; else if (ajustes_menu_topo()) sair = 1; return; }
+    if (k==SDLK_UP)    { if (item>0) item--; else if (ajustes_menu_topo()) sair = 1; else pediuRelogio = 1; return; }
     if (k==SDLK_DOWN)  { if (item+1<nCards()) item++; return; }
     if (k==SDLK_RETURN || k==SDLK_KP_ENTER || k==SDLK_SPACE) {
       if (nCards() > 0) escolhido = item;
@@ -527,6 +529,7 @@ void perfil_evento(const SDL_Event *e) {
   // A TERCEIRA PARADA: o cartao Amigos. Esquerda/direita andam pelos rostos
   // (o anel), OK abre o duelo com o rosto escolhido.
   if (secao == 2) {
+    if (k==SDLK_UP) { if (ajustes_menu_topo()) sair = 1; else pediuRelogio = 1; return; }
     if (k==SDLK_LEFT) {
       if (amigo>0) amigo--;
       else if (nCards()) secao=1;
@@ -535,11 +538,11 @@ void perfil_evento(const SDL_Event *e) {
       return;
     }
     if (k==SDLK_RIGHT) { if (amigo+1<rostosCabem()) amigo++; return; }
-    if (k==SDLK_UP && ajustes_menu_topo()) { sair = 1; return; }
     if (ok) { duelo(amigo, 1); return; }
     return;
   }
   if (k == SDLK_LEFT) sair = 1;
+  else if (k == SDLK_UP) pediuRelogio = 1;
 }
 
 void perfil_atualizar(float dt, Uint32 agora) {
@@ -670,7 +673,7 @@ static void pfToquePreparar(void) {
   float maximo = fmaxf(0, ultimo.y + ultimo.h + pfScroll - PF_CONTEUDO_H);
   toquerol_vincular(&pfToque, (GfxRect){PF_X, topo, PF_W, PF_CONTEUDO_H - topo},
                     gfx_escala(), 0, maximo, 1, &pfScroll);
-  if (!pfToque.livre) {
+  if (!toquerol_livre(&pfToque)) {
     GfxRect r = modo == PF_DUELO ? (dLinha ? rCartazes() : rDuelo(0)) : rCartao(secao);
     if (r.y < topo) pfScroll -= topo - r.y;
     else if (r.y + r.h > PF_CONTEUDO_H) pfScroll += r.y + r.h - PF_CONTEUDO_H;

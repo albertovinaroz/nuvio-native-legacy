@@ -75,6 +75,7 @@ static char atvIcone[32];       // "" = o ponto que respira
 static Uint32 atvVisto;         // SDL_GetTicks da ultima renovacao
 
 static int relogioQuer;
+static int relogioFocado;
 // Bolinha de acento no relogio em repouso: "ha enquete aberta" (enquete.c).
 static int pontoEnquete;
 static int pontoPediu;
@@ -118,7 +119,7 @@ static IlhaModal modalM;
 static char modalChave[80];
 static float modalT, modalV, modalFocoA[ILHA_MODAL_BOTOES];
 // O CORPO PEDIDO (ilha_corpo): vale um quadro; o ultimo fica para a saida.
-static int corpoPed;
+static int corpoPed, corpoSemSombra;
 static float corpoW, corpoH, corpoT, corpoV;
 static float corpoWa, corpoHa, corpoVw, corpoVh;   // o tamanho na mola (o pedido muda)
 static IlhaCorpo corpoFn;
@@ -414,7 +415,16 @@ void ilha_atividade_carga(const IlhaAtvCarga *c) {
 }
 int ilha_atividade_expansivel(void) { return atvDetalhes[0] && atvVisto && SDL_GetTicks() - atvVisto < 400u; }
 
-void ilha_relogio_visivel(int visivel) { relogioQuer = visivel; }
+void ilha_relogio_visivel(int visivel) {
+  relogioQuer = visivel;
+  if (!visivel) relogioFocado = 0;
+}
+static void desenharFocoRelogio(GfxRect r, float raio, float alpha) {
+  if (relogioFocado && relogioQuer && modalT <= 0.0f && corpoT <= 0.0f)
+    gfx_anel_fora(r, raio, 4.0f, 3.0f, 1.0f, 1.0f, 1.0f, alpha);
+}
+void ilha_relogio_focar(int foco) { relogioFocado = foco ? 1 : 0; }
+int ilha_relogio_focado(void) { return relogioFocado; }
 void ilha_ponto_enquete(int aberto) { pontoEnquete = aberto ? 1 : 0; if (!pontoEnquete) pontoPediu = 0; }
 int  ilha_ponto_pediu(void) { int p = pontoPediu; pontoPediu = 0; return p; }
 
@@ -684,7 +694,7 @@ void ilha_ancorar(float x, float y, int daDireita) {
 // Ajustes). `guia` ficou so por compatibilidade com quem chama.
 void ilha_posicionar(int guia) {
   (void)guia;
-  ilha_ancorar(NV_TELA_W - NV_ILHA_MARGEM_D, NV_ILHA_Y, 1);
+  ilha_ancorar(NV_TELA_W - NV_ILHA_MARGEM_D / gfx_escala_txt(), NV_ILHA_Y / gfx_escala_txt(), 1);
 }
 
 // COM SINAL: quem renova a atividade chama SDL_GetTicks DEPOIS de o quadro ter
@@ -1989,10 +1999,11 @@ static void salvarVoo(Uint32 agora, float x, float y, int dir) {
 static void ilha_desenharCorpo_(Uint32 agora);
 // Camada ampliada (escala.h): o corpo desenha na tela virtual.
 void ilha_corpo(float w, float h, IlhaCorpo corpo, void *u) {
-  corpoPed = 1; corpoW = w; corpoH = h; corpoFn = corpo; corpoU = u;
+  corpoPed = 1; corpoW = w; corpoH = h; corpoFn = corpo; corpoU = u; corpoSemSombra = 0;
   if (modalAberto) ilha_modal_fechar(1);
 }
 float ilha_corpo_t(void) { return corpoT; }
+void ilha_corpo_sem_sombra(void) { corpoSemSombra = 1; }
 
 // A hora da pilula em repouso, no lugar exato dela: com o corpo aberto e a
 // pilula mostrando outra coisa (aviso, cartao), e ela que fica no cabecalho.
@@ -2135,7 +2146,7 @@ static void ilha_desenharCorpo_(Uint32 agora) {
     modalFocoA[i] = anim_mola(modalFocoA[i], modalAberto && i == modalFoco ? 1.0f : 0.0f, dt, NV_MOLA_FOCO);
   // POSICAO, num ponto so (ilha_ancorar ou o padrao, que e a direita).
   if (ancDef) { x = ancX; y = ancY; dir = ancDir; }
-  else { x = NV_TELA_W - NV_ILHA_MARGEM_D; y = NV_ILHA_Y; dir = 1; }
+  else { x = NV_TELA_W - NV_ILHA_MARGEM_D / gfx_escala_txt(); y = NV_ILHA_Y / gfx_escala_txt(); dir = 1; }
   // Quem ancora em outro x (testes) desliza em vez de saltar; troca de lado ou
   // ilha apagada assenta seco.
   { static float xSuave; static int xDir = -1;
@@ -2233,7 +2244,7 @@ static void ilha_desenharCorpo_(Uint32 agora) {
     // modal ela cresce junto (e o tamanho dele + folga, nunca a tela).
     { float k = modalT > corpoT ? modalT : corpoT;
       k = k > 1.0f ? 1.0f : k < 0.0f ? 0.0f : k;
-      gfx_rect((GfxRect){ R.x - 16.0f - 24.0f * k, R.y - 6.0f - 10.0f * k,
+      if (!(corpoSemSombra && corpoT > 0.0f)) gfx_rect((GfxRect){ R.x - 16.0f - 24.0f * k, R.y - 6.0f - 10.0f * k,
                           R.w + 32.0f + 48.0f * k, R.h + 34.0f + 50.0f * k }, 0, GFX_SOMBRA,
                1.0f, 0, 0, 0.5f, 0, 0, 0, (0.34f + 0.16f * k) * A); }
     // At rest (no modal, no body) the island is the A27 top chrome: the same
@@ -2252,6 +2263,7 @@ static void ilha_desenharCorpo_(Uint32 agora) {
       gfx_cor(R, raio, c0, c1, c2, (solido + 0.06f * em) * A);
       if (em > 0.01f) gfx_anel(R, raio, 1.5f, 1.0f, 1.0f, 1.0f, 0.085f * em * A);
     }
+    desenharFocoRelogio(R, raio, A);
     // O "vidro": um brilho largo e fraco por cima, branco no relogio e na cor
     // do aviso quando ele abre.
     // INFO fica com a luz BRANCA do relogio, parada: e estado, nao novidade
@@ -2331,7 +2343,7 @@ void ilha_abrir_sessao(void) {
   voo = vooDissolve = vooAlvoOk = svooQuer = svoo = 0;
   vooDesde = svooDesde = pousouEm = altBase = 0; vooT = svooT = 0.0f;
   vooArte[0] = vooCapa[0] = svooPoster[0] = 0; svooIconeA = 1.0f;
-  pontoEnquete = pontoPediu = coberta = ultRectOk = 0;
+  pontoEnquete = pontoPediu = coberta = ultRectOk = relogioFocado = 0;
   W = vW = H = vH = A = conteudoA = 0.0f; ultQuadro = 0;
   dsMostra = dsVez = dsCartao = 0;
 #ifdef NV_TOUCH_UI

@@ -584,7 +584,21 @@ int main(int argc, char **argv) {
     legsync_iniciar(MKV3); trocas = 0; cand[0] = "ext_mais2500.srt"; nCand = 1;
     legsync_primaria_externa("ext://0/ext_ruim.srt", "pt", "Ruim");
     v = esperarAuto(MKV3, 3); assert(trocas == 0 && legsync_offset_ms(0) == 0);
-    { char t[200]; assert(!legsync_pilula_final(&v, "Ruim", t, sizeof t) && strstr(t, "n\xc3\xa3o sincronizada")); }
+    { char t[200];
+      assert(v.motivo == LEGSYNC_M_SEM_REFERENCIA);
+      assert(!legsync_pilula_final(&v, "Ruim", t, sizeof t));
+      assert(!strcmp(t, "Legenda aplicada · Ruim · não sincronizada (sem legenda embutida para comparar)")); }
+
+    // No text track and non-Matroska sources explain the missing reference (#462).
+    { const char *urls[] = { "https://cdn.example/c/video.mkv", "https://cdn.example/c/emb.srt" };
+      for (int k = 0; k < 2; k++) { char t[200];
+        legsync_iniciar(urls[k]); trocas = 0;
+        legsync_primaria_externa("ext://0/ext_ruim.srt", "pt", "Ruim");
+        v = esperarAuto(urls[k], 3);
+        assert(v.motivo == (k == 0 ? LEGSYNC_M_SEM_TEXTO : LEGSYNC_M_SEM_REFERENCIA));
+        assert(trocas == 0 && legsync_offset_ms(0) == 0);
+        assert(!legsync_pilula_final(&v, "Ruim", t, sizeof t));
+        assert(!strcmp(t, "Legenda aplicada · Ruim · não sincronizada (sem legenda embutida para comparar)")); } }
 
     // 12e. Outro idioma nao entra: sem candidata do mesmo idioma, volta sozinha ao fim.
     legsync_iniciar(MKV); trocas = 0; cand[0] = "ext_mais2500.srt"; nCand = 1; candIdioma = "en";

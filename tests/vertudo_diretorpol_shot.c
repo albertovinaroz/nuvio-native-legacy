@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
   w = SDL_CreateWindow("Nuvio: filmografia", SDL_WINDOWPOS_CENTERED,
                        SDL_WINDOWPOS_CENTERED, 1920, 1080,
-                       SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+                       SDL_WINDOW_OPENGL | (argc > 2 ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN));
   assert(w);
   gl = SDL_GL_CreateContext(w);
   assert(gl);
@@ -116,7 +116,9 @@ int main(int argc, char **argv) {
   snprintf(titulo, sizeof titulo, "%s", pasta.title);
   aberta = 1; anim = 1.0f; source = 0; shotN = 12;
 
+  if (argc > 2) gfx_escala_txt_definir(strtof(argv[2], NULL));
   exibicao(VT_LAY_LINHA, 0, 0, saida, "timeline", w);
+  if (argc > 2) goto fim;
   exibicao(VT_LAY_LINHA, 0, 1, saida, "timeline-cab", w);
   exibicao(VT_LAY_FLUXO, 2, 0, saida, "coverflow", w);
   exibicao(VT_LAY_FLUXO, 0, 1, saida, "coverflow-cab", w);
@@ -124,6 +126,7 @@ int main(int argc, char **argv) {
   exibicao(VT_LAY_DECADAS, 0, 0, saida, "decadas", w);
   exibicao(VT_LAY_VITRINE, 0, 1, saida, "vitrine", w);
 
+fim:
   tex_encerrar();
   txt_encerrar();
   SDL_GL_DeleteContext(gl);

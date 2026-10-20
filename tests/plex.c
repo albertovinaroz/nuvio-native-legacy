@@ -2,6 +2,7 @@
 // matching, and the whole integration against tests/plex_server.py (a fake
 // plex.tv + PMS). No real server, no real account, never prints a token.
 #include "plex.h"
+#include "stub_perfisessao.h"
 #include "idbase.h"
 #include <assert.h>
 #include <stdio.h>
@@ -441,8 +442,8 @@ static void integracao(void) {
     memset(x, 0, sizeof *x);
     snprintf(x->imdb, sizeof x->imdb, "px:01234567.201");
     snprintf(x->tipo, sizeof x->tipo, "series");
-    assert(plex_ficha(x, eps, 32) == 3);
-    assert(x->nTemporadas == 2 && x->temporadas[0] == 1 && x->temporadas[1] == 2);
+    assert(plex_ficha(x, eps, 32) == 4);
+    assert(x->nTemporadas == 3 && x->temporadas[0] == 1 && x->temporadas[1] == 2 && x->temporadas[2] == 0);
     snprintf(x->imdb, sizeof x->imdb, "px:deadbeef.201");                      // another server: refused
     assert(plex_ficha(x, eps, 32) == -1);
     free(x); free(eps); }
@@ -486,6 +487,15 @@ static void integracao(void) {
   assert(plex_consultar("tt0000201:1:2", "series", nuncaCancela, NULL, &lista) == 3 && lista);   // episode 302 resolved
   free(lista); lista = NULL;
   assert(plex_consultar("tt0000201:2:1", "tv", nuncaCancela, NULL, &lista) == 3);
+  free(lista); lista = NULL;
+  assert(plex_consultar("tt0000201:0:5", "series", nuncaCancela, NULL, &lista) == 3 && lista);
+  free(lista); lista = NULL;
+  { PlexPreparo *p = plex_preparo_capturar(); assert(p);
+    assert(plex_preparo_consultar(p, "tt0000201:0:5", "series", nuncaCancela, NULL, &lista) == 3 && lista);
+    free(lista); lista = NULL;
+    assert(plex_preparo_consultar(p, "tt0000201:2:0", "series", nuncaCancela, NULL, &lista) == 3 && lista);
+    free(lista); lista = NULL; plex_preparo_liberar(p); }
+  assert(plex_consultar("tt0000201:2:0", "series", nuncaCancela, NULL, &lista) == 3 && lista);
   free(lista); lista = NULL;
   assert(plex_consultar("tt0000201:3:1", "series", nuncaCancela, NULL, &lista) == 0 && !lista);  // no such episode
   assert(plex_consultar("tt0000201", "movie", nuncaCancela, NULL, &lista) == 0);                  // a show is not a movie
@@ -545,7 +555,7 @@ static void integracao(void) {
   // ---- account logout wipes every profile file
   perfilAtivo = 3;
   plex_perfil_trocou();
-  { char nome[40];
+  { char nome[sizeof dirDados + sizeof "/plex-p3.txt"];
     FILE *f;
     snprintf(nome, sizeof nome, "%s/plex-p3.txt", dirDados);
     f = fopen(nome, "w"); assert(f); fputs("tokc=x\ntoks=y\nbase=http://x\nsid=ab\n", f); fclose(f); }

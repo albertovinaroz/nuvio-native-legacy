@@ -350,8 +350,8 @@ timers.find((t) => t.ms === 10000).fn();
 check('com onReady o prazo nao mata o player', estado() === -1);
 fechar();
 check('C passa NV_REC_URL ao elemento', /trailer_js_abrir\(fonte, r\.x, r\.y, r\.w, r\.h, som, ajustes_trailer_zoom\(\), NV_REC_URL\)/.test(trailer));
-check('hero da Samsung nao abre YouTube (iframe = long task de ~1 s)',
-  /#ifdef __EMSCRIPTEN__[\s\S]{0,900}c\.youtube = NULL;\s*c\.youtubeRespondeu = 1;/.test(home));
+check('hero da Samsung so abre YouTube no idioma do "Audio do trailer" (iframe = long task de ~1 s)',
+  /#ifdef __EMSCRIPTEN__[\s\S]{0,1200}c\.youtube = c\.youtubeIdiomaPreferido > 0 \? heroTrailerYoutube\(ci->imdb\) : NULL;\s*c\.youtubeRespondeu = 1;/.test(home));
 check('hero e detalhe pedem o IMDb na Samsung quando ha servico',
   /if \(!trailerfonte_tizen\(\) \|\| trailerfonte_imdb_tizen\(\)\) trailerimdb_pedir\(ci->imdb\);/.test(home) &&
   /if \(!trailerfonte_tizen\(\) \|\| trailerfonte_imdb_tizen\(\)\) trailerimdb_pedir\(ci->imdb\);/.test(detail));

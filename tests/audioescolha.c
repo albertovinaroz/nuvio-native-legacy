@@ -11,7 +11,7 @@
 static int falhas;
 static void ok(int c, const char *o) { printf("%s %s\n", c ? "ok  " : "FAIL", o); if (!c) falhas++; }
 
-#define A(i, cod, rot, ch, d, p) { i, cod, rot, ch, d, p }
+#define A(i, cod, rot, ch, d, p) { i, cod, rot, ch, d, p, -1 }
 int main(void) {
   // Ingles DTS-HD, Ingles AC3, Sueco TrueHD, Japones AAC (original), sem etiqueta.
   AudioCand f[] = {
@@ -54,6 +54,36 @@ int main(void) {
   memset(&m, 0, sizeof m);
   snprintf(m.rotulo, sizeof m.rotulo, "Audio 5");
   ok(audioesc_escolher_com(f, n, &m, "en", "", "", &o) == 4, "unlabelled track picked by hand: same label again");
+
+  // THE SAME RELEASE (bingeGroup): the exact track by number, even when two
+  // tracks look alike. Two Japanese AAC 2.0 (main and commentary); the second
+  // was picked by hand.
+  { AudioCand g[] = {
+      A("en", "A_AAC", "English · AAC 2.0", 2, 0, 1),
+      A("ja", "A_AAC", "Japanese · AAC 2.0", 2, 0, 1),
+      A("ja", "A_AAC", "Japanese · AAC 2.0", 2, 0, 1),
+    };
+    int k;
+    for (k = 0; k < 3; k++) g[k].numero = k + 1;
+    memset(&m, 0, sizeof m);
+    snprintf(m.idioma, sizeof m.idioma, "ja"); snprintf(m.codec, sizeof m.codec, "A_AAC");
+    snprintf(m.rotulo, sizeof m.rotulo, "Japanese · AAC 2.0"); m.canais = 2; m.numero = 3;
+    snprintf(m.binge, sizeof m.binge, "aio|SubsPlease|1080p");
+    ok(audioesc_escolher_binge(g, 3, &m, "aio|SubsPlease|1080p", "en", "", "", &o) == 2 && o == AUDIOESC_LEMBRADA,
+       "same bingeGroup: the exact track picked by hand (the second Japanese)");
+    ok(audioesc_escolher_binge(g, 3, &m, "aio|Erai|1080p", "en", "", "", &o) == 1 && o == AUDIOESC_LEMBRADA,
+       "another bingeGroup: track numbers mean nothing, the first Japanese");
+    ok(audioesc_escolher_com(g, 3, &m, "en", "", "", &o) == 1, "no bingeGroup known: the first Japanese");
+    g[2].idioma = "en";
+    ok(audioesc_escolher_binge(g, 3, &m, "aio|SubsPlease|1080p", "en", "", "", &o) == 1 && o == AUDIOESC_LEMBRADA,
+       "same bingeGroup but track 3 is now English: never the wrong language, the Japanese one");
+    g[2].idioma = "ja"; g[2].pode = 0;
+    ok(audioesc_escolher_binge(g, 3, &m, "aio|SubsPlease|1080p", "en", "", "", &o) == 1,
+       "exact track the target cannot play: the playable Japanese");
+    g[2].pode = 1; m.binge[0] = 0;
+    ok(audioesc_escolher_binge(g, 3, &m, "", "en", "", "", &o) == 1,
+       "remembered without bingeGroup, source without one: no exact track, the first Japanese");
+  }
 
   // Detector.
   ok(audioesc_dts_truehd("A_DTS/LOSSLESS", "") && audioesc_dts_truehd("truehd", "") &&

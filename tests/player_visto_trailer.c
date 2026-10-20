@@ -72,15 +72,16 @@ int nv_test_clock_gettime(clockid_t id, struct timespec *ts) {
 
 // Pipeline falso: pos e dur sob controle total do teste.
 static double dur, pos, creditos;
-static int ativo, pausado, buffer, terminou;
+static int ativo, pausado, buffer, terminou, nBuscas, nAberturas;
 static char urlAtual[4096];
 int video_tocar(const char *url) {
+  nAberturas++;
   snprintf(urlAtual, sizeof urlAtual, "%s", url);
   ativo = 1; pausado = buffer = terminou = 0; pos = 0; return 1;
 }
 void video_parar(void) { ativo = 0; }
 void video_pausar(int p) { pausado = p; }
-void video_buscar(double p) { pos = p; }
+void video_buscar(double p) { nBuscas++; pos = p; }
 int video_pausa_confirmada(void) { return pausado; }
 int video_tocando(void) { return ativo && !pausado; }
 unsigned video_bufferando_ms(void) { return (unsigned)buffer; }
@@ -168,6 +169,51 @@ static void tocar(int seg, double vel) {
   for (int i = 0; i < seg; i++) { agoraMono += 1; pos += vel; quadro(); }
 }
 
+static void actionKey(Uint32 type, SDL_Keycode key, int repeat) {
+  SDL_Event event = {0};
+  event.type = type; event.key.keysym.sym = key; event.key.repeat = repeat;
+  player_evento(&event);
+}
+static void testarRestartReload(void) {
+  for (int pause = 0; pause < 2; pause++) {
+    sessao(pause ? "tt90000563" : "tt90000562", 0, 1800);
+    pos = 240; quadro();
+    if (pause) {
+      actionKey(SDL_KEYDOWN, SDLK_PAUSE, 0);
+      actionKey(SDL_KEYUP, SDLK_PAUSE, 0);
+    }
+    assert(pausado == pause);
+    // The first transport action after movie Play is Restart, reached normally.
+    actionKey(SDL_KEYDOWN, SDLK_RIGHT, 0);
+    actionKey(SDL_KEYUP, SDLK_RIGHT, 0);
+    int seeks = nBuscas, opens = nAberturas;
+    actionKey(SDL_KEYDOWN, SDLK_RETURN, 0);
+    assert(nBuscas == seeks + 1 && pos == 0);
+    assert(pausado == pause && !strcmp(urlAtual, fonte) && nAberturas == opens);
+    assert(!player_pediu_recarregar());
+    actionKey(SDL_KEYDOWN, SDLK_RETURN, 0);
+    actionKey(SDL_KEYDOWN, SDLK_RETURN, 1);
+    assert(nBuscas == seeks + 1); // a held key restarts only once
+    actionKey(SDL_KEYUP, SDLK_RETURN, 0);
+    player_encerrar();
+  }
+
+  sessao("tt90000564", 0, 1800);
+  pos = 175; quadro();
+  unsigned token = player_recarregar_contexto();
+  int seeks = nBuscas, opens = nAberturas;
+  assert(token && player_recarregar_fonte(token));
+  assert(player_pediu_recarregar() && !player_pediu_recarregar());
+  assert(pos == 175 && nBuscas == seeks && nAberturas == opens && !strcmp(urlAtual, fonte));
+  player_voltar_a_esperar();
+  assert(!player_recarregar_contexto() && !player_recarregar_fonte(token));
+  player_definir_fonte(fonte); quadro(); quadro();
+  unsigned replacement = player_recarregar_contexto();
+  assert(replacement && replacement != token && !player_recarregar_fonte(token));
+  player_encerrar();
+  assert(!player_recarregar_contexto());
+  puts("player playback actions: PASS (Restart seek/pause, held key, Reload source ownership)");
+}
 int main(void) {
   assert(SDL_Init(SDL_INIT_TIMER) == 0); dados_iniciar(""); ling_local_legenda("none");
 
@@ -537,6 +583,8 @@ int main(void) {
   { ProgRegistro r;
     assert(prog_por_chave("tt90000031", &r) && fabs(r.posSeg - 232) < 1.0); }
   player_encerrar();
+
+  testarRestartReload();
 
   puts("PASS: trailer, pausa, buffer e seek sem reproducao nao marcam; >= 90% pela posicao conclui (oficial)");
   return 0;

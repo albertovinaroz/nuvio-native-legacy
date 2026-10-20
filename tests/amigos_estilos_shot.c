@@ -62,6 +62,7 @@ const char *shot_simklauth_token(void) { return contasNaTv ? "simkl-shot" : ""; 
 #include "reacao.h"
 #include "recresp.h"
 #include "socialvis.h"
+#include "svdesenho.h"
 #include "tex_cache.h"
 #include "text.h"
 #include "shot_arte.h"
@@ -83,6 +84,31 @@ static const char *dirDados;
 enum { D_HOME = 0, D_PAINEL, D_PERFIL };
 static int desenho;
 
+#ifdef NV_AMIGOS_POLISH
+static int polishAvatar;
+static void polishPixel(SDL_Surface *s, int x, int y, int *c) {
+  unsigned char *p = (unsigned char *)s->pixels + y * s->pitch + x * 4;
+  c[0] = p[0]; c[1] = p[1]; c[2] = p[2];
+}
+// Focused first column: the standard home focus ring (accent, NV_ANEL_FOCO thick) hugs the card.
+static void polishFoco(SDL_Surface *s, const char *bmp) {
+  const char *k = strstr(bmp, "-9");
+  GfxRect r;
+  float ar, ag, ab;
+  int c[3];
+  if (!k || k[2] < 'A' || k[2] > 'E' || strstr(bmp, "-sem")) return;
+  assert(amigosfil_teste_cartao(0, &r) != -1);
+  ajustes_acento(&ar, &ag, &ab);
+  for (int d = 1; d <= 3; d++) {
+    polishPixel(s, (int)r.x - d, (int)(r.y + r.h * 0.5f), c);
+    if (abs(c[0] - (int)(ar * 255)) > 40 || abs(c[1] - (int)(ag * 255)) > 40 || abs(c[2] - (int)(ab * 255)) > 40) {
+      fprintf(stderr, "%s: no home focus ring %d px left of the card (%d,%d,%d)\n", bmp, d, c[0], c[1], c[2]);
+      abort();
+    }
+  }
+}
+#endif
+
 static void gravarBmp(const char *bmp) {
   unsigned char *pix = malloc(1920 * 1080 * 4);
   SDL_Surface *s = SDL_CreateRGBSurfaceWithFormat(0, 1920, 1080, 32, SDL_PIXELFORMAT_RGBA32);
@@ -92,6 +118,15 @@ static void gravarBmp(const char *bmp) {
   for (y = 0; y < 1080; y++)
     memcpy((char *)s->pixels + y * s->pitch, pix + (1079 - y) * 1920 * 4, 1920 * 4);
   assert(SDL_SaveBMP(s, bmp) == 0);
+#ifdef NV_AMIGOS_POLISH
+  polishFoco(s, bmp);
+  if (polishAvatar) {   // an avatar whose image is missing falls back to the coloured initial disc
+    int c[3];
+    polishPixel(s, 52, 88, c);
+    if (c[0] < 40 && c[1] < 40 && c[2] < 40) { fprintf(stderr, "avatar fallback is a black disc\n"); abort(); }
+    if (abs(c[0] - c[1]) + abs(c[1] - c[2]) < 30) { fprintf(stderr, "avatar fallback is a grey disc\n"); abort(); }
+  }
+#endif
 #ifdef NV_AMIGOSFIL_TESTE
   if (strstr(bmp, "-9F")) for (int example = 0; example < 2; example++) {
     int low = 255, high = 0, caption = 0;
@@ -158,6 +193,12 @@ static void quadros(int n, const char *bmp) {
     if (desenho == D_PERFIL) amigoperfil_desenhar(agora);
     else {
       home_desenhar(agora);
+#ifdef NV_AMIGOS_POLISH
+      if (polishAvatar) {
+        gfx_cor((GfxRect){20, 20, 160, 160}, 0, 0, 0, 0, 1);
+        svd_avatar((GfxRect){40, 40, 96, 96}, "/nonexistent/avatar.jpg", "Zed", "id-zed", 1);
+      }
+#endif
       if (desenho == D_PAINEL) spainel_desenhar(agora);
       if (desenho == D_PAINEL && ctx_aberto()) ctx_desenhar(agora);
     }
@@ -352,19 +393,40 @@ int main(int argc, char **argv) {
     else snprintf(bmp, sizeof bmp, "%s-9%c.bmp", saida, 'A' + style);
     quadros(1, bmp);
     amigosfil_teste_conferir(1920, 1080);
-    if (style < 5) {
+    // Unfocused: focus on the hero, the row stays on screen.
+    tecla(SDLK_UP); quadros(60, NULL);
+    snprintf(bmp, sizeof bmp, "%s-%s-sem.bmp", saida, style == 5 ? "classic" : (char[]){'9', (char)('A' + style), 0});
+    quadros(1, bmp);
+    irFileira(); quadros(40, NULL);
+#ifdef NV_AMIGOS_POLISH
+    if (style == 5) {   // no "+ Add" column: one column per friend, RIGHT at the last avatar stops
+      int nf = socialvis_n_amigos(), c = 0, k;
+      assert(amigosfil_n_colunas() == nf);
+      for (k = 0; k < 64 && amigosfil_tecla(SDLK_RIGHT, &c); k++) {}
+      assert(k < 64 && c == nf - 1);
+    }
+#endif
+    if (style < 5 && !getenv("NV_SHOT_NOWALK")) {   // NOWALK: captures of an older tree, no navigation asserts
       int nc = amigosfil_n_colunas();
-      char title[24];
+      char title[24], pessoa[96];
       amigosfil_ok(0);
       assert(amigosfil_pediu_titulo(title, sizeof title));
       for (int c = 1; c < nc; c++) {
         tecla(SDLK_RIGHT); quadros(35, NULL);
         amigosfil_teste_conferir(1920, 1080);
       }
-      amigosfil_ok(nc - 2);
-      assert(amigosfil_pediu_ajustes() || recenviar_aberto());
+      // The last column is a card: no "See all" / "+ Add" pill after it.
+#ifdef NV_AMIGOS_POLISH
+      { GfxRect lastRect; assert(amigosfil_teste_cartao(nc - 1, &lastRect) != -1); }
+#endif
+      amigosfil_ok(nc - 1);
+      assert(amigosfil_pediu_titulo(title, sizeof title) || amigosfil_pediu_perfil(pessoa, sizeof pessoa));
+      assert(!amigosfil_pediu_ajustes() && !recenviar_aberto());
     }
   }
+#ifdef NV_AMIGOS_POLISH
+  { char tmp[900]; snprintf(tmp, sizeof tmp, "%s/avatar-fallback.bmp", dirDados); polishAvatar = 1; quadros(2, tmp); polishAvatar = 0; }
+#endif
   assert(ajustes_rapido_passo(op, 1));
   // Today-only events: absent time/progress/reaction must stay absent.
   static SvEvento missing[4];

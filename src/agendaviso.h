@@ -13,6 +13,9 @@
 #ifndef NV_AGENDAVISO_H
 #define NV_AGENDAVISO_H
 #include <SDL2/SDL.h>
+#include "agenda.h"
+// Consume an explicit OK on a movie notice; Back only dismisses.
+int agendaviso_tomar_filme(AgItem *saida);
 
 // Abre se houver lembrete vencido ainda nao avisado. Chamar com a home de pe e
 // nenhum outro cartao aberto, como atualizacao_mostrar_se_houver.

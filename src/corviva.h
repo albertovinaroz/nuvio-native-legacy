@@ -46,6 +46,7 @@
 #define CORVIVA_IMERSIVA   4   // "Imersiva": + a cor da arte vazando como luz
 #define CORVIVA_TEXTURA    5   // "Textura": foco/progresso feitos do material do titulo
 #define CORVIVA_TEXTURA_SUTIL 6 // "Textura sutil": a textura a 35% sobre o Da arte
+#define CORVIVA_SIMPLES_CLARO 7 // Pastel art accent; Vivid remains CORVIVA_SIMPLES.
 
 // Prioridade de quem pede (maior ganha dentro do mesmo quadro).
 #define CORVIVA_HOME     1

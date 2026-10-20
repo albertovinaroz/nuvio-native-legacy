@@ -2107,7 +2107,7 @@ int plex_preparo_consultar(const PlexPreparo *p, const char *id, const char *tip
   pb = malloc(sizeof *pb);
   e = pb ? PX_OK : PX_ERR_REDE;
   if (e == PX_OK && serie) {
-    if (temp <= 0 || ep <= 0) { temp = temp > 0 ? temp : 1; ep = ep > 0 ? ep : 1; }
+    if (temp < 0 || ep <= 0) { temp = temp > 0 ? temp : 1; ep = ep > 0 ? ep : 1; }
     e = px_achar_episodio(&p->conta, p->job, rk, temp, ep, epRk, sizeof epRk);
     if (e == 1) { copiar(rk, sizeof rk, epRk); e = PX_OK; }
     else if (e == 0) { n = 0; goto fim; }
@@ -2165,7 +2165,7 @@ int plex_consultar(const char *id, const char *tipo, int (*cancelado)(void *), v
   e = PX_OK;
   if (serie) {
     // A series without an episode in the id means "the first one", as in addons.c.
-    if (temp <= 0 || ep <= 0) { temp = temp > 0 ? temp : 1; ep = ep > 0 ? ep : 1; }
+    if (temp < 0 || ep <= 0) { temp = temp > 0 ? temp : 1; ep = ep > 0 ? ep : 1; }
     e = px_achar_episodio(&c, j, rk, temp, ep, epRk, sizeof epRk);
     // 1 found, 0 no such episode on the server, negative = failure.
     if (e == 1) { copiar(rk, sizeof rk, epRk); e = PX_OK; }
@@ -2233,6 +2233,7 @@ int plex_ficha(CatItem *item, CatEp *eps, int maxEps) {
     }
   }
   novo->naLista = item->naLista;
+  novo->listaFontes = item->listaFontes;
   novo->naColecao = item->naColecao;
   novo->retomadoMs = item->retomadoMs;
   *item = *novo;

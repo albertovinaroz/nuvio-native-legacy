@@ -1,18 +1,7 @@
 // OS CARDS DE EPISODIO DA MODERNA (#205), sem janela e sem rede.
 //
-// Pedido do dono: a base do selo "EPISODIO n" na mesma altura do selo
-// Assistido, tres tamanhos de card no Ajustes, titulo um degrau abaixo e
-// sinopse de 4 linhas. O que este teste cobra:
-//   1. as BASES casam: selo do numero e selo Assistido terminam na mesma
-//      linha do topo da miniatura — e o Assistido e o lado FIXO do casamento;
-//   2. os TRES TAMANHOS dao TRES ALTURAS de card (e de miniatura e de passo),
-//      crescentes, com a miniatura em 16:9 e o Medio igual ao de sempre;
-//   3. a SINOPSE de 4 LINHAS CABE no card: o bloco abaixo da miniatura reserva
-//      as 4 linhas em qualquer tamanho (as fontes nao escalam);
-//   4. o titulo desce UM DEGRAU na escala de sempre (TXT_CALLOUT, nao
-//      TXT_PLR_CORPO) na Moderna;
-//   5. o foco continua ANDANDO na fileira em cada tamanho: as colunas ficam
-//      no passo certo e nao se atropelam (passo maior que o card).
+// Variant C: unchanged 16:9 image, 624 px medium card, title/ratings row,
+// metadata row, five synopsis lines, and navigation at all three card sizes.
 //
 // A escolha do tamanho e gravada como a do dono: um ajustes.txt de verdade
 // em uma pasta temporaria, lido por ajustes_dir — o caminho da TV.
@@ -71,9 +60,7 @@ int main(void) {
   assert(NV_DETP_EPM_SELO_Y + NV_DETP_EP_SELO_H ==
          NV_DETP_EP_VISTO_Y + NV_DETP_EP_VISTO_H);
 
-  // 2 e 3. TRES TAMANHOS: alturas, larguras e passos crescentes; a miniatura
-  //    continua 16:9; o Medio e o card de sempre (640x360); as 4 linhas de
-  //    sinopse cabem no bloco de texto em TODOS os tamanhos.
+  // All sizes retain their image geometry and reserve the same seven panel rows.
   for (v = 0; v < 3; v++) {
     char linha[48];
     snprintf(linha, sizeof linha, "epTamanhoLocal %d\n", v);
@@ -85,9 +72,13 @@ int main(void) {
     // escala com o card.
     assert(NV_DETP_EPM_SELO_Y + NV_DETP_EP_SELO_H ==
            NV_DETP_EP_VISTO_Y + NV_DETP_EP_VISTO_H);
-    // A sinopse de 4 linhas cabe entre o fim da miniatura e o fim do card.
-    assert(epSinLinhas() == 4);
-    assert(h[v] - th[v] >= NV_DETP_EPM_SIN_DY + 4.0f * NV_DETP_EP_LD_SIN);
+    assert(epSinLinhas() == 5);
+    assert(w[v] == 640.0f * epEscala() && th[v] == 360.0f * epEscala());
+    assert(h[v] - th[v] == 264.0f);
+    assert(NV_DETP_EPM_TIT_DY + 36 <= NV_DETP_EPM_META_DY);
+    assert(NV_DETP_EPM_META_DY + 28 <= NV_DETP_EPM_SIN_DY);
+    assert(h[v] - th[v] >= NV_DETP_EPM_SIN_DY + 5.0f * NV_DETP_EP_LD_SIN);
+    assert(epRowY() == ANC(NV_DETP_EP_Y + 24.0f - 40.0f));
     // A secao mede o card que sera desenhado: o empilhamento acompanha.
     assert(alturaSecao(SEC_EPISODIOS) == h[v]);
     // Colunas lado a lado no passo certo (card + a margem do #205).
@@ -121,38 +112,49 @@ int main(void) {
   assert(th[0] < th[1] && th[1] < th[2]);
   assert(w[0] < w[1] && w[1] < w[2]);
   assert(p[0] < p[1] && p[1] < p[2]);
-  assert(w[1] == 640.0f && th[1] == 360.0f && p[1] == 640.0f + NV_DETP_EP_GAP);
+  assert(w[1] == 640.0f && th[1] == 360.0f && h[1] == 624.0f);
+  assert(p[1] == 640.0f + NV_DETP_EP_GAP);
 
   // 4. O TITULO UM DEGRAU ABAIXO na Moderna: TXT_CALLOUT (28), e nao o
   //    TXT_PLR_CORPO (32) do Padrao.
   assert(epTituloEstilo() == TXT_CALLOUT);
 
-  // 5. A PLACA do texto e mais estreita que a miniatura, centrada, e abriga o
-  //    texto (que comeca em r.x+12 e +6 no foco) com folga, em repouso e em foco.
-  { GfxRect r = {100, 50, epCardW(), epCardH()};
-    for (i = 0; i <= 1; i++) {
-      GfxRect pl = epPlacaRect(r, epThumbH(), (float)i);
-      assert(pl.w < r.w);
-      assert(pl.x > r.x && pl.x + pl.w < r.x + r.w);
-      assert(fabsf((pl.x + pl.w * 0.5f) - (r.x + r.w * 0.5f)) < 0.01f);
-      if (i) assert(pl.x + 6.0f <= r.x + 18.0f);   // em repouso nao ha placa
-      if (i) assert(r.x + 18.0f + epTextoW() <= pl.x + pl.w);
-    } }
+  // Refined shares Modern episode metrics in every card size.
+  for (v = 0; v < 3; v++) {
+    char settings[80];
+    snprintf(settings, sizeof settings, "homeLayoutLocal 2\nepTamanhoLocal %d\n", v);
+    gravar(settings);
+    assert(epCardW() == w[v] && epCardH() == h[v]);
+    assert(epThumbH() == th[v] && epCardPasso() == p[v]);
+    assert(epTituloEstilo() == TXT_CALLOUT && epSinLinhas() == 5);
+  }
 
-  // Standard keeps its full-card focus plate: text overlays the thumbnail.
-  gravar("homeLayoutLocal 1\n");
-  assert(ajustes_home_layout() == HOME_LAYOUT_PADRAO);
-  assert(epCardH() == epThumbH());
-  { GfxRect r = {100, 50, epCardW(), epCardH()};
-    for (i = 0; i <= 1; i++) {
-      GfxRect pl = epPlacaRect(r, epThumbH(), (float)i);
-      float scale = 1.0f + 0.03f * i;
-      assert(fabsf(pl.w - (r.w + 2 * NV_DETP_EP_PLACA_PAD) * scale) < 0.01f);
-      assert(fabsf(pl.h - (r.h + 2 * NV_DETP_EP_PLACA_PAD) * scale) < 0.01f);
-      assert(fabsf(pl.x + pl.w * 0.5f - (r.x + r.w * 0.5f)) < 0.01f);
-      assert(fabsf(pl.y + pl.h * 0.5f - (r.y + r.h * 0.5f)) < 0.01f);
-    } }
-
-  puts("detail_epcard: bases casadas, tres tamanhos, sinopse de 4 linhas e foco andando");
+  // Standard restores the old Apple TV metrics regardless of Modern card size.
+  for (v = 0; v < 3; v++) {
+    char settings[80];
+    snprintf(settings, sizeof settings, "homeLayoutLocal 1\nepTamanhoLocal %d\n", v);
+    gravar(settings);
+    assert(ajustes_home_layout() == HOME_LAYOUT_PADRAO);
+    assert(epCardW() == 420 && epThumbH() == 236 && epCardH() == 464);
+    assert(epCardPasso() == 420 + NV_DETP_EP_GAP);
+    assert(epRowY() == ANC(NV_DETP_EP_Y + 24.0f));
+    assert(epSinLinhas() == 4 && epTituloEstilo() == TXT_DET_META2);
+    assert(alturaSecao(SEC_EPISODIOS) == epCardH());
+    assert(epCardH() - epThumbH() == 228);
+    aberto = 1; saindo = 0; nivel = 1;
+    foco.fileira = SEC_EPISODIOS; foco.coluna = 0;
+    for (i = 0; i < 30; i++) detail_atualizar(1.0f / 60.0f, 2000 + i * 16);
+    for (i = 1; i < 6; i++) {
+      e.key.keysym.sym = SDLK_RIGHT; detail_evento(&e);
+      assert(foco.fileira == SEC_EPISODIOS && foco.coluna == i);
+      assert(fabsf(xItem(SEC_EPISODIOS, i) - xItem(SEC_EPISODIOS, i - 1)
+                   - epCardPasso()) < .01f);
+    }
+    e.key.keysym.sym = SDLK_DOWN; detail_evento(&e);
+    assert(foco.fileira != SEC_EPISODIOS);
+    e.key.keysym.sym = SDLK_UP; detail_evento(&e);
+    assert(foco.fileira == SEC_EPISODIOS);
+  }
+  puts("detail_epcard: Modern/Refined metrics and navigation preserved; Standard Apple TV cards restored");
   return 0;
 }

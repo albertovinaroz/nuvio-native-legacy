@@ -2092,7 +2092,7 @@ static void acionarBotao(int b) {
 void diagnostico_evento(const SDL_Event *e) {
 #ifdef NV_TOUCH_UI
   if (toquerol_navegacao(e)) {
-    if (toqueRanking.livre) vz.rolagem = (int)(toqueRankingOffset / 62.0f);
+    if (toquerol_livre(&toqueRanking)) vz.rolagem = (int)(toqueRankingOffset / 62.0f);
     toquerol_limpar(&toqueRanking);
   }
 #endif
@@ -2725,7 +2725,7 @@ static void desenharCicloRanking(GfxRect r, float ar, float ag, float ab) {
   int primeira = vz.rolagem, quantidade = VAZ_LINHAS_RANKING;
   float resto = 0.0f;
 #ifdef NV_TOUCH_UI
-  if (!toqueRanking.livre) toqueRankingOffset = vz.rolagem * 62.0f;
+  if (!toquerol_livre(&toqueRanking)) toqueRankingOffset = vz.rolagem * 62.0f;
   toquerol_vincular(&toqueRanking, (GfxRect){r.x + 28.0f, r.y + 96.0f, r.w - 56.0f, VAZ_LINHAS_RANKING * 62.0f},
                    gfx_escala(), 0.0f, max * 62.0f, 1, &toqueRankingOffset);
   ponteiro_rolagem(toqueRankingRolar);

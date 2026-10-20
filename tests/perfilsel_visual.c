@@ -22,6 +22,7 @@
 #include "tex_cache.h"
 #include "catalogo.h"
 #include "ajustes.h"
+#include "gpunivel.h"
 #include "progresso.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
@@ -237,6 +238,32 @@ int main(void) {
   escreverCache("1\t0\t1\t0\t#1E88E5\tHenrique\t\tdeploy/app/art/03.jpg\n", 1);
   perfis_carregar_ativo();
   ajustesDeTeste(0);
+  if (getenv("NUVIO_PERFILFUNDO_TEST")) {
+    const char *level = getenv("NUVIO_PERFILFUNDO_TEST");
+    if (!strcmp(level, "auto")) {
+      gpun_preferencia(0);
+      // Healthy 50 FPS on a 60 Hz surface: live reports now reach Minimal.
+      for (int i = 0; i < 750; i++) gpun_medir(20, 15, 4, 1, 1);
+#ifndef NV_BEFORE_GPUAUTO
+      for (int i = 0; i < 6; i++) gpun_relatar(50, 20, 1000.0 / 60, 1, 1);
+#endif
+      printf("automatic effects level: %d\n", gpun_nivel());
+    } else gpun_definir_nivel(atoi(level));
+    perfilsel_iniciar();
+    captura("/picker.bmp");
+    unsigned char pixels[400 * 300 * 4];
+    int colorful = 0;
+    glReadPixels(0, 380, 400, 300, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    for (int i = 0; i < 400 * 300; i++) {
+      int r = pixels[i * 4], g = pixels[i * 4 + 1], b = pixels[i * 4 + 2];
+      int hi = r > g ? r : g, lo = r < g ? r : g;
+      if (b > hi) hi = b;
+      if (b < lo) lo = b;
+      if (hi - lo > 15) colorful++;
+    }
+    printf("picker background: %d art pixels\n", colorful);
+    return colorful > 3000 ? 0 : 1;
+  }
   perfilsel_iniciar();
   assert(!perfilsel_concluido());
   perfilsel_continuar_ativo();

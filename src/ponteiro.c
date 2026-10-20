@@ -995,9 +995,9 @@ void ponteiro_rolagem(PonteiroRolagemFn fn) {
 void ponteiro_borda_esquerda(float largura, PonteiroBordaFn ativar) {
   if (ponteiro_ativo() && layout_modo_mobile()) listaBorda[escreve] = (Borda){fmaxf(0.0f, largura) * gfx_escala(), ativar};
 }
-int ponteiro_borda_registrada(void) { return listaBorda[escreve].ativar != NULL; }
+int ponteiro_borda_registrada(void) { return layout_modo_mobile() && listaBorda[escreve].ativar != NULL; }
 void ponteiro_borda_ativar(void) {
-  if (!toqueQuadroPronto) return;
+  if (!layout_modo_mobile() || !toqueQuadroPronto) return;
   PonteiroBordaFn fn = listaBorda[pronto].ativar;
   if (fn) fn();
 }

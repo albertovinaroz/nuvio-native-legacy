@@ -29,6 +29,7 @@
 #include "dts/dts_overlay.h"
 #include "legenda.h"
 #include "dados.h"
+#include "ilha.h"
 #include "vazao.h"
 #include <stdio.h>
 #include <string.h>
@@ -41,6 +42,33 @@
 #include <unistd.h>
 #include <math.h>
 #include <limits.h>
+
+#ifndef NV_VERSAO
+#define NV_VERSAO "dev"
+#endif
+
+#define DTS_MARCA_ARQ "dts-conversao.txt"
+static void dtsMarcarAbertas(int n) {
+  char b[sizeof NV_VERSAO + 32];
+  snprintf(b, sizeof b, "%d\n%s\n", n, NV_VERSAO);
+  dados_gravar(DTS_MARCA_ARQ, b);
+}
+static int dtsAbertasSemFechar(void) {
+  char *t = dados_ler(DTS_MARCA_ARQ);
+  char *versao = t ? strchr(t, '\n') : NULL;
+  int n = t ? atoi(t) : 0;
+  if (t && (!versao || strcmp(versao + 1, NV_VERSAO "\n"))) {
+    n = 0;
+    dtsMarcarAbertas(0);
+    printf("[dv] guard reset: version changed\n"); fflush(stdout);
+  }
+  free(t);
+  return n;
+}
+void video_dv_guard_reiniciar(void) {
+  dtsMarcarAbertas(0);
+  printf("[dv] guard reset: user toggle\n"); fflush(stdout);
+}
 
 static DtsPlayback *dtsSessao;
 static char dtsSaida[64];
@@ -663,7 +691,6 @@ static char cabsHttp[512];
 static int iniciarDts(int stream);
 static void bombearDts(void);
 static int dtsLiberadoNestaTv(void);
-static void dtsMarcarAbertas(int n);
 // RECONEXAO (video_reconexao.h). O erro chega no fio do LS2 e so ANOTA
 // (reconErroPend); a decisao e o recarregar sao do video_bombear, no fio
 // principal, como o `recuperando`.
@@ -1171,6 +1198,7 @@ static int eventoPayload(const char *p, unsigned minhaSessao) {
         c[i].idioma = faixaAudio[i].idioma; c[i].codec = faixaAudio[i].codec;
         c[i].rotulo = faixaAudio[i].rotulo; c[i].canais = faixaAudio[i].canais;
         c[i].dts = audioesc_dts_truehd(faixaAudio[i].codec, faixaAudio[i].rotulo); c[i].pode = 1;
+        c[i].numero = faixaAudio[i].numero;
       }
       k = audioesc_escolher(c, nAudio, &o);
       if (k >= 0 && k != audioAtual) {
@@ -1761,8 +1789,8 @@ static int acbConfigurarTipo(int bufferstream) {
   } while (0)
 
 static int iniciar(int automatico);
-int video_iniciar(void)      { return iniciar(0); }
-int video_iniciar_auto(void) { return iniciar(1); }
+int video_iniciar(void)      { mkvass_aceitar_imagem(1); return iniciar(0); }
+int video_iniciar_auto(void) { mkvass_aceitar_imagem(1); return iniciar(1); }
 int video_registro_negado(void) { return regNegado; }
 
 static int iniciar(int automatico) {
@@ -2100,7 +2128,7 @@ static void *lerMkv(void *arg) {
         snprintf(dvAudioCodec[na++], sizeof dvAudioCodec[0], "%s", fx[j].codec);
       }
     }
-    dvAudios = na; dvSondado = 1; }
+    dvAudios = na; }
 
   // DIAGNOSTICO DO DV (203-dvrpu). "Sem [dv] file:" tinha tres causas possiveis
   // e o log nao separava: o arquivo nao tem dvcC; o Tracks nao coube; ou o DV
@@ -2123,6 +2151,17 @@ static void *lerMkv(void *arg) {
       int r = mkv_rpu_alem(url, fx[j].nalTam, 4L * 1024 * 1024);
       printf("[dv] sonda: rpu_banda pelo 1o quadro (%lld bytes em %lld): %s rpu_tipo=%d vdr_rpu_profile=%d\n",
              q, d->blocoIni, r == 1 ? "sim" : r == 0 ? "nao" : "indeciso", d->rpuTipo, d->rpuPerfil);
+    }
+    // C9 firmware dereferences a null HEVC timing context in the DV demuxer
+    // on this input. A profile 8.1 declaration alone is not proof of safe
+    // samples; keep its HDR10 base layer when the probe cannot confirm RPU.
+    // ponytail: conservative probe gate; inspect actual startup packets before
+    // admitting unprobed files (see docs/reviews/c9-dv-crash-2.md).
+    if (fx[j].dvPerfil == 8 && fx[j].dvCompat == 1 &&
+        (d->rpu != 1 || d->quadros < 1)) {
+      dvMkvRpu = 0;
+      printf("[dv] HDR10: profile 8.1 in-band RPU unconfirmed (rpu=%d frames=%d)\n",
+             d->rpu, d->quadros);
     }
     fflush(stdout);
     break;
@@ -2147,6 +2186,13 @@ static void *lerMkv(void *arg) {
     if (nt > NV_FAIXA_MAX) nt = NV_FAIXA_MAX;
     for (i = 0; i < nt; i++) tv[i] = faixaLeg[i].numero;
     modo = mkv_casar_legendas(fx, n, tv, nt, idx);
+    // SEM_IMAGEM so confere contagem: com idioma dos dois lados, tem de bater.
+    if (modo == MKV_CASA_SEM_IMAGEM && !faixasmkv_idiomas_coerentes(faixaLeg, nt, fx, idx)) {
+      int q;
+      printf("[mkv] legendas: casamento sem imagem contradiz o idioma da TV; descartado\n");
+      for (q = 0; q < nt; q++) idx[q] = -1;
+      modo = MKV_CASA_NADA;
+    }
     if (modo == MKV_CASA_NADA && faixasmkv_legendas_por_idioma(faixaLeg, nt, fx, n, idx))
       printf("[mkv] legendas: pares unicos por idioma (lista da TV diferente)\n");
     // DIAGNOSTICO que faltou no #92: sem as duas listas lado a lado no log, o
@@ -2162,7 +2208,8 @@ static void *lerMkv(void *arg) {
       // escondendo (ou o trecho de 320 KB cortando) faixas — e nesse caso
       // NENHUMA faixa ASS vai ao overlay do app, todas ficam com a TV.
       printf("[mkv] legendas da TV x arquivo: modo=%s (tv=%d, arquivo=%d, lista da TV %s)\n",
-             modo == MKV_CASA_ORDINAL ? "ordinal" : modo == MKV_CASA_NUMERO ? "trackNumber" : "nenhum",
+             modo == MKV_CASA_ORDINAL ? "ordinal" : modo == MKV_CASA_NUMERO ? "trackNumber" :
+             modo == MKV_CASA_SEM_IMAGEM ? "ordinal (sem legendas de imagem)" : "nenhum",
              nt, nArq, nLeg > NV_FAIXA_MAX ? "CORTADA em NV_FAIXA_MAX" : "inteira");
       if (modo == MKV_CASA_NADA && nt > 0) {
         char m[96];
@@ -2230,11 +2277,16 @@ static void *lerMkv(void *arg) {
     fflush(stdout); }
   // #510: sourceInfo can omit embedded text tracks the app can render itself.
   nLeg = faixasmkv_acrescentar_texto(faixaLeg, nLeg, NV_FAIXA_MAX, fx, n);
+  // PGS (BD/remux): o uMS nao lista legenda de imagem. O app a decodifica
+  // (pgs.c/imgsub, o mesmo do .tpk) e entra no fim da lista, com o ordinal do arquivo.
+  nLeg = faixasmkv_acrescentar_imagem(faixaLeg, nLeg, NV_FAIXA_MAX, fx, n);
   { char m[64];
     snprintf(m, sizeof m, "mkv: %d faixas lidas, %d legendas com idioma", n, casou);
     marco(m); }
   printf("[mkv] %d legendas ganharam idioma\n", casou);
   fflush(stdout);
+  // Publish only after the DV admission check; the main thread may pump now.
+  dvSondado = 1;
   fioMkvVivo = 0;
   return NULL;
 }
@@ -2427,6 +2479,11 @@ void video_bombear(void) {
   // RECONEXAO: ver video_reconexao.h.
   if (pronto && posSeg > 0.5) reconIniciou = fonteTocou = 1;
   if (pronto) nv_recon_progresso(&recon, posSeg);
+  if (!falhou && (!pronto || (!pausaPedida && bufferandoDesde)) &&
+      nv_recon_expirou(&recon, SDL_GetTicks())) {
+    reconErroRede = 1; reconErroPend = 1;
+    snprintf(erroTexto, sizeof erroTexto, "network recovery timeout");
+  }
   if (reconErroPend) {
     int antes = recon.tentativa;
     reconErroPend = 0;
@@ -2811,24 +2868,10 @@ static void pararSessao(void) {
 //
 // E EM QUALQUER VERSAO: dts-conversao.txt conta as conversoes abertas que nao
 // fecharam. Duas seguidas = o app morreu duas vezes com a conversao aberta, e
-// ela se desliga nesta TV. Uma so pode ser a TV desligada no meio do filme.
-#define DTS_MARCA_ARQ "dts-conversao.txt"
-static int dtsAbertasSemFechar(void) {
-  char *t = dados_ler(DTS_MARCA_ARQ);
-  int n = t ? atoi(t) : 0;
-  free(t);
-  return n;
-}
-static void dtsMarcarAbertas(int n) {
-  char b[16];
-  if (!n && !dtsAbertasSemFechar()) return;
-  snprintf(b, sizeof b, "%d\n", n);
-  dados_gravar(DTS_MARCA_ARQ, b);
-}
+// ela se desliga nesta versao ate a pessoa religar em Ajustes.
+// Uma so pode ser a TV desligada no meio do filme.
 static int dtsLiberadoNestaTv(void) {
-  static int v = -1;
-  int maior, abertas;
-  if (v >= 0) return v;
+  int v, maior, abertas;
   if (access("/tmp/nuvio-dts-liberar", F_OK) == 0) {
     printf("[dts] conversao liberada por /tmp/nuvio-dts-liberar\n"); fflush(stdout);
     return v = 1;
@@ -2851,6 +2894,7 @@ static int dtsLiberadoNestaTv(void) {
 // webOS 3 fica fora; desconhecida chega aqui ja como o chute do webosMaior().
 static int dvVersaoLiberada(int maior) { return maior >= 4; }
 static int dvLiberadoNestaTv(void) {
+  static int avisado;
   int forcado = 0;
 #ifdef NV_DTS_DEBUG
   forcado = access("/tmp/nuvio-dv-forcar", F_OK) == 0;
@@ -2862,6 +2906,11 @@ static int dvLiberadoNestaTv(void) {
   }
   if (dtsAbertasSemFechar() >= 2) {
     printf("[dv] Dolby Vision in MKV off: the app died twice with it open\n"); fflush(stdout);
+    if (!avisado) {
+      avisado = 1;
+      ilha_avisar("dv-guard", ILHA_ERRO, NULL,
+        i18n("Dolby Vision desligado: o app fechou 2 vezes com ele. Religue em Ajustes para tentar de novo."), 10000u, 0);
+    }
     return 0;
   }
   return 1;
@@ -3015,6 +3064,7 @@ static int iniciarDts(int stream) {
   }
   dtsMarcarAbertas(dtsAbertasSemFechar() + 1);
   dts_engine_set_ac3(ajustes_dts_ac3());
+  dts_engine_set_ahead_mib(cacheboost_backend_buffer_mb());   // #338: Settings > Buffer size
   dts_playback_next_dv(dtsModoDv);
   dtsSessao = dts_playback_start(urlAtual, cabsHttp, stream, alvo,
                                paused, expWin, 0, (a || trocada) ? &selected : NULL, ordinal, count);

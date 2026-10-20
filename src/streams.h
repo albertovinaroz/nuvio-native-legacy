@@ -134,7 +134,7 @@ typedef struct Stream {
   // naovideo.h): linha de aviso do addon. A folha a mostra apagada ("Nao e
   // video") e o automatico a pula. Marcada na verificacao, nunca no parser.
   int  naoVideo;
-  int  notWebReady;     // behaviorHints: so oferecer quando P2P esta ativo
+  int  notWebReady;     // behaviorHints: sem URL direta, so oferecer com P2P ativo
   // PACOTE DE SELOS ATIVO (selospacote.h): os filtros que casaram com esta
   // fonte, calculados UMA vez (quando a lista chega, ou quando o pacote muda;
   // `selosPacoteVer` != selospacote_versao() manda recalcular), nunca no
@@ -142,6 +142,11 @@ typedef struct Stream {
   unsigned short selosPacote[16];
   unsigned char  nSelosPacote;
   unsigned       selosPacoteVer;
+  // O HASH DO TORRENT de uma fonte que JA VEM COM url (AIOStreams/MediaFusion
+  // com debrid): `infoHash` acima fica vazio nelas de proposito (ele e o que
+  // manda resolver no debrid local). So a lista de arquivos da fonte
+  // (partes.h) le este: e um dos tres jeitos de achar o item no TorBox.
+  char hashTorrent[48];
 } Stream;
 
 // Etiqueta de idioma de qualquer origem ("spa", "pt-BR", "es-419", "Spanish",
@@ -157,10 +162,16 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida);
 // Idiomas declarados para exibicao, sem rotulo. 0 = nenhum informado.
 int stream_faixas_texto(const Stream *fonte, int legendas, char *saida, unsigned tam);
 void stream_filtro_dados(const Stream *fonte, FonteFiltroDados *saida);
+// Capture the requested resource type before publishing its sources. Filters
+// apply only to movie/series; this scope survives resolution and failover.
+void stream_filtro_tipo(const char *tipo);
+void stream_filtro_atualizar(void);
 int stream_filtro_permite(const Stream *fonte);
 int stream_filtro_bloqueou(void);
 void stream_definir_atual(int indice);
 int stream_atual(void);
+int stream_kbps(const Stream *s);
+int stream_kbps_atual(void);   // declared kbps of stream_atual() (0 = unknown)
 void stream_folha_contexto(const char *texto);
 // Pasta da arte do pacote: as bandeiras dos idiomas moram em <dir>/bandeiras.
 void stream_dir_arte(const char *dir);
@@ -172,7 +183,9 @@ void stream_folha_nome(const char *nome);
 // do titulo no lugar do nome (Ajustes > Texto das fontes > Logo do titulo).
 void stream_folha_item(int indice);
 // Folha de um CANAL ao vivo: a resolucao e o codec saem do nome (UHD/FHD/HD/SD,
-// H.265...) e entram no agrupamento e nos selos. Filme nao muda.
+// H.265...) e entram no agrupamento e nos selos. Define tambem o contexto da
+// busca ANTES da selecao: canais ignoram filtros e regras de filme/episodio.
+// Toda busca nova deve repor o valor, inclusive ao voltar para VOD.
 void stream_folha_canal(int sim);
 void stream_canal_enriquecer(Stream *s);
 int stream_folha_recarregar(void);
@@ -200,6 +213,8 @@ int  stream_ordem_addon(int i);
 // fonteauto_pode_decidir. `preferida` e o indice da lembrada nesta lista (-1).
 // `instantaneo` (#202): "Espera pelos add-ons" = Instantaneo.
 int  stream_auto_pode_decidir(int preferida, int prefPendente, int prazoPassou, int instantaneo);
+// 1 = o add-on `nome` esta dentro de "Fontes do auto-play" (fonteregra).
+int  stream_addon_no_escopo(const char *nome);
 // REGRAS DE AUTO-PLAY (#202, fonteregra.h): o grupo da fonte i (-1 = fora,
 // 0..3 = ordem) e se a ultima escolha so falhou por causa delas.
 int  stream_grupo_regra(int i);
@@ -228,6 +243,13 @@ void stream_definir_alvo(const char *id);
 int  stream_lista_do_alvo(const char *id);
 // Descarta a lista porque ela e de outro alvo. `porque` so entra no log.
 void stream_invalidar(const char *porque);
+struct AddonsConsulta;
+// Availability means an offered video source, excluding known warning URLs.
+int stream_fonte_disponivel(const Stream *fonte);
+int stream_filme_consultar(const struct AddonsConsulta *consulta, const char *id,
+                           int (*cancelado)(void *), void *ctx);
+// -1 = no completed list owned by this movie, otherwise playable count (including zero).
+int stream_filme_fontes(const char *id);
 int  stream_n(void);
 const Stream *stream_item(int i);
 // Fileira de selos do pacote ativo (ver selospacote.h) para fora da folha, como
@@ -251,6 +273,7 @@ int  stream_proxima_vod(int atual);
 int  stream_verificar_proxima_vod(int atual, int tentativas, int *conferidas);
 // Politica por reproducao; so o worker altera a sua copia da sessao. Nunca
 // grava URL/exclusoes na lista antes de o consumidor validar as geracoes.
+int stream_falha_tem_proxima(const FonteFalhaSessao *sessao, unsigned lista);
 int stream_falha_verificar(FonteFalhaSessao *sessao, unsigned lista, int escolhida,
                            int (*cancelado)(void *), void *ctx,
                            int *indice, int *servico, char *url, unsigned tam);
@@ -258,6 +281,12 @@ int stream_falha_aplicar(int indice, unsigned lista, int servico, const char *ur
 int stream_falha_aplicar_sessao(int indice, unsigned lista, int servico, const char *url, uint64_t sessao);
 // Renova somente a rota ja escolhida, sem reservar outra tentativa na
 // politica. O consumidor aceita e publica a URL depois de validar o alvo.
+// Fresh, independent addon query for the same VOD file; never replaces the list.
+struct AddonsConsulta;
+int stream_vod_renovar(const struct AddonsConsulta *consulta, const char *id, const char *tipo,
+                       int indice, unsigned lista, int (*cancelado)(void *), void *ctx,
+                       Stream *saida);
+int stream_vod_renovada_aplicar(int indice, unsigned lista, const Stream *fonte, uint64_t sessao);
 int stream_falha_renovar(int indice, unsigned lista, int servico,
                          int (*cancelado)(void *), void *ctx, char *url, unsigned tam);
 void stream_falha_identidade(const Stream *fonte, char *dst, unsigned tam);
@@ -287,12 +316,13 @@ FonteFalhaSessao *stream_preparo_tomar_politica(StreamPreparo *preparo);
 const Stream *stream_preparo_lista(const StreamPreparo *preparo, int *n);
 Stream *stream_preparo_tomar_lista(StreamPreparo *preparo, int *n);
 void stream_preparo_liberar(StreamPreparo *preparo);
-// A fonte `i` pode ser seguida por um grupo lembrado SEM rebaixar o que o
-// automatico escolheria hoje: nao excluida pelas regras do dono, grupo de
-// regras igual ou melhor, resolucao e Dolby Vision iguais ou maiores e, na LG,
-// nunca um nao-MP4 no lugar do MP4 da mesma faixa. Usada so pela memoria do
-// AUTOMATICO (fontepref); a manual nao passa por aqui, e escolha da pessoa.
-int  stream_grupo_sem_perda(int i);
+// A fonte `i` pode ser seguida pela memoria do AUTOMATICO (fontepref): nao
+// excluida, nao aviso do addon, nao barrada pelas regras do dono e, na LG,
+// nunca um nao-MP4 no lugar do MP4 da mesma resolucao. Resolucao nao conta
+// (dono, 16/10: a fonte que ja tocou manda; uma "4K" de IA nao a tira); na
+// mesma resolucao, uma release com evidencia claramente maior ainda vence
+// (Code Geass). A manual nao passa por aqui.
+int  stream_grupo_sem_perda(int i, int forte);
 // O mesmo sem as regras de auto-play (#202): canal ao vivo.
 int  stream_automatico_canal(void);
 // Exclui uma candidata que ja foi entregue ao player e travou no pipeline.
@@ -349,6 +379,11 @@ int  stream_antecipada(int *estado);
 int  stream_urls_para_aquecer(char dst[][256], int max);
 // Conferencia de uma URL avulsa, sem lista (bloqueia; chamar de fio proprio).
 int  stream_url_serve(const char *url, const char *cabecalhos);
+// Ganchos do endereco final (cdnlink.h): quando a verificacao (ou
+// stream_url_serve) resolve uma URL que serve, chama isto com a original e o
+// endereco final, para o .tpk entregar o link do CDN ao player sem pedir de
+// novo. NULL fora do .tpk (o tpk.c liga) e nos testes.
+extern void (*stream_cdn_lembrar)(const char *orig, const char *final, const char *cabecalhos, uint64_t sessao);
 
 // 1 quando o texto da fonte diz "fora de cache" (ver Stream.foraCache).
 // Publica para o parser e o teste; a lista ja vem com o campo preenchido.

@@ -1,3 +1,5 @@
+#define NV_DUBLE_SESSAO
+#define NV_DUBLE_CONTAPEND
 #include "jfid.h"
 #include "catalogo.h"
 #include "idbase.h"
@@ -401,7 +403,7 @@ int cat_historico_estado_id(const char *imdb, const char *tipo) {
   p = historico_pos(imdb, tipo ? tipo : "movie", 0);
   estado = p >= 0 && historico[p].conhecido ? historico[p].visto : -1;
   pthread_mutex_unlock(&histTrava);
-  return estado;
+  return contapend_estado ? contapend_estado(imdb, tipo, 0, 0, 0, estado) : estado;
 }
 
 // Sob histTrava. Ausencia num snapshot Trakt nao apaga uma marca que veio
@@ -787,7 +789,9 @@ int ajustes_idioma(void);
 // VERSAO 7: novo campo CatItem.posCreditos (cena pós-créditos, TMDB
 // 179430/179431). O sizeof recusaria o arquivo sozinho; a versao sobe mesmo
 // assim para o motivo da recusa ser o campo novo.
-#define CACHE_VERSAO 7
+// Version 8 adds per-source Saved membership, including builds where padding
+// keeps sizeof(CatItem) unchanged. Old shared marks cannot identify a source.
+#define CACHE_VERSAO 8
 // Mesmo cabecalho, itens CODIFICADOS (zeros em corrida). Um CatItem tem ~16 KB
 // e quase tudo e zero (buffers de URL dimensionados para o pior caso): 1600
 // titulos eram 25,6 MB gravados na MEMFS dentro da trava do sistema de arquivos
@@ -839,7 +843,6 @@ static int rleDecodificar(const unsigned char *enc, size_t encN, unsigned char *
   }
   return o <= n;
 }
-#define CACHE_VERSAO_SO_P1 5
 
 typedef struct {
   unsigned magia, versao, tamItem, tamFileira;
@@ -1169,8 +1172,7 @@ int cat_ler_cache(const char *dirArte) {
   if (fread(&c, sizeof c, 1, f) != 1) { fclose(f); return 0; }
   // RECUSA em vez de ler torto. Struct diferente = arquivo de outra build.
   if ((c.magia != CACHE_MAGIA && c.magia != CACHE_MAGIA_RLE) ||
-      !(c.versao == CACHE_VERSAO ||
-        (c.versao == CACHE_VERSAO_SO_P1 && c.perfil == 1)) ||
+      c.versao != CACHE_VERSAO ||
       c.tamItem != sizeof(CatItem) || c.tamFileira != sizeof(CatFileira) ||
       c.nItens < 0 || c.nItens > CAT_MAX ||
       c.nFileiras < 0 || c.nFileiras > CAT_FIL_MAX) {
@@ -1272,6 +1274,7 @@ unsigned long cat_assinatura_de(const CatItem *lista, int qtd,
     MIX(lista[i].backdropCatalogo); MIX(lista[i].backdropTmdb);
     MIX(lista[i].backdropTrakt); MIX(lista[i].genero); MIX(lista[i].meta);
     MIX(lista[i].classificacao); MIX(lista[i].sinopse);
+    h ^= lista[i].listaFontes; h *= 16777619UL;
   }
 #undef MIX
   return h;
@@ -1354,6 +1357,39 @@ int cat_indice_por_imdb(const char *imdb) {
   return -1;
 }
 
+int cat_indice_por_imdb_tipo(const char *imdb, const char *tipo) {
+  int i, achou = -1;
+  if (!imdb || !imdb[0] || !tipo_certo(tipo)) return -1;
+  catTravar();
+  for (i = 0; itens && i < n; i++) {
+    if (tipo_certo(itens[i].tipo) &&
+        !strcmp(tipo_base(itens[i].tipo), tipo_base(tipo)) &&
+        mesmoTitulo(itens[i].imdb, imdb)) { achou = i; break; }
+  }
+  pthread_mutex_unlock(&pubTrava);
+  return achou;
+}
+
+int cat_tipo_confirmado_por_id(const char *id, char *tipo, unsigned tam) {
+  const char *certo = NULL;
+  int ok = 0;
+  if (!tipo || !tam) return 0;
+  tipo[0] = 0;
+  if (!id || !id[0]) return 0;
+  catTravar();
+  for (int i = 0; itens && i < n; i++) {
+    const char *t;
+    if (!mesmoTitulo(itens[i].imdb, id) || !tipo_certo(itens[i].tipo)) continue;
+    t = tipo_base(itens[i].tipo);
+    if (certo && strcmp(certo, t)) goto fim;
+    certo = t;
+  }
+  if (certo && strlen(certo) < tam) { snprintf(tipo, tam, "%s", certo); ok = 1; }
+fim:
+  pthread_mutex_unlock(&pubTrava);
+  return ok;
+}
+
 // O MESMO TITULO EM DUAS FILEIRAS (#151). A serie que a pessoa esta vendo
 // costuma estar em "Continuar assistindo" E na fileira de onde o detalhe foi
 // aberto — e os episodios so sao publicados na copia do detalhe. O player
@@ -1401,7 +1437,7 @@ static int normalizarIndice(int indice) {
 // Sob pubTrava; aplicarUm ja a segura. Ordem: pubTrava -> epTrava.
 static void apontarEpisodio(int indice, int temporada, int episodio) {
   int e;
-  if (!(temporada > 0 && episodio > 0)) return;
+  if (!(temporada >= 0 && episodio > 0)) return;
   if (itens[indice].temporada != temporada || itens[indice].episodio != episodio)
     itens[indice].nomeEpisodio[0] = 0;
   itens[indice].temporada = temporada;
@@ -1481,7 +1517,7 @@ void cat_aplicar_progresso(int indice, double posSeg, double durSeg, int tempora
 // tem as faixas de episodio zeradas na publicacao, entao a busca nunca achava
 // nada aqui — so limpava o nome quando o episodio muda, e isso continua.
 static void apontarEm(CatItem *v, int i, int temporada, int episodio) {
-  if (!(temporada > 0 && episodio > 0)) return;
+  if (!(temporada >= 0 && episodio > 0)) return;
   if (v[i].temporada != temporada || v[i].episodio != episodio) v[i].nomeEpisodio[0] = 0;
   v[i].temporada = temporada;
   v[i].episodio  = episodio;
@@ -1808,8 +1844,8 @@ int cat_id_stream(int indiceItem, int t, int e, char *dst, unsigned tam) {
   dst[0] = 0;
   if (!c || !c->imdb[0]) return 0;
   idbase_copiar(c->imdb, base, sizeof base);
-  if (t <= 0 || e <= 0) { snprintf(dst, tam, "%s", c->imdb); return 1; }
-  if (!idbase_e_imdb(c->imdb)) {
+  if (t < 0 || e <= 0) { snprintf(dst, tam, "%s", c->imdb); return 1; }
+  if (!idbase_e_imdb(c->imdb) || t == 0) {
     n = cat_n_episodios(indiceItem);
     for (i = 0; i < n; i++) {
       const CatEp *ep = cat_episodio(indiceItem, i);
@@ -1818,9 +1854,13 @@ int cat_id_stream(int indiceItem, int t, int e, char *dst, unsigned tam) {
         return 1;
       }
     }
+    // Sem id publicado nao se inventa o endereco de um especial do addon.
+    if (t == 0 && !idbase_e_imdb(c->imdb)) return 0;
     // Sem o video: a convencao dos addons de anime e "<id>:<episodio>".
-    snprintf(dst, tam, "%s:%d", base, e);
-    return 1;
+    if (!idbase_e_imdb(c->imdb)) {
+      snprintf(dst, tam, "%s:%d", base, e);
+      return 1;
+    }
   }
   snprintf(dst, tam, "%s:%d:%d", base, t, e);
   return 1;
@@ -1899,17 +1939,29 @@ int cat_copiar_fileira(const char *chave, CatItem *saida, int max,
 //   - `n` NAO e zerado: subir a contagem depois que o bloco novo ja esta
 //     publicado e seguro, e zerar faria a home piscar a cada titulo aberto.
 // Sob pubTrava; as APIs publicas nao chamam umas as outras com a trava presa.
+int ajustes_fonte_biblioteca(void);
 static void definir_na_lista(int i, int naLista) {
   if (!itens || n <= 0 || i < 0 || i >= n) return;
-  if (itens[i].naLista == (naLista ? 1 : 0)) return;
-  itens[i].naLista = naLista ? 1 : 0;
+  unsigned bit = 1u << ajustes_fonte_biblioteca();
+  // Removal also deletes the local save; retain only unrelated remote sources.
+  unsigned fontes = naLista ? itens[i].listaFontes | bit : itens[i].listaFontes & ~(bit | 1u);
+  int marcada = fontes != 0;
+  if (itens[i].naLista == marcada && itens[i].listaFontes == fontes) return;
+  itens[i].listaFontes = fontes;
+  itens[i].naLista = marcada;
   mudou();
 }
 
 void cat_definir_na_lista(int i, int naLista) {
   CAT_TESTE_ANTES_TRAVA();
   catTravar();
-  definir_na_lista(i, naLista);
+  if (itens && i >= 0 && i < n) {
+    // Index callers also change title membership, across every Home row.
+    const char *id = itens[i].imdb;
+    for (int j = 0; j < n; j++)
+      if (j == i || (id[0] && !strcmp(itens[j].imdb, id)))
+        definir_na_lista(j, naLista);
+  }
   pthread_mutex_unlock(&pubTrava);
 }
 
@@ -1938,6 +1990,42 @@ int cat_imdb_na_lista(const char *imdb) {
     if (itens[i].naLista && !strcmp(itens[i].imdb, id)) { achou = 1; break; }
   pthread_mutex_unlock(&pubTrava);
   return achou;
+}
+
+int cat_imdb_na_lista_fonte(const char *imdb) {
+  return cat_imdb_na_lista_na_fonte(imdb, ajustes_fonte_biblioteca());
+}
+
+int cat_imdb_na_lista_na_fonte(const char *imdb, int fonte) {
+  int i, achou = 0;
+  char id[64];
+  if (!imdb || !imdb[0]) return 0;
+  snprintf(id, sizeof id, "%s", imdb);
+  CAT_TESTE_ANTES_TRAVA();
+  catTravar();
+  for (i = 0; itens && i < n; i++)
+    if (itens[i].naLista && !strcmp(itens[i].imdb, id) &&
+        (itens[i].listaFontes & (1u << fonte))) { achou = 1; break; }
+  pthread_mutex_unlock(&pubTrava);
+  return achou;
+}
+
+// Resolve only the selected person; preserve concurrent metadata updates.
+int cat_elenco_tmdb(int i, const char *imdb, const char *tipo,
+                    const char *nome, long tmdb) {
+  int ok = 0;
+  catTravar();
+  if (tmdb > 0 && itens && i >= 0 && i < n &&
+      !strcmp(itens[i].imdb, imdb) && !strcmp(itens[i].tipo, tipo)) {
+    for (int k = 0; k < itens[i].nElenco; k++) {
+      if (strcmp(itens[i].elenco[k].nome, nome)) continue;
+      if (!itens[i].elenco[k].tmdb) { itens[i].elenco[k].tmdb = tmdb; mudou(); }
+      ok = itens[i].elenco[k].tmdb == tmdb;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&pubTrava);
+  return ok;
 }
 
 // O indice so e valido se ainda aponta ao titulo da resposta. Copiar a
@@ -2132,6 +2220,7 @@ int cat_mesclar_listas(const CatItem *v, int qtd) {
       for (i = 0; i < n && !achou; i++)
         if (!strcmp(itens[i].imdb, v[k].imdb) &&
             (!v[k].naLista || itens[i].naLista) &&
+            (itens[i].listaFontes & v[k].listaFontes) == v[k].listaFontes &&
             (!v[k].naColecao || itens[i].naColecao)) achou = 1;
       if (!achou) falta = 1;
     }
@@ -2146,6 +2235,7 @@ int cat_mesclar_listas(const CatItem *v, int qtd) {
     for (i = 0; i < m; i++) {
       if (strcmp(novo[i].imdb, v[k].imdb)) continue;
       if (v[k].naLista)   novo[i].naLista = 1;
+      novo[i].listaFontes |= v[k].listaFontes;
       if (v[k].naColecao) novo[i].naColecao = 1;
       achou = 1;
     }

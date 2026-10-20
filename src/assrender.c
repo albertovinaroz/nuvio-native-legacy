@@ -329,6 +329,7 @@ static void ass_carregar_pasta_locked(void) {
   if (assPastaExtra[0]) assrender_ler_pasta_fontes(assPastaExtra, ass_fonte_da_pasta, NULL, NULL);
   if (!assVistoNaskh && assNaskhFalhou) ass_subset_naskh_locked();
 #endif
+  plainass_arabic_bold = assNaskhBold;
   fprintf(stderr, "[libass] pasta %s: %d fonte(s); %d arquivo(s) que nao sao fonte ignorado(s)\n",
           assPastaFontes, lidas, ignorados);
 }
@@ -1031,6 +1032,20 @@ void assrender_limpar_fontes(void) {
   pthread_mutex_unlock(&assFilaTrava);
 }
 
+// #415: no aviso de memoria, esvazia os caches do libass — o loop
+// "Glyph not found -> selecting one more font" encheu ~190 MB na G4 sem
+// que gpu-cache ou texturas mostrassem. ass_set_cache_limits NAO serve:
+// 0 vira o default e o corte so acontece preguiçosamente no proximo
+// ass_render_frame. O que despeja na hora e o ass_reconfigure dentro de
+// ass_set_fonts (bitmap/composite/outline/font/metrics + fontselect
+// refeito, o que tambem encerra o loop de fallback). Custa uma releitura
+// da pasta de fontes; aceitavel porque so roda no aviso.
+void assrender_aliviar(void) {
+  pthread_mutex_lock(&assTrava);
+  if (assRenderer) ass_aplicar_fontes_locked();
+  pthread_mutex_unlock(&assTrava);
+}
+
 int assrender_adicionar_fonte(const char *nome, const void *dados, size_t tamanho) {
   if (!nome || !*nome || !dados || !tamanho || tamanho > (size_t)INT_MAX) return 0;
   pthread_mutex_lock(&assTrava);
@@ -1325,6 +1340,7 @@ int assrender_carregar(const char *corpo, size_t tamanho, unsigned geracao) { (v
 int assrender_atualizar(const char *corpo, size_t tamanho, unsigned geracao) { (void)corpo; (void)tamanho; (void)geracao; return 0; }
 void assrender_limpar(void) { assGeracao++; }
 void assrender_limpar_fontes(void) {}
+void assrender_aliviar(void) {}
 int assrender_adicionar_fonte(const char *nome, const void *dados, size_t tamanho) {
   (void)nome; (void)dados; (void)tamanho; return 0;
 }

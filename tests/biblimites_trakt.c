@@ -18,6 +18,7 @@
 static int falhas, nPedidos, nPaginasWl;
 #define PAG_SERVIDOR 150
 static int filmesWl = 1100, seriesWl = 500, filmesCol = 600;
+static int paginaServidor = PAG_SERVIDOR, paginaSemImdb;
 static void verifica(int ok, const char *caso) {
   if (!ok) { fprintf(stderr, "FAIL: %s\n", caso); falhas++; }
 }
@@ -48,12 +49,14 @@ char *rede_baixar_com(const char *url, int segundos, const char *const *cab) {
   nPedidos++;
   if (strstr(url, "/sync/collection/")) return itens(0, serie ? 0 : filmesCol, serie);
   assert(strstr(url, "/sync/watchlist/"));
+  assert(strstr(url, "/added/desc"));   // #610: newest first
   total = serie ? seriesWl : filmesWl;
   // SEM page/limit o servidor falso entrega so 250 (um Trakt que trunca a
   // resposta sem paginar e exatamente o sintoma do Shield: 213 de 1600+).
   if (!pg) return itens(0, total < 250 ? total : 250, serie);
   assert(sscanf(pg, "?page=%d&limit=%d", &p, &lim) == 2 && p > 0 && lim > 0);
-  if (lim > PAG_SERVIDOR) lim = PAG_SERVIDOR;
+  if (lim > paginaServidor) lim = paginaServidor;
+  if (!serie && p == paginaSemImdb) return strdup("[{\"movie\":{\"title\":\"No IMDb\",\"ids\":{\"trakt\":123}}}]");
   nPaginasWl++;
   ini = (p - 1) * lim;
   q = ini < total ? total - ini : 0;

@@ -45,14 +45,24 @@ int perfis_sessao_atual(uint64_t geracao) { return geracao == 0; }
 int perfis_sessao_travar(uint64_t geracao) { (void)geracao; return 1; }
 void perfis_sessao_destravar(void) {}
 int addons_base_desligada(const char *base) { (void)base; return 0; }
+char *dados_ler(const char *n) { (void)n; return NULL; }
+int dados_gravar(const char *n, const char *v) { (void)n; (void)v; return 1; }
 const char *i18n(const char *s) { return s; }
+int xtream_e_id(const char *id) { return id && !strncmp(id, "xtream:", 7); }
+int ajustes_livetv_sugerir(void) { return 0; }
+const char *livecat_secao(const char *n,int *r) { (void)n;*r=0;return NULL; }
 int main(void) {
   GFonte f = {0};
   int novos;
+  sTeto = 30000;
   strcpy(f.base, "https://addon.example?v=1.4.0&probe=1");
   strcpy(f.tipo, "tv"); strcpy(f.id, "canais"); strcpy(f.nome, "Canais Abertos");
   assert(ehCanal(f.tipo));
-  assert(lerPagina(&f, 0, 10, &novos) == 3);
+  GAddonCarga carga = {0};
+  strcpy(carga.base, f.base); carga.ativo = 1; addonsCarga = &carga; nAddonsCarga = 1;
+  int fl = sFonte(LTV_ADDON, f.base, f.nome, f.base);
+  assert(fl >= 0);
+  assert(lerPagina(&f, fl, 0, &novos) == 3);
   assert(novos == 2 && sNCanais == 2);
   assert(!strcmp(sCanais[0].id, "m3u:canaisabertos:0"));
   assert(!strcmp(sCanais[1].id, "ec:aee"));
@@ -63,19 +73,22 @@ int main(void) {
   }
   // Tipo que o item vai pedir ao /stream/: o declarado pelo catalogo.
   { CatItem it;
-    canalParaItem(&sCanais[0], &it);
+    cats = sCats; canalParaItem(&sCanais[0], &it);
     assert(!strcmp(it.tipo, "tv")); }        // "tv" declarado vira o tipo do card
   // ---- manifesto MISTO estilo M3U Mux: catalogo "channel" entre movie/series
   memset(&f, 0, sizeof f);
   strcpy(f.base, "https://mux.example/TK");
   strcpy(f.tipo, "channel"); strcpy(f.id, "m3u-channels"); strcpy(f.nome, "Live TV");
-  assert(lerPagina(&f, 0, 10, &novos) == 4);
+  strcpy(carga.base, f.base);
+  fl = sFonte(LTV_ADDON, f.base, f.nome, f.base);
+  assert(fl >= 0);
+  assert(lerPagina(&f, fl, 0, &novos) == 4);
   assert(novos == 3 && sNCanais == 5);
   assert(!strcmp(sCanais[2].id, "m3u-live-1") && !strcmp(sCanais[2].tipo, "channel"));
   assert(!strcmp(sCanais[3].id, "m3u-live-2") && !strcmp(sCanais[3].tipo, "channel")); // do catalogo
   assert(!strcmp(sCanais[4].id, "m3u-live-3") && !strcmp(sCanais[4].tipo, "tv"));      // do item
   { CatItem it;
-    canalParaItem(&sCanais[2], &it);
+    cats = sCats; canalParaItem(&sCanais[2], &it);
     assert(!strcmp(it.tipo, "channel")); }   // canal declarado continua canal no card
   puts("PASS: guia aceita catalogo tv sem genre, ids m3u:/ec:, poster landscape");
   puts("PASS: canal de manifesto misto guarda o tipo declarado do catalogo/item");

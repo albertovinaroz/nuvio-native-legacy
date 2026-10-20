@@ -210,7 +210,7 @@
   0, /* app icon: Original */
 
   0, /* Discord action; appended to preserve option indices */
-  0, /* Settings size: 80%, independent of global UI zoom */
+  2, /* Settings size: 100%, independent of global UI zoom */
   1, /* hide corner logo during trailer: Desligado (V_LIGA: 1 = Desligado) */
   0, /* second subtitle language: Da conta (F04) */
   1, /* subtitle sync by audio: Desligado (V_LIGA: 1 = Desligado) (F06) */
@@ -275,7 +275,7 @@
   1, /* owner decision #256: next episode auto-play is off by default */
   1, /* auto-skip credits, only with a real start+end marker: Desligado */
   5, /* owner decision #256: configurable countdown in seconds */
-  0, /* interface mode: TV, including on phones until Mobile is selected */
+  2, /* interface mode: Auto; saved TV=0 and Mobile=1 retain their meaning */
   0, /* Mic button in search (.tpk): Automatico, local */
   0, /* menu position (#461): Na lateral, the rail as always */
   0, /* collection tabs style (#205): Chips, as always */
@@ -293,7 +293,7 @@
   1, /* addon name on the Cinema opening (#205): Desligado, local */
   0, 0, 0, 0, /* hero synopsis/ratings/year/runtime: Ligado, the look as always */
   0, /* curation address (#205): action; the URL lives in curadoria.txt */
-  2, /* opening screen backdrop (#508): Arte borrada, as always, local */
+  1, /* opening screen backdrop (#508): Arte (sharp + veil, A3), local */
   0, /* hero synopsis size: Normal, the original 22/30 */
   1, /* episode card size (#205): Medio, as always */
   1, /* video preload and next episode buffer: Desligado, independent source setting */
@@ -309,3 +309,37 @@
   120, 0, 0, 0, 0, 3, 1, 0, 1, 0, 0, /* primary style views; player.txt is authoritative */
   0, 0, 0, 0, 0, 0, 0, /* secondary appearance inherits primary, manual delay0 */
   0, /* collection default view (#362): Automatic, existing layout */
+  0, /* external player (#501): Internal */
+  0, /* trailer audio: Automatic */
+  0, /* anime player (#205): Same as Player */
+  0, /* opening screen style (#205): Center (A3) */
+  0, /* poster menu: Full, device-local */
+  0, /* row title style (#205): Classic */
+  0, /* glass quality: Automatica */
+  0, /* Dynamic layout background (#205): Gray */
+  12, /* Dynamic layout background colour (#205): Ocean */
+  0, /* text and component scale: 85% */
+  0, 0, /* prefer binge group (the hand pick for the whole show + the auto memory) Ligado, across sessions Ligado */
+  0, 5, /* reuse last link: Ligado (owner, 16/10), 24 h */
+  1, /* title page row spacing: Normal */
+  1, /* accent focus: Off (gray plate) */
+  0, /* title line rating order: Default */
+  0, /* art tone: Vivid, identical to existing art colors */
+  0, /* Modern Stage background: Black */
+  0, 0, 0, 0, /* URL lists and guides (Guia de TV, M9): choice (none) and three actions */
+  0, /* episode card rating: follow the title line */
+  0, /* suggest Live TV categories: On, names only */
+  0, /* #578: audio presentation offset, unchanged by default */
+  0, /* Xtream limited connections: Auto; account storage owns the value. */
+  1, /* interface scaling: App (4K) hardware, preserving the existing drawable */
+  0, 0, 0, 0, 0, /* guide source, refresh and M3U actions */
+
+  0, 0, 0, 0, 0, 0, 0, /* native Live TV account registry views/actions */
+  0, 0, 0, /* saved accounts by provider type */
+  0, 0, 0, 0, /* account actions, confirmation, Save and Cancel */
+  0, 0, /* guide category/account order and account reorder action */
+  0, 0, /* EPG memory policy and hidden-category editor */
+  1, /* #507: Library row on Home: Off */
+  0, /* upscaling algorithm: Automatic (default) */
+  2, /* upscaling RCAS sharpness, 0..4 */
+  0, /* experimental HDR menus: Off */

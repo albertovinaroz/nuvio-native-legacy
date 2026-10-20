@@ -47,9 +47,9 @@ int  video_retomada_inicial_estado(void);
 // Fonte preparada na pagina do titulo: player pausado, sem imagem, audio ou
 // eventos da sessao de reproducao. Token identifica o dono; zero cancela todos.
 int  video_precarregar(const char *url, const char *cabecalhos, double segundos,
-                      double pct, int buffer, int cacheMb, unsigned token, const char *idiomaAudio);
+                      double pct, int buffer, int cacheMb, unsigned token, const char *idiomaAudio, int kbps);
 int  video_precarregar_proximo(const char *url, const char *cabecalhos, double segundos,
-                              double pct, int buffer, int cacheMb, unsigned token, const char *idiomaAudio);
+                              double pct, int buffer, int cacheMb, unsigned token, const char *idiomaAudio, int kbps);
 // 0 ausente, 1 preparando, 2 pronto, -1 falhou. Nao muda video_pronto().
 int  video_precarregar_estado(unsigned token);
 void video_precarregar_cancelar(unsigned token);
@@ -125,10 +125,21 @@ double video_buffer_fim(void); // ate onde o buffer cobre (s); 0 se desconhecido
 // congelada e video_falhou() em 0 para sempre. Quem vigia fonte de canal
 // (app.c) precisa deste numero para saber que a fonte morreu sem dizer.
 unsigned video_bufferando_ms(void);
+#ifdef NV_ANDROID
+// Atomic live-window sample for the watchdog; signed position, same-origin buffer edge.
+// Returns zero without modifying outputs when this open has no live sample.
+int video_live_progresso(double *pos, double *fim);
+// Same-player live-window repair, scoped to this open and bounded to 60 seconds.
+int video_recuperando_live(void);
+// HLS target duration for this live session; zero for VOD/unknown.
+unsigned video_live_segmento_ms(void);
+#endif
 // Afirmacao de Dolby Vision da FONTE escolhida (o addon descreve o arquivo).
 // Chamar ANTES de video_tocar/definir_fonte: e o que decide o hdrType que o
 // ACB descreve ao tv.display.
 void video_definir_dv(int dv);
+// Explicit Settings off-to-on retry of the shared Dolby Vision/DTS crash guard.
+void video_dv_guard_reiniciar(void);
 
 // CABECALHOS QUE O ADDON EXIGE (behaviorHints.proxyHeaders), uma linha
 // "Nome: valor" por cabecalho. Chamar ANTES de video_tocar, junto com
@@ -176,8 +187,10 @@ int    video_tocando(void);
 int    video_pausa_confirmada(void);
 int    video_pronto(void);   // 1 depois do loadCompleted
 #ifdef NV_ANDROID
+int    video_janela_pronta(void);   // latest native window request completed layout
 int    video_superficie_estavel(void);   // 1 depois da ultima recriacao da Surface (HDR/DV)
 int    video_quadro_visto(void);   // 1 depois do primeiro quadro desenhado (antes do "pronto")
+int    video_rede_lenta(void);   // !=0: download below the declared bitrate or repeated rebuffers (redefit.h)
 #endif
 int    video_ativo(void);    // 1 assim que ha mediaId — e o que abre o furo
 int    video_falhou(void);   // 1 depois de um errorText real na fonte atual
@@ -315,10 +328,12 @@ void video_simular_estatisticas(const VideoStats *s);   // capturas; NULL zera
 // Tudo isto sai do evento sourceInfo da assinatura do uMS: o addon nao informa
 // nada disso, e so o pipeline sabe o que ha DENTRO do arquivo.
 
-// 32 e nao 12 (#92): um "Multi-Subs" de anime passa de doze legendas, e a
-// lista da TV cortada em 12 nunca casa pelo ordinal com o arquivo inteiro —
-// nenhuma faixa ASS ia ao overlay do app, todas ficavam com a TV.
-#define NV_FAIXA_MAX 32
+// 64 (era 12, depois 32; #92): um "Multi-Subs" de anime passa de doze legendas,
+// e um BD/remux multi-idioma passa de trinta. A lista da TV cortada abaixo do
+// total do arquivo nunca casa pelo ordinal (mkv_casar_legendas exige contagem
+// igual) — nenhuma faixa ASS ia ao overlay do app, todas ficavam com a TV. O
+// lado do arquivo (MKV_MAX_FAIXAS) ja era 64.
+#define NV_FAIXA_MAX 64
 
 typedef struct {
   char rotulo[48];   // "Ingles · Atmos 5.1" ou "Legenda 3"
@@ -342,6 +357,15 @@ typedef struct {
   // rotulo para a folha mostra-lo abaixo do idioma sem mudar a memoria da faixa.
   char nome[128];
 } VideoFaixa;
+
+// Identity used by candidates and manual audio memory, separate from selectTrack.
+static inline int video_audio_numero_memoria(const VideoFaixa *f) {
+#ifdef NV_TPK
+  // MKV TrackNumber occupies a separate namespace from native player indices.
+  if (f->numero < 0 && f->stream_id > 0) return 0x40000000 | f->stream_id;
+#endif
+  return f->numero;
+}
 
 int  video_n_audio(void);
 int  video_n_legenda(void);

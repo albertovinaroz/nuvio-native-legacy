@@ -2,6 +2,7 @@
 #include "ilhasinais.h"
 #include "ilha.h"
 #include "ilhasalvar.h"
+#include "extplayer.h"
 #include "ilhacart.h"
 #include "avisodisp.h"
 #include "enquete.h"
@@ -51,6 +52,9 @@ static void acoes(void) {
   if (!strncmp(chave, "av:", 3)) { avisos_ilha_acao(chave, b); return; }
   if (!strcmp(chave, ILHA_ACAO_CHAVE)) { ilhaacao_botao(b); return; }
   if (!strncmp(chave, "salvar:", 7)) { ilhasalvar_acao(chave, b); return; }
+#ifdef NV_ANDROID
+  if (!strncmp(chave, "extplayer:", 10)) { extplayer_acao(chave, b); return; }
+#endif
   if (!strncmp(chave, "enquete:", 8)) { enquete_acao(chave, b); return; }
   if (!strncmp(chave, "pedido:", 7)) {
     // O fio social pode estar ocupado (uma releitura em voo): a resposta fica
@@ -386,6 +390,9 @@ void ilhasinais_passo(Uint32 agora) {
   acoes();
   responderPedido();
   ilhasalvar_passo(agora);
+#ifdef NV_ANDROID
+  extplayer_passo(agora);
+#endif
   enquete_passo(agora);
   rede();
   addonFora();

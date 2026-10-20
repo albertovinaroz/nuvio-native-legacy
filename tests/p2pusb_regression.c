@@ -5,6 +5,13 @@
 
 #include <dirent.h>
 #include <pthread.h>
+#include <errno.h>
+
+static int probeErrno;
+static int probeTemp(char *path) {
+  if (probeErrno) { errno = probeErrno; return -1; }
+  return mkstemp(path);
+}
 
 static unsigned usbOpens, callerOpens;
 static pthread_t caller;
@@ -31,7 +38,9 @@ static int scanLstat(const char *path, struct stat *st) {
 // Simulate a mount boundary without mounting a disk or requiring privileges.
 #define lstat(path, st) scanLstat(path, st)
 #define stat(path, st) mountStat(path, st)
+#define mkstemp(path) probeTemp(path)
 #include "../src/p2pmotor.c"
+#undef mkstemp
 #undef stat
 #undef lstat
 
@@ -47,7 +56,50 @@ int main(int argc, char **argv) {
   p2pmotor_teste_injetar(&OPS, NULL, NULL, NULL, 0);
   p2pmotor_teste_usb_base(base);
   p2pmotor_definir_usb(1);
-  if (!strcmp(argv[2], "disabled") || !strcmp(argv[2], "boot-worker")) {
+  if (!strcmp(argv[2], "readonly")) {
+    assert(mkdir(mounted, 0755) == 0);
+    assert(chmod(base, 0555) == 0);
+    probeErrno = EROFS;
+    FILE *log = tmpfile(); assert(log);
+    fflush(stdout);
+    int saved = dup(STDOUT_FILENO); assert(saved >= 0);
+    assert(dup2(fileno(log), STDOUT_FILENO) >= 0);
+    for (unsigned i = 0; i < 2; i++) {
+      usbQuando = 0; // Force another scan, rather than testing the 2 s cache.
+      assert(!p2pmotor_usb_presente());
+    }
+    fflush(stdout);
+    assert(dup2(saved, STDOUT_FILENO) >= 0);
+    close(saved);
+    rewind(log);
+    char line[1600];
+    unsigned lines = 0;
+    while (fgets(line, sizeof line, log)) {
+      if (strstr(line, mounted) && strstr(line, "rejeitado: read-only")) {
+        char expected[40];
+        snprintf(expected, sizeof expected, "errno=%d", EROFS);
+        assert(strstr(line, expected));
+        lines++;
+      }
+    }
+    fclose(log);
+    assert(lines == 1); // One diagnostic across repeated unchanged scans.
+    assert(p2pmotor_usb_motivo() == P2PM_USB_READONLY);
+    probeErrno = EACCES;
+    usbQuando = 0;
+    assert(!p2pmotor_usb_presente());
+    assert(p2pmotor_usb_motivo() == P2PM_USB_READONLY);
+    probeErrno = 0;
+    usbQuando = 0;
+    assert(p2pmotor_usb_presente());
+    assert(p2pmotor_usb_motivo() == P2PM_USB_NONE);
+    assert(!existe(cache));
+    DIR *d = opendir(mounted); assert(d);
+    struct dirent *entry;
+    while ((entry = readdir(d)))
+      assert(!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."));
+    closedir(d);
+  } else if (!strcmp(argv[2], "disabled") || !strcmp(argv[2], "boot-worker")) {
     caller = pthread_self();
     scanOpenEnabled = 1;
     p2pEnabled = strcmp(argv[2], "disabled") != 0;

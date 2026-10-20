@@ -23,9 +23,11 @@ if [ -n "${NUVIO_VIDRO_BASELINE:-}" ]; then
   gfx_source="$work/gfx.c"
 fi
 status=0
-for tier in native webos; do
+# android: the TCL path (it kept per-region captures: 4 copies + 20 passes).
+for tier in native webos android; do
   extra=(); expected=0
   if [ "$tier" = webos ]; then extra=(-DNV_WEBOS); expected=1; fi
+  if [ "$tier" = android ]; then extra=(-DNV_ANDROID); fi
   cc "${flags[@]}" "${extra[@]}" -c "$gfx_source" -o "$work/gfx.o"
   cc "${objects[@]}" "$work/gfx.o" "${libs[@]}" -o "$work/test"
   mkdir -p "$out/$tier"

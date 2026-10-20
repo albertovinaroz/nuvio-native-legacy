@@ -19,6 +19,7 @@ typedef struct {
 #define PLAIN_ASS_POS     32
 #define PLAIN_ASS_BOLD    64
 
+extern int plainass_arabic_bold;
 int plainass_has_arabic(const char *text);
 /* NULL for a plain LTR-only track or allocation failure; caller frees. */
 char *plainass_document(const LegendaCue *cues, int count);

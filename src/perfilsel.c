@@ -557,12 +557,10 @@ static float vaoDe(int m, float d) {
 }
 
 // --- FUNDOS NOVOS (2.0): Filmes, Luz, Projetor (psestilos.h) -----------------
-// O fundo que vale agora. "Filmes" numa TV que caiu para efeitos minimos (nivel
-// de GPU 2) vira "Luz": a parede sao dezenas de cartazes de tela inteira.
+// Keep the selected background when automatic GPU adaptation changes effects.
+// psestilos already omits decorative light and extra veils on lighter tiers.
 static int modoFundo(void) {
-  int m = ajustes_ps_fundo();
-  if (m == PS_FUNDO_FILMES && gfx_efeitos_minimos()) return PS_FUNDO_LUZ;
-  return m;
+  return ajustes_ps_fundo();
 }
 
 static const char *muralUrls[PS_MURAL_MAX];
@@ -1273,10 +1271,9 @@ static TxtLinha pinTitulo(const char *nome) {
   char t[128];
   snprintf(t, sizeof t, i18n("PIN de %s"), nome && nome[0] ? nome : i18n("perfil"));
 #ifdef NV_TOUCH_UI
-  return txt_linha_corta(TXT_TITULO3, t, 255, 255, 255, 255, fmaxf(1.0f, NV_TELA_W - 96.0f));
-#else
-  return txt_linha(TXT_TITULO3, t, 255, 255, 255, 255);
+  if (layout_modo_mobile()) return txt_linha_corta(TXT_TITULO3, t, 255, 255, 255, 255, fmaxf(1.0f, NV_TELA_W - 96.0f));
 #endif
+  return txt_linha(TXT_TITULO3, t, 255, 255, 255, 255);
 }
 
 static void desenhaPin(void) {

@@ -35,6 +35,10 @@
 #include "ajustes.h"
 #include "proxyts.h"
 #include "dts/dts_hls_tpk.h"
+#include "dts/dts_remux.h"
+#include "cdnlink.h"
+#include "debrid.h"
+#include "mkvfix.h"
 #include <SDL2/SDL.h>
 #include <math.h>
 #include <pthread.h>
@@ -216,6 +220,17 @@ static struct {
 } cv = { .buscarMs = -1 };
 static Uint32 faixasEm;           // quando a ultima lista de faixas do player chegou
 static volatile int naoSupPend;   // NotSupportedAudioCodec veio do host (outro fio)
+// RESGATE PELO CONVERSOR (dono, 16/10/2026). O player acusa
+// AudioCodecNotSupported (0xfe6c002e) num arquivo so com DTS/TrueHD; o erro
+// virava `falhou` na hora, e o app punha o cartao de erro e marcava a fonte
+// morta 2 s antes de o conversor assumir (TTGA so DTS: o convertido chegou a
+// tocar 21 s atras do cartao). Agora, com a conversao possivel, esse erro abre
+// uma janela: o conversor tem ate RESGATE_MS para assumir; erros do original
+// nessa janela (o Prepare que falha depois) nao contam. Sem conversor ate o
+// fim da janela: `falhou`, como antes.
+#define TPK_ERRO_AUDIO 0xFE6C002Eu
+#define RESGATE_MS 20000u
+static Uint32 resgateAte;
 int video_faixa_dts(const VideoFaixa *f);
 static int convIniciar(int track, double pos, const char *motivo);
 static void convDesistir(const char *motivo);
@@ -239,6 +254,7 @@ void nv_tpk_video_registrar_aspecto(FnAspecto janela) { hAspecto = janela; }
 void video_escolher_audio(int i);
 
 static int convPossivel(void);
+static int faixasDaTv(void);
 // A ORDEM DO AUDIO (audioescolha.h) sobre a lista do menu: as faixas que a TV
 // toca e as DTS/TrueHD do arquivo que o menu acrescenta (acrescentarRecusadas;
 // escolhida, converte). Sem escolha da regra, fica a do arquivo.
@@ -252,8 +268,16 @@ static void escolherAudioPreferido(void) {
     c[i].idioma = f->idioma; c[i].codec = f->codec; c[i].rotulo = f->rotulo; c[i].canais = f->canais;
     c[i].dts = f->numero < 0 || audioesc_dts_truehd(f->codec, f->rotulo);
     c[i].pode = f->numero >= 0 || convPossivel();
+    c[i].numero = video_audio_numero_memoria(f);
   }
   k = audioesc_escolher(c, nAudio, &o);
+  if (k >= 0 && k == audioAtual) {
+    // A prova de que a ordem rodou mesmo quando nada muda (BD T3: a TV esconde
+    // o DTS japones e a faixa 0 dela ja e o FLAC ingles).
+    printf("[video] audio pela ordem (%s): fica %s (faixa %d de %d; a TV listou %d)\n", audioesc_origem_nome(o),
+           faixaAudio[k].rotulo, k + 1, nAudio, faixasDaTv());
+    fflush(stdout);
+  }
   if (k < 0 || k == audioAtual) return;
   printf("[video] audio pela ordem (%s): %s (faixa %d de %d)%s\n", audioesc_origem_nome(o), faixaAudio[k].rotulo,
          k + 1, nAudio, faixaAudio[k].numero < 0 ? ", DTS/TrueHD: converte" : "");
@@ -353,7 +377,58 @@ void nv_tpk_video_legenda(const char *texto, int durMs) {
 
 enum { EV_PRONTO = 1, EV_TOCANDO = 2, EV_PAUSADO = 3, EV_FIM = 4, EV_ERRO = 5,
        EV_TAMANHO = 6, EV_BUFFER = 7, EV_VELOCIDADE = 8,
-       EV_PRESO = 9, EV_CONSULTA_LENTA = 10, EV_BUSCOU = 11 };
+       EV_PRESO = 9, EV_CONSULTA_LENTA = 10, EV_BUSCOU = 11, EV_BUSCA_FALHOU = 12 };
+
+// SEEK QUE A TV RECUSA NUM MKV DE INDICE ESCONDIDO (mkvfix.h). `hostUrl` e o
+// que o player recebeu de verdade (link do CDN, do addon ou do TorBox): e ele
+// que a sonda le, sem ir ao addon de novo.
+static char hostUrl[sizeof urlAtual], hostCab[sizeof cabecalhos];
+static struct {
+  int sondou;            // a sonda deste arquivo ja saiu
+  int ativo;             // o player le pelo servidor local
+  int pend; double pendAlvo; Uint32 pendEm;   // seek pedido com a sonda em curso
+  int avisou;            // "nao da para buscar" ja foi dito nesta fonte
+} mf;
+static atomic_int mfRecusas;   // EV_BUSCA_FALHOU (fio do host)
+static atomic_int mfAviso;     // video_tpk_aviso_busca consome
+static void abrirHost(const char *url, const char *cab) {
+  char seguros[sizeof cabecalhos];
+  const char *orig = strstr(urlAtual, "://"), *dest = url ? strstr(url, "://") : NULL;
+  size_t no = orig ? (size_t)(orig + 3 - urlAtual) + strcspn(orig + 3, "/?#") : 0;
+  size_t nd = dest ? (size_t)(dest + 3 - url) + strcspn(dest + 3, "/?#") : 0;
+  // Across origins, forward only transport preferences, never source secrets.
+  if (cab && *cab && (!no || no != nd || strncasecmp(urlAtual, url, no))) {
+    size_t used = 0;
+    seguros[0] = 0;
+    for (const char *p = cab; *p;) {
+      size_t n = strcspn(p, "\r\n");
+      if (!strncasecmp(p, "User-Agent:", 11) || !strncasecmp(p, "Accept:", 7) ||
+          !strncasecmp(p, "Accept-Language:", 16)) {
+        if (n + 1 < sizeof seguros - used) {
+          memcpy(seguros + used, p, n); used += n;
+          seguros[used++] = '\n'; seguros[used] = 0;
+        }
+      }
+      p += n; while (*p == '\r' || *p == '\n') p++;
+    }
+    cab = seguros;
+  }
+  if (!mkvfix_e_url(url)) {
+    snprintf(hostUrl, sizeof hostUrl, "%s", url ? url : "");
+    snprintf(hostCab, sizeof hostCab, "%s", cab ? cab : "");
+  }
+#ifndef NV_TPK40
+  // CABECALHO QUE O PLAYER NAO MANDA (Referer, Origin...): o player le do
+  // proxy local, que repete cada pedido na fonte com eles (proxycab.h). Ja com
+  // os cabecalhos filtrados acima: link de outra origem (CDN) nao leva segredo
+  // da fonte. O User-Agent/Cookie seguem ao player; para o 127.0.0.1 nao fazem
+  // mal. hostUrl fica com a URL real (o mkvfix le dela).
+  { static char viaProxy[96];
+    if (proxycab_precisa(cab) && proxycab_url(url, cab, viaProxy, sizeof viaProxy)) url = viaProxy;
+    else proxycab_parar(); }
+#endif
+  hAbrir(url, cab);
+}
 
 __attribute__((visibility("default")))
 void nv_tpk_video_evento(int tipo, int a, int b) {
@@ -387,6 +462,7 @@ void nv_tpk_video_evento(int tipo, int a, int b) {
       if (a < 100 && !bufferando) { bufferando = 1; bufferDesde = SDL_GetTicks(); }
       else if (a >= 100) bufferando = 0;
       break;
+    case EV_BUSCA_FALHOU: atomic_fetch_add(&mfRecusas, 1); break;
     case EV_VELOCIDADE:
       vel_log(a, b ? "plataforma ok" : "plataforma recusou");
       if (!b) { velRecusada = 1; velPedida = 100; }
@@ -456,13 +532,191 @@ int  video_iniciar(void) {
 int  video_iniciar_auto(void) { return hAbrir != NULL; }
 int  video_registro_negado(void) { return 0; }
 
+// LINK DO CDN (cdnlink.h). O player recebe o endereco final no CDN em vez do
+// link do addon (o MediaFusion leva 2-4 s no primeiro pedido e o player desiste
+// em ~3 s). urlAtual segue sendo o link do addon: conversor, legendas, sonda do
+// MKV e o resto leem dele. Sem ganchos (testes) nada disto roda.
+static CdnlinkGanchos cdnG;
+static struct {
+  int pend;          // resolvendo num fio: o hAbrir espera (cdnBombear)
+  unsigned ger;      // pedido em curso
+  Uint32 pediuEm;
+  int usado;         // o player desta sessao recebeu o link do CDN
+  Uint32 em;         // quando esse link foi resolvido (relogio SDL)
+  int avisouVelho;
+  int arquivo, usenet, item, file;
+} cdn;
+static atomic_uint cdnGer, cdnFeitoGer;
+static pthread_mutex_t cdnTrava = PTHREAD_MUTEX_INITIALIZER;
+static char cdnFinal[4096];
+static int cdnOk;
+typedef struct { char orig[4096]; char cab[2048]; unsigned ger; int arquivo, usenet, item, file; } CdnPedido;
+
+void video_tpk_cdn_arquivo(const char *url, int usenet, int item, int file) {
+  if (!ativo || !url || strcmp(url, urlAtual) || item <= 0 || file < 0) return;
+  cdn.arquivo = 1; cdn.usenet = usenet; cdn.item = item; cdn.file = file;
+  cdn.usado = 1; cdn.em = SDL_GetTicks();
+}
+
+__attribute__((visibility("default")))
+void video_tpk_cdn_ganchos(const CdnlinkGanchos *g) {
+  if (g) cdnG = *g; else memset(&cdnG, 0, sizeof cdnG);
+}
+
+static void *fioCdn(void *arg) {
+  CdnPedido *p = arg;
+  char fim[sizeof cdnFinal];
+  int ok = p->arquivo ? debrid_tb_link(p->usenet, p->item, p->file, fim, sizeof fim) :
+                       cdnG.resolver(p->orig, p->cab, CDNLINK_PRAZO_S, fim, sizeof fim, NULL);
+  pthread_mutex_lock(&cdnTrava);
+  if (atomic_load(&cdnGer) == p->ger) {
+    cdnOk = ok;
+    if (ok) memcpy(cdnFinal, fim, strlen(fim) + 1); else cdnFinal[0] = 0;
+    atomic_store(&cdnFeitoGer, p->ger);
+  }
+  pthread_mutex_unlock(&cdnTrava);
+  free(p);
+  return NULL;
+}
+
+// Idade do link do CDN em uso, em ms (0 sem link do CDN).
+static Uint32 cdnIdade(void) { return cdn.usado ? SDL_GetTicks() - cdn.em : 0; }
+// O link do CDN do player ja passou da validade (cdnlink_validade_ms): toda
+// conexao nova dele (seek, retomar) arrisca o link vencido.
+static int cdnVelho(void) {
+  return cdn.usado && !cv.ativo && !mf.ativo && cdnG.validade_ms && cdnIdade() > cdnG.validade_ms();
+}
+
+// Abre urlAtual pelo CDN. 1 = cuidou da abertura (ja abriu com o link da
+// verificacao, ou o fio esta resolvendo e cdnBombear abre); 0 = abrir o link
+// do addon como sempre.
+static int cdnAbrir(void) {
+  char fim[sizeof cdnFinal];
+  unsigned idade = 0;
+  CdnPedido *p;
+  pthread_t t;
+  cdn.pend = 0; cdn.usado = 0; cdn.avisouVelho = 0;
+  atomic_fetch_add(&cdnGer, 1);
+  // So filme/episodio (reconPermitida = !canal) e so link http(s) de fora.
+  if (!reconPermitida || (!cdn.arquivo &&
+      (!cdnG.resolver || !cdnG.origem_ok || !cdnG.origem_ok(urlAtual)))) return 0;
+  if (!cdn.arquivo && cdnG.recente && cdnG.recente(urlAtual, cabecalhos, CDNLINK_REUSO_MS, fim, sizeof fim, &idade)) {
+    cdn.usado = 1; cdn.em = SDL_GetTicks() - idade;
+    printf("[fonte-cdn] the player gets the CDN link the check resolved %u s ago\n", idade / 1000u);
+    fflush(stdout);
+    abrirHost(fim, cabecalhos);
+    return 1;
+  }
+  p = calloc(1, sizeof *p);
+  if (!p) return 0;
+  snprintf(p->orig, sizeof p->orig, "%s", urlAtual);
+  snprintf(p->cab, sizeof p->cab, "%s", cabecalhos);
+  p->ger = atomic_load(&cdnGer);
+  p->arquivo = cdn.arquivo; p->usenet = cdn.usenet; p->item = cdn.item; p->file = cdn.file;
+  cdn.ger = p->ger; cdn.pend = 1; cdn.pediuEm = SDL_GetTicks();
+  if (pthread_create(&t, NULL, fioCdn, p) != 0) { free(p); cdn.pend = 0; return 0; }
+  pthread_detach(t);
+  // O player anterior (seek com link velho, reconexao, outra fonte) nao segue
+  // tocando enquanto o link novo e resolvido.
+  if (hParar) hParar();
+  return 1;
+}
+
+// Por quadro: a resolucao terminou (ou passou do prazo) -> abre.
+static void cdnBombear(void) {
+  char fim[sizeof cdnFinal];
+  int ok;
+  if (!cdn.pend) return;
+  if (atomic_load(&cdnFeitoGer) == cdn.ger) {
+    pthread_mutex_lock(&cdnTrava);
+    ok = cdnOk;
+    memcpy(fim, cdnFinal, sizeof fim);
+    pthread_mutex_unlock(&cdnTrava);
+    cdn.pend = 0;
+    if (!ativo || parado || !hAbrir) return;
+    if (ok) {
+      cdn.usado = 1; cdn.em = SDL_GetTicks();
+      abrirHost(fim, cabecalhos);
+    } else abrirHost(urlAtual, cabecalhos);
+    return;
+  }
+  if (SDL_GetTicks() - cdn.pediuEm > (CDNLINK_PRAZO_S + 3) * 1000u) {
+    printf("[fonte-cdn] no answer in %d s: the player gets the add-on link\n", CDNLINK_PRAZO_S + 3);
+    fflush(stdout);
+    cdn.pend = 0;
+    atomic_fetch_add(&cdnGer, 1);   // o fio atrasado descarta o que achar
+    if (ativo && !parado && hAbrir) abrirHost(urlAtual, cabecalhos);
+  }
+}
+
+static void abrirSessao(void);
+// Reabre a fonte original em `alvo` com um link novo do CDN (o velho pode ter
+// vencido). Para o app e um seek: video_pronto segue 1, a posicao fica no alvo
+// e as faixas escolhidas voltam (o mesmo caminho do recarregar da reconexao).
+static void cdnRenovar(double alvo, const char *porque) {
+  printf("[fonte-cdn] CDN link is %u min old (limit %u min): %s at %.1f s reopens with a fresh link\n",
+         (unsigned)(cdnIdade() / 60000u), cdnG.validade_ms ? cdnG.validade_ms() / 60000u : 0u, porque, alvo);
+  fflush(stdout);
+  reconAudio = audioAtual; reconLeg = legAtual; reconFaixasPend = 1;
+  reconBuscarMs = alvo > 1.0 ? (int)(alvo * 1000.0) : -1;
+  cv.reabrindo = 1; cv.posMantida = alvo; cv.reabriuEm = SDL_GetTicks(); cv.reabTocandoEm = 0;
+  abrirSessao();
+}
+
 static int emTrailer = 0;   // ver video_tpk_trailer_marcar
 static int emCartao = 0;    // ver video_tpk_cartao_marcar
 // #471: o cover do cartao caiu no encaixe nesta sessao (plano maior que o
 // painel, ou o host recusou o ROI). O furo da home segue isto.
 static volatile int cartaoSemCover = 0;
+// Reabre pelo servidor local em `alvo` (mkvfix.h): para o app e um seek, como
+// a troca do link do CDN — posicao mantida, faixas devolvidas, capa por cima.
+static void mfLigar(double alvo, const char *porque) {
+  printf("[mkvfix] %s at %.1f s: the TV can't seek this file as served; reopening through the local fix\n", porque, alvo);
+  fflush(stdout);
+  mf.ativo = 1; mf.pend = 0;
+  reconAudio = audioAtual; reconLeg = legAtual; reconFaixasPend = 1;
+  reconBuscarMs = alvo > 1.0 ? (int)(alvo * 1000.0) : -1;
+  cv.reabrindo = 1; cv.posMantida = alvo; cv.reabriuEm = SDL_GetTicks(); cv.reabTocandoEm = 0;
+  abrirSessao();
+}
+// A sonda: so filme/episodio, so o arquivo original (nao o conversor) e so
+// link http(s) de fora. Uma vez por fonte.
+static int mfPode(void) {
+  return reconPermitida && !cv.ativo && !emTrailer && !mf.sondou && hostUrl[0] &&
+         (!strncmp(hostUrl, "http://", 7) || !strncmp(hostUrl, "https://", 8)) &&
+         !strstr(hostUrl, "://127.0.0.1") && !strstr(hostUrl, "://localhost");
+}
+static void mfSondar(void) {
+  if (!mfPode()) return;
+  mf.sondou = 1;
+  if (cdn.arquivo) mkvfix_sondar_arquivo(hostUrl, hostCab, cdn.usenet, cdn.item, cdn.file);
+  else mkvfix_sondar(hostUrl, hostCab, strcmp(urlAtual, hostUrl) ? urlAtual : NULL);
+}
+static void mfBombear(void) {
+  int e;
+  if (pronto && !mf.sondou) mfSondar();
+  if (!mf.sondou) return;
+  e = mkvfix_estado();
+  if (e == MKVFIX_SONDANDO) return;
+  if (mf.pend) {
+    mf.pend = 0;
+    if (e == MKVFIX_PRECISA && !mf.ativo && !cv.ativo && ativo && !parado && SDL_GetTicks() - mf.pendEm < 20000u)
+      mfLigar(mf.pendAlvo, "seek asked during the check");
+  }
+  // A TV recusou seek e nao ha o que consertar: diz uma vez, em vez do nada.
+  if (atomic_load(&mfRecusas) > 0 && !mf.ativo && !mf.avisou && (e == MKVFIX_SEM_INDICE || e == MKVFIX_NORMAL)) {
+    mf.avisou = 1;
+    printf("[mkvfix] the TV refused a seek and the header has %s\n",
+           e == MKVFIX_SEM_INDICE ? "no index to point to (nothing to fix)" : "its index listed (not the hidden-index case)");
+    fflush(stdout);
+    if (e == MKVFIX_SEM_INDICE) atomic_store(&mfAviso, 1);
+  }
+}
+__attribute__((visibility("default")))
+int video_tpk_aviso_busca(void) { return atomic_exchange(&mfAviso, 0); }
+
 // Abre urlAtual no host. Serve a fonte nova e ao recarregar da reconexao.
-static int abrirSessao(void) {
+static void abrirSessao(void) {
   // video_iniciar() NAO e chamada no .tpk (so video.c, o ramo da LG, a chama;
   // aqui o trailer usa video_iniciar_auto, que nao a chama), entao a flag do
   // texto simples ficava em 0 e toda faixa S_TEXT/UTF8 saia do mkvass como
@@ -493,7 +747,7 @@ static int abrirSessao(void) {
   temRoi = 0;
   sessao++;
   velEnviada = 100;   // Player novo no host: nasce em 1x
-  if (!hAbrir) { falhou = 1; printf("[video] tpk: host sem player\n"); return 0; }
+  if (!hAbrir) { falhou = 1; printf("[video] tpk: host sem player\n"); return; }
   if (cv.ativo) {
     // O player le do servidor local; os cabecalhos do addon sao da fonte (o
     // servidor ja os usa), nao do 127.0.0.1.
@@ -504,23 +758,21 @@ static int abrirSessao(void) {
       if (ms > 0) snprintf(pre, sizeof pre, "X-Nuvio-Prebuffer: %d", ms);
       hAbrir(cv.url, pre); }
   } else {
-    const char *url = urlAtual;
-#ifndef NV_TPK40
-    // CABECALHO QUE O PLAYER NAO MANDA (Referer, Origin...): o player le do
-    // proxy local, que repete cada pedido na fonte com eles (proxycab.h). Os
-    // cabecalhos continuam indo ao player: o User-Agent/Cookie valem para o
-    // 127.0.0.1 e nao fazem mal.
-    static char viaProxy[96];
-    if (proxycab_precisa(cabecalhos) && proxycab_url(urlAtual, cabecalhos, viaProxy, sizeof viaProxy))
-      url = viaProxy;
-    else proxycab_parar();
-#endif
-    hAbrir(url, cabecalhos);
+    char u[256];
+    if (mf.ativo && mkvfix_url(u, sizeof u)) abrirHost(u, "");
+    else {
+      if (mf.ativo) {
+        mf.ativo = 0;
+        printf("[mkvfix] the local fix is gone: opening the file directly\n");
+        fflush(stdout);
+      }
+      if (!cdnAbrir()) abrirHost(urlAtual, cabecalhos);
+    }
   }
   // Depois do hAbrir: o host troca de sessao nele, e um aviso da sessao velha
   // emitido antes disso nao pode sobrar para matar a nova.
   atomic_store(&playerPreso, -2); atomic_store(&consultaLentaEm, 0);
-  return 1;
+  return;
 }
 
 static void guardarMkv(const MkvFaixa *fx, int n);
@@ -529,13 +781,17 @@ static int trilhaPelaOrdem(void);
 static int videoConvertivel(void);
 
 int video_tocar(const char *u) {
-  parado = 0;
+  cdn.arquivo = 0;
+  parado = 0; resgateAte = 0;
   if (cv.ativo || cv.sondando) dts_tpk_fechar();
   memset(&cv, 0, sizeof cv); cv.buscarMs = -1; naoSupPend = 0;
   // As listas do titulo anterior nao passam para o convertido (que as mantem
   // em abrirSessao); no caminho de sempre abrirSessao ja as zerava.
   nAudio = nLeg = 0; audioAtual = 0; legAtual = -1;
   snprintf(urlAtual, sizeof urlAtual, "%s", u ? u : "");
+  memset(&mf, 0, sizeof mf); atomic_store(&mfRecusas, 0); atomic_store(&mfAviso, 0);
+  hostUrl[0] = hostCab[0] = 0;
+  mkvfix_parar();
   capmkv_iniciar(urlAtual);
   mkvGeracao++; mkvN = 0; faixasNovas = 0; mkvOlhou = 0; mkvSondarJa = 0; mkvNaoMkv = 0;
   // Um fio da fonte anterior ainda na rede ve a geracao mudada e descarta.
@@ -563,7 +819,8 @@ int video_tocar(const char *u) {
         if (t > 0 && convIniciar(t, 0.0, "cabecalho lido antes de abrir: a ordem do audio escolhe uma faixa DTS/TrueHD")) return 1; }
     }
   }
-  return abrirSessao();
+  abrirSessao();
+  return 1;
 }
 
 void video_definir_reconexao(int sim) { reconProxima = sim ? 1 : 0; }
@@ -672,6 +929,7 @@ static int trilhaPelaOrdem(void) {
     c[n].canais = mkvFx[i].canais;
     c[n].dts = rec[n] || audioesc_dts_truehd(mkvFx[i].codec, "");
     c[n].pode = !rec[n] || pode;
+    c[n].numero = 0x40000000 | mkvFx[i].numero;   // same MKV identity as the converted menu
     n++;
   }
   k = audioesc_escolher(c, n, NULL);
@@ -794,6 +1052,7 @@ static int ordinalAudio(int numero) {
 
 // Abre a sessao do conversor (a sonda roda num fio). 0: servidor/FFmpeg indisponivel.
 static int convAbrirSessao(int ordinal, int modo, double pos, char *url, size_t n) {
+  dts_remux_set_audio_offset_ms(ajustes_audio_offset_ms());
   if (dts_tpk_abrir(urlAtual, cabecalhos, ordinal, !ajustes_dts_ac3(), modo, pos, url, n))
     return 1;
   printf("[dts-tpk] conversao nao comecou (servidor/FFmpeg indisponivel); fica o original\n");
@@ -815,6 +1074,13 @@ static void convReabrir(double alvo, const char *porque) {
 
 // O player passa a ler o fluxo convertido `url`, que comeca em `pos` da fonte.
 static void convTrocar(int track, int modo, double pos, const char *url) {
+  // Erro ainda nao tratado neste instante e do player que sai (o original que
+  // recusou o audio, o Prepare dele que falhou): nao derruba o convertido.
+  if (reconErroPend) {
+    printf("[dts-tpk] player error 0x%x of the original, pending at the switch: dropped\n", (unsigned)reconErroCod);
+    fflush(stdout);
+    reconErroPend = 0; reconLinhaRede = 0;
+  }
   cv.ativo = 1; cv.sondando = 0; cv.track = track; cv.modo = modo; cv.inicio = pos;
   cv.prog = modoProg(modo);
   snprintf(cv.url, sizeof cv.url, "%s", url);
@@ -885,8 +1151,8 @@ static void convSondar(int modo, const char *motivo) {
   if (parado || cv.ativo || cv.sondando || !convPossivel() || strstr(urlAtual, ".m3u8")) return;
   if (!convAbrirSessao(-1, modo, video_pos(), cv.url, sizeof cv.url)) return;
   cv.sondando = 1; cv.modo = modo;
-  printf("[dts-tpk] MP4, %s: o conversor procura DTS/TrueHD na fonte (modo %s); o original segue tocando\n",
-         motivo, nomeModo(modo));
+  printf("[dts-tpk] %s, %s: o conversor procura DTS/TrueHD na fonte (modo %s); o original segue tocando\n",
+         semCabecalho() ? "MP4" : "MKV", motivo, nomeModo(modo));
   fflush(stdout);
 }
 
@@ -978,11 +1244,13 @@ static void sondaMkv(double pos) {
     }
     // A TV nao listou audio (ou acusou o codec) e a conversao pode entrar: o
     // cabecalho e preciso ja, nao daqui a 5 s de video mudo.
-    if (mkvEstado == 1 && pronto && !mkvSondarJa && convPossivel() &&
+    // O resgate (NotSupportedAudioCodec) nao espera o original preparar: ele
+    // pode nem preparar.
+    if (mkvEstado == 1 && (pronto || naoSupPend) && !mkvSondarJa && convPossivel() &&
         ((faixasLidas && nAudio == 0) || naoSupPend)) mkvSondarJa = 1;
     // Sem pre-busca (ou Tracks fora do trecho): Range proprio, com o video
     // andando. MP4 nao tem TrackEntry: nao vale a descida.
-    if (mkvEstado == 1 && pronto && (pos >= 5.0 || mkvSondarJa)) {
+    if (mkvEstado == 1 && (pronto || (naoSupPend && mkvSondarJa)) && (pos >= 5.0 || mkvSondarJa)) {
       PedidoMkv *p = fonteMp4 ? NULL : malloc(sizeof *p);
       pthread_t fio;
       mkvEstado = 3;
@@ -1128,8 +1396,18 @@ static void convBombear(void) {
       if (!cv.sondando) audioNaoSup = 1;
     } else {
       int t = convPossivel() ? trilhaParaConverter(0) : 0;
-      if (t > 0) convIniciar(t, video_pos(), "a TV acusou NotSupportedAudioCodec");
-      else audioNaoSup = 1;
+      if (t > 0 && convIniciar(t, video_pos(), "a TV acusou NotSupportedAudioCodec")) return;
+      if (t <= 0 && mkvN == 0 && convPossivel()) {
+        // A sonda do cabecalho nao trouxe faixa nenhuma (host em pausa para
+        // leitura lateral, rede): o conversor le o arquivo ele mesmo e decide.
+        cv.naoSup = 1;
+        convSondar(ajustes_dts_tpk_modo(), "cabecalho do MKV nao lido; a TV acusou NotSupportedAudioCodec");
+        if (cv.sondando) return;
+      }
+      printf("[dts-tpk] rescue: nothing converted (track to convert %d, header tracks %d, converter %s)\n",
+             t, mkvN, t > 0 ? "did not open" : convPossivel() ? "available" : "not possible");
+      fflush(stdout);
+      audioNaoSup = 1;
     }
   }
   if (!cv.ativo && !cv.sondando && semCabecalho() && pronto && faixasLidas && !faixasDaTv() && convPossivel())
@@ -1150,7 +1428,7 @@ static void convBombear(void) {
       fflush(stdout);
       dts_tpk_fechar(); cv.sondando = 0; cv.desistiu = 1;
       if (cv.naoSup) audioNaoSup = 1;
-    } else if (e == DTSTPK_PRONTO && pronto && faixasLidas && agora - faixasEm >= 2500u) {
+    } else if (e == DTSTPK_PRONTO && ((pronto && faixasLidas && (int)(agora - faixasEm) >= 2500) || (cv.naoSup && resgateAte))) {
       // 2,5 s depois da lista: a releitura do audio do host (#165) ja veio.
       char url[256];
       double pos = video_pos();
@@ -1182,7 +1460,11 @@ static void convBombear(void) {
       convDesistir(m);
       return;
     }
-    if (!pronto && agora - cv.abriuEm > 45000u) { convDesistir(i18n("o player nao preparou em 45 s")); return; }
+    // Com sinal: `agora` e lido no topo, e um convertido aberto neste mesmo
+    // quadro (sonda, NotSupportedAudioCodec) tem abriuEm DEPOIS dele — sem
+    // sinal a conta dava 4 bilhoes e desistia na hora (S95C, 16/10: "nao
+    // preparou em 45 s" com 0 pedidos ao servidor).
+    if (!pronto && (int)(agora - cv.abriuEm) > 45000) { convDesistir(i18n("o player nao preparou em 45 s")); return; }
   }
   // Troca no meio do filme (HLS): o player abriu do zero, e o seek vai depois
   // do Start, como no recarregar da reconexao.
@@ -1221,7 +1503,7 @@ static void convBombear(void) {
              (unsigned)(agora - cv.seekEm), p, nomeModo(cv.modo));
       fflush(stdout);
       cv.seekPend = 0;
-    } else if (agora - cv.seekEm > 30000u) {
+    } else if ((int)(agora - cv.seekEm) > 30000) {
       printf("[dts-tpk] seek para %.1f s: posicao %.2f s depois de 30 s\n", cv.seekAlvo, p);
       fflush(stdout);
       cv.seekPend = 0;
@@ -1242,17 +1524,21 @@ static void reabrindoVigiar(void) {
   }
   if (!pronto || !tocando || cv.buscarMs >= 0 || reconBuscarMs >= 0 || recon.pendente ||
       (cv.ativo && cv.prog && !cv.deslocOk)) { cv.reabTocandoEm = 0; return; }
-  if (!cv.reabTocandoEm) cv.reabTocandoEm = agora | 1u;
+  if (!cv.reabTocandoEm) cv.reabTocandoEm = agora ? agora : 1u;   // "| 1" passava agora (par) e virava 4 G ms
   p = posReal();
-  if (p < 0.3 && agora - cv.reabTocandoEm < 10000u) return;
-  if (fabs(p - cv.posMantida) > 20.0 && agora - cv.reabTocandoEm < 10000u) return;
-  printf("[dts-tpk] reaberto em %u ms: posicao %.2f s (alvo %.1f s)\n",
+  // Com sinal: no quadro em que foi marcado, `agora | 1` pode passar de agora
+  // por 1 ms, e a conta sem sinal dava 4 bilhoes (soltava em posicao 0).
+  if (p < 0.3 && (int)(agora - cv.reabTocandoEm) < 10000) return;
+  if (fabs(p - cv.posMantida) > 20.0 && (int)(agora - cv.reabTocandoEm) < 10000) return;
+  printf("%s reaberto em %u ms: posicao %.2f s (alvo %.1f s)\n", cv.ativo ? "[dts-tpk]" : "[fonte-cdn]",
          (unsigned)(agora - cv.reabriuEm), p, cv.posMantida);
   fflush(stdout);
   cv.reabrindo = 0;
 }
 
 void video_bombear(void) {
+  cdnBombear();
+  mfBombear();
   convBombear();
   reabrindoVigiar();
   escolhasPendentes();
@@ -1298,9 +1584,50 @@ void video_bombear(void) {
     if (hPausar) hPausar(reconPausa);
     reconPausa = -1;
   }
+  if (resgateAte) {
+    if (cv.ativo || parado || !ativo) resgateAte = 0;   // o conversor assumiu (ou saiu)
+    else if (!cv.sondando && (!naoSupPend || (int)(SDL_GetTicks() - resgateAte) >= 0)) {
+      // convBombear ja decidiu e nao converteu (nenhuma faixa para converter,
+      // conversor recusou), ou o cabecalho nao chegou a tempo: falhou. A sonda
+      // do conversor (MP4) em curso decide antes.
+      resgateAte = 0;
+      printf("[dts-tpk] the converter did not take over: the source failed (TV refused the audio; header %s, %d track(s), %s)\n",
+             mkvEstado == 3 ? "read" : mkvEstado == 2 ? "still reading" : "not read", mkvN,
+             naoSupPend ? "timed out waiting" : "nothing to convert");
+      fflush(stdout);
+      falhou = 1;
+    }
+  }
+  if (!falhou && !parado && (!pronto || reconBuscarMs >= 0 || (!pausaPedida && bufferando)) &&
+      nv_recon_expirou(&recon, SDL_GetTicks())) {
+    reconErroCod = NV_RECON_TPK_CONNECTION_FAILED; reconErroPend = 1;
+  }
+  if (reconErroPend && !cv.ativo && !parado) {
+    Uint32 agora = SDL_GetTicks();
+    if (resgateAte) {
+      printf("[dts-tpk] player error 0x%x while the converter takes over: ignored\n", (unsigned)reconErroCod);
+      fflush(stdout);
+      reconErroPend = 0; reconLinhaRede = 0;
+    } else if ((unsigned)reconErroCod == TPK_ERRO_AUDIO && !reconIniciou && convPossivel()) {
+      printf("[dts-tpk] the TV refused the audio codec: the converter takes over (not a failed source; %u s to start)\n",
+             RESGATE_MS / 1000u);
+      fflush(stdout);
+      resgateAte = (agora + RESGATE_MS) | 1u;
+      naoSupPend = 1;
+      reconErroPend = 0; reconLinhaRede = 0;
+    }
+  }
   if (reconErroPend) {
     int antes = recon.tentativa;
     int rede = nv_recon_rede_tpk(reconErroCod, NULL) || reconLinhaRede;
+    // Link do CDN e a fonte ja tocou: qualquer erro pode ser o link vencido. A
+    // reconexao abre de novo pelo link do addon, que da um link novo do CDN.
+    if (!rede && cdn.usado && !cv.ativo && reconIniciou && !recon.tentativa) {
+      rede = 1;
+      printf("[fonte-cdn] player error 0x%x after playing with a CDN link (%u min old): reconnecting with a fresh link\n",
+             (unsigned)reconErroCod, (unsigned)(cdnIdade() / 60000u));
+      fflush(stdout);
+    }
     reconErroPend = 0; reconLinhaRede = 0;
     int alvoMs = reconAlvoMs;
     reconAlvoMs = -1;
@@ -1339,17 +1666,21 @@ void video_bombear(void) {
         }
       }
     }
-    if (!abrirSessao()) { reconErroCod = -1; reconErroPend = 1; }
+    abrirSessao();
   }
 }
 void video_parar(void) {
-  parado = 1;
+  parado = 1; resgateAte = 0;
+  cdn.pend = 0; cdn.usado = 0; cdn.arquivo = 0;
+  atomic_fetch_add(&cdnGer, 1);
   if (cv.ativo || cv.sondando) dts_tpk_fechar();
   memset(&cv, 0, sizeof cv); cv.buscarMs = -1; naoSupPend = 0;
   emTrailer = emCartao = 0;
   cartaoSemCover = 0;
   planoW = planoH = 0;
   temRoi = 0;
+  memset(&mf, 0, sizeof mf);
+  mkvfix_parar();
   capmkv_zerar();   // fio de capitulos em voo nao alimenta o proximo titulo
   audioPend = legPend = -1; comecou = 0; comecouEm = 0; audioComecou = 0;
   legendaLimpar(1);
@@ -1363,7 +1694,13 @@ void video_parar(void) {
 #endif
   ativo = pronto = tocando = 0;
 }
-void video_pausar(int p) { pausaPedida = p != 0; vigiaAtiva = 0; if (nv_recon_ativa(&recon) && (recon.pendente || reconErroPend || !pronto || reconBuscarMs >= 0)) reconPausa = pausaPedida; else if (hPausar) hPausar(p); }
+void video_pausar(int p) {
+  int estavaPausado = pausaPedida;
+  pausaPedida = p != 0; vigiaAtiva = 0;
+  // Retomar com o link do CDN vencido: abre de novo na posicao com link novo
+  // (o player abre tocando). A pausa longa e o caso classico do link que morre.
+  if (!p && estavaPausado && pronto && cdnVelho()) { cdnRenovar(posReal(), "resume"); return; }
+  if (nv_recon_ativa(&recon) && (recon.pendente || reconErroPend || !pronto || reconBuscarMs >= 0)) reconPausa = pausaPedida; else if (hPausar) hPausar(p); }
 int video_pausa_confirmada(void) { return 0; } // host nao fornece ack por sessao
 void video_volume(int pct) { if (hVolume) hVolume(pct); }
 void video_buscar(double s) {
@@ -1390,6 +1727,17 @@ void video_buscar(double s) {
     }
     terminou = 0;
     return;
+  }
+  // Seek com o link do CDN vencido: o seek abriria uma conexao nova com ele.
+  if (pronto && cdnVelho()) { cdnRenovar(s, "seek"); terminou = 0; return; }
+  // MKV com o indice so no segundo SeekHead (mkvfix.h): a TV recusaria.
+  if (!cv.ativo && !mf.ativo && pronto) {
+    if (!mf.sondou) mfSondar();
+    if (mf.sondou) {
+      int e = mkvfix_estado();
+      if (e == MKVFIX_PRECISA) { mfLigar(s, "seek"); terminou = 0; return; }
+      if (e == MKVFIX_SONDANDO) { mf.pend = 1; mf.pendAlvo = s; mf.pendEm = SDL_GetTicks(); }
+    }
   }
   if (hBuscar) hBuscar((int)(s * 1000.0));
   terminou = 0;
@@ -1702,7 +2050,9 @@ void video_tpk_log_host(const char *linha) {
   // "erro ConnectionFailed" vem logo antes do evento 5 (Video.cs).
   if (!strncmp(linha, "erro ", 5) && nv_recon_rede_tpk(0, linha)) reconLinhaRede = 1;
   // O player acusa o codec sem lista vazia: mesmo aviso, com a linha de prova.
-  if (!strncmp(linha, "erro NotSupportedAudioCodec", 27)) {
+  // Video.cs loga o nome do enum PlayerError do Tizen.Multimedia, que e
+  // "AudioCodecNotSupported" (log do S95C, 16/10); o outro e o nome do CAPI.
+  if (!strncmp(linha, "erro NotSupportedAudioCodec", 27) || !strncmp(linha, "erro AudioCodecNotSupported", 27)) {
     printf("[audio] TV recusou o audio da fonte: player acusou NotSupportedAudioCodec (faixas da TV=%d)\n", nAudio);
     fflush(stdout);
     // Com a conversao possivel, o fio do app decide (convBombear); sem ela, o

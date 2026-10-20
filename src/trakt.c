@@ -23,6 +23,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <math.h>
+#include "provedorhttp.h"
 
 
 static char token[128], cliente[80];
@@ -182,6 +183,7 @@ int trakt_operacao_estado(int tipo) {
 }
 
 int trakt_ativo(void) { return ligado; }
+int trakt_aguardando(void) { return provedorEspera(); }
 
 void trakt_sessao_morta(void) {
   pthread_mutex_lock(&travaCred);
@@ -463,17 +465,18 @@ static void doBlocoTrakt(CatItem *d, const char *bloco, const char *fim,
 // TkUltimo e a regra de empate: traktult.h (issue #213).
 static TkUltimo *ult;   // nUlt: ver trakt_esquecer
 static int ultCap;
-// Os ids ("tt:S:E") dos itens "a seguir" desta rodada, para enfeitar() saber
-// que precisa CONFERIR que o episodio existe antes de publicar.
-static char proxIds[TK_ULT_MAX][32];   // nProxIds: ver trakt_esquecer
+// Keep Trakt-confirmed episodes distinct from guesses that metadata must validate.
+typedef struct { char id[32]; int confirmado; } TkProximo;
+static TkProximo proxIds[TK_ULT_MAX];   // nProxIds: ver trakt_esquecer
 static int ehProximo(const char *id) {
   int i, achou = 0;
   pthread_mutex_lock(&travaCred);
-  for (i = 0; i < nProxIds && !achou; i++) achou = !strcmp(proxIds[i], id);
+  for (i = 0; i < nProxIds && !achou; i++)
+    if (!strcmp(proxIds[i].id, id)) achou = proxIds[i].confirmado ? 2 : 1;
   pthread_mutex_unlock(&travaCred);
   return achou;
 }
-int trakt_e_a_seguir(const char *id) { return id && ehProximo(id); }
+int trakt_e_a_seguir(const char *id) { return id && ehProximo(id) != 0; }
 int trakt_cw_concluiu(const char *id, long long progressoMs) {
   char base[24]; int t = 0, e = 0, i;
   const char *sep = id ? strchr(id, ':') : NULL;
@@ -580,7 +583,7 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
   char url[300], *corpo;
   char serie[24];
   const char *dp;
-  int precisaCinemeta, proximo, daConta, virou = 0, provFicha = -1;
+  int precisaCinemeta, proximo, confirmado, daConta, virou = 0, provFicha = -1;
   const char *epc;   // de onde saem o nome e a data do episodio "a seguir"
   char *corpoCine = NULL;
   // Arte PRIMEIRO, sem rede: mesma URL que trakt_lista ja monta. Antes cada
@@ -597,11 +600,12 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
   if (dp) *(char *)dp = 0;
   // Cinemeta so para o que o metahub nao tem: validar "a seguir", sinopse,
   // runtime/meta e nota. Arte ja esta; falha la NAO apaga o item.
-  // "A seguir" e o do Trakt (historico) ou o da CONTA (vistos, issue #199):
-  // os dois sao sugestao de episodio que ninguem confirmou que existe.
+  // Metadata validates guesses; Trakt next_episode already confirms its target.
   if (!nv_perfil_sessao_travar(sessao)) return 0;
   daConta = cwo_conta_a_seguir(d->imdb);
-  proximo = ehProximo(d->imdb) || daConta;
+  proximo = ehProximo(d->imdb);
+  confirmado = proximo == 2;
+  proximo = proximo || daConta;
   nv_perfil_sessao_destravar();
   precisaCinemeta = proximo || !d->sinopse[0] ||
                     !d->meta[0] || d->nota <= 0;
@@ -624,7 +628,7 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
     deCache = corpo != NULL;
     // "A seguir" que o cache nao confirma pode ser episodio novo: pergunta a
     // rede antes de descartar o item.
-    if (corpo && proximo &&
+    if (corpo && proximo && !confirmado &&
         !metaep_existe(corpo, d->temporada, d->episodio) &&
         !metaep_proximo(corpo, d->temporada, d->episodio, NULL)) {
       free(corpo); corpo = NULL; deCache = 0;
@@ -640,15 +644,13 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
     (void)deCache; }
   marcarTentada(d->imdb);
   if (!corpo) {
-    // "A seguir" sem meta: nao da para confirmar que o episodio existe.
-    if (proximo) return 0;
+    // A metadata outage cannot invalidate Trakt next_episode.
+    if (proximo && !confirmado) return 0;
     return d->poster[0] != 0;
   }
-  // "A SEGUIR" SO ENTRA SE O EPISODIO EXISTE. Depois do ultimo da temporada o
-  // proximo e o primeiro da seguinte; depois do ultimo da serie nao ha
-  // proximo, e a serie nao entra — nao e "continuar", e "acabou".
+  // Only unconfirmed guesses may advance to another metadata episode.
   epc = corpo;
-  if (proximo && !metaep_existe(corpo, d->temporada, d->episodio) &&
+  if (proximo && !confirmado && !metaep_existe(corpo, d->temporada, d->episodio) &&
       !metaep_proximo(corpo, d->temporada, d->episodio, NULL) &&
       provFicha != METAPROV_CINEMETA && !strcmp(tipo, "series")) {
     // A ficha do Nuvio pode estar atras do Cinemeta (The Rookie: 1 futuro
@@ -673,7 +675,7 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
   }
   if (proximo) {
     MetaEpInfo prox;
-    if (!metaep_existe(epc, d->temporada, d->episodio)) {
+    if (!confirmado && !metaep_existe(epc, d->temporada, d->episodio)) {
       if (metaep_proximo(epc, d->temporada, d->episodio, &prox)) {
         char velho[sizeof d->imdb];
         snprintf(velho, sizeof velho, "%s", d->imdb);
@@ -696,7 +698,7 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
   // futuros no fim ou numa fileira propria. Vale para o Simkl tambem: o lote
   // dele passa por aqui (simkl_continuar -> trakt_enfeitar_lote). Episodio sem
   // `released` fica sem data, e sem data conta como exibido, como no web.
-  if (d->progresso == 0 && d->temporada > 0 && d->episodio > 0 && !strcmp(tipo, "series")) {
+  if (d->progresso == 0 && d->temporada >= 0 && d->episodio > 0 && !strcmp(tipo, "series")) {
     char quando[40] = "";
     long long ms;
     if (metaep_lancamento(epc, d->temporada, d->episodio, quando, sizeof quando)) {
@@ -779,7 +781,7 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
     js_texto(corpo, NULL, "runtime", r, sizeof r);
     // O catalogo do Nuvio nao tem duracao de SERIE, so por episodio ("25min"):
     // a do primeiro episodio faz o papel da "54 min" do Cinemeta.
-    if (!r[0]) { const char *v = js_array(corpo, NULL, "videos");
+    if (!r[0]) { const char *v = js_videos_temporadas_falsas(corpo) ? NULL : js_array(corpo, NULL, "videos");
                  if (v) js_texto(v, js_fim(v), "runtime", r, sizeof r); }
     metaprov_duracao(r, sizeof r);
     js_texto(corpo, NULL, "releaseInfo", ano, sizeof ano);
@@ -1113,6 +1115,27 @@ int trakt_episodios_marcar_destino(const TraktDestino *destino, const char *imdb
   return ok;
 }
 
+int trakt_titulo_marcar_destino(const TraktDestino *d, const char *imdb, const char *tipo, int visto) {
+  const char *cab[4];
+  char aut[200], chave[140], corpo[200], url[80], id[24];
+  int st = 0;
+  if (!d || !imdb || imdb[0] != 't') return 0;
+  size_t n = strcspn(imdb, ":");
+  if (n >= sizeof id) return 0;
+  memcpy(id, imdb, n); id[n] = 0;
+  HistoricoPedido p = { .sessao = d->sessao, .mapa = d->mapa, .credencial = d->credencial };
+  snprintf(p.aut, sizeof p.aut, "%s", d->aut);
+  snprintf(p.chave, sizeof p.chave, "%s", d->chave);
+  if (!cabecalhosCongelados(p, cab, aut, sizeof aut, chave, sizeof chave)) return 0;
+  snprintf(corpo, sizeof corpo, "{\"%s\":[{\"ids\":{\"imdb\":\"%s\"}}]}",
+           tipo && !strcmp(tipo, "series") ? "shows" : "movies", id);
+  snprintf(url, sizeof url, "https://api.trakt.tv/sync/history%s", visto ? "" : "/remove");
+  char *r = rede_postar_st(url, 20, cab, corpo, &st);
+  int ok = r && st >= 200 && st < 300;
+  free(r);
+  return ok;
+}
+
 int trakt_destino_capturar(TraktDestino *d) {
   if (!d) return 0;
   HistoricoPedido p = historicoPedido();
@@ -1133,7 +1156,7 @@ int trakt_episodios_marcar(const char *imdb, const VistoPar *pares, int qtd, int
 // visto um episodio nao significa ter marcado a serie inteira como assistida.
 static void carregarHistoricoReal(const char *const *cab, HistoricoPedido pedido,
                                     TkUltimo *ultSaida, int *nUltSaida) {
-  char *corpo = rede_baixar_com("https://api.trakt.tv/sync/history?limit=100&extended=full", 25, cab);
+  char *corpo = provedorBaixar("https://api.trakt.tv/sync/history?limit=100&extended=full", 25, cab);
   const char *p;
   if (!corpo) return;
   if (!historicoPedidoAtual(pedido)) { free(corpo); return; }
@@ -1206,7 +1229,7 @@ static void carregarSeriesVistas(const char *const *cab, HistoricoPedido pedido,
     int st = 0, objetos = 0;
     snprintf(url, sizeof url,
              "https://api.trakt.tv/sync/watched/shows?extended=noseasons&page=%d&limit=250", pagina);
-    corpo = rede_baixar_st(url, 25, cab, &st);
+    corpo = provedorBaixarSt(url, 25, cab, &st);
     if (!corpo || st != 200 || (anterior && !strcmp(anterior, corpo))) { free(corpo); break; }
     free(anterior); anterior = corpo;
     p = filmesPula(corpo);
@@ -1359,7 +1382,7 @@ static void *fioProximo(void *x) {
     } else return NULL;
     snprintf(url, sizeof url,
              "https://api.trakt.tv/shows/%s/progress/watched?hidden=false&specials=false", imdb);
-    corpo = rede_baixar_com(url, 8, fila->cab);
+    corpo = provedorBaixar(url, 8, fila->cab);
     tarefa->estado = tk_prog_proximo(corpo, &tarefa->t, &tarefa->e);
     // O SELO DE SERIE VISTA SAI DAQUI, nao da abertura do titulo: o cabecalho
     // (aired/completed, antes de "seasons") diz se tudo o que foi ao ar foi visto.
@@ -1506,7 +1529,7 @@ static void carregarFilmesVistos(const char *const *cab, HistoricoPedido pedido)
   char ativ[40] = "";
   char url[128], *anterior = NULL;
   int pagina = 1, ok = 0;
-  char *corpo = rede_baixar_com("https://api.trakt.tv/sync/last_activities", 15, cab);
+  char *corpo = provedorBaixar("https://api.trakt.tv/sync/last_activities", 15, cab);
   if (corpo) {
     const char *m = strstr(corpo, "\"movies\"");
     const char *o = m ? strchr(m, '{') : NULL;
@@ -1521,7 +1544,7 @@ static void carregarFilmesVistos(const char *const *cab, HistoricoPedido pedido)
   for (;;) {
     int st = 0, n;
     snprintf(url, sizeof url, "https://api.trakt.tv/sync/watched/movies?page=%d&limit=250", pagina);
-    corpo = rede_baixar_st(url, 25, cab, &st);
+    corpo = provedorBaixarSt(url, 25, cab, &st);
     if (!corpo || st != 200 || (anterior && !strcmp(anterior, corpo))) { free(corpo); break; }
     n = filmesLerPagina(corpo, &v);
     free(anterior); anterior = corpo;
@@ -1618,7 +1641,7 @@ int trakt_continuar(CatItem *saida, int max) {
   int n = 0;
   TkPlay playLocal[TK_PLAY_MAX] = {0}; int nPlayLocal = 0;
   TkUltimo *ultLocal; int nUltLocal = 0, capUltLocal = TK_ULT_MAX;
-  char proxIdsLocal[TK_ULT_MAX][32] = {{0}}; int nProxLocal = 0;
+  TkProximo proxIdsLocal[TK_ULT_MAX] = {0}; int nProxLocal = 0;
   HistoricoPedido pedido = historicoPedido();
   if (!cabecalhosPedido(pedido, cab, aut, sizeof aut, chave, sizeof chave)) return 0;
   if (pedidoTravar(pedido)) { continuarFalhou = 0; pedidoDestravar(); } else return 0;
@@ -1633,7 +1656,7 @@ int trakt_continuar(CatItem *saida, int max) {
   pthread_t fioHist, fioFilmes;
   int hist = pthread_create(&fioHist, NULL, fioHistorico, &ph) == 0;
   int filmes = pthread_create(&fioFilmes, NULL, fioFilmesVistos, &ph) == 0;
-  corpo = rede_baixar_com("https://api.trakt.tv/sync/playback?extended=full", 25, cab);
+  corpo = provedorBaixar("https://api.trakt.tv/sync/playback?extended=full", 25, cab);
   if (!corpo) {
     if (hist) pthread_join(fioHist, NULL);
     if (filmes) pthread_join(fioFilmes, NULL);
@@ -1688,11 +1711,11 @@ int trakt_continuar(CatItem *saida, int max) {
       if (!imdb[0]) { p = js_prox(f); continue; }
       if (serie) {
         const char *fe = js_fim(strchr(ep, '{'));
-        d->temporada = (int)js_num(ep, fe, "season", 0);
+        d->temporada = (int)js_num(ep, fe, "season", 1);
         d->episodio  = (int)js_num(ep, fe, "number", 0);
         js_texto(ep, fe, "title", d->nomeEpisodio, sizeof d->nomeEpisodio);
         snprintf(d->imdb, sizeof d->imdb, "%s:%d:%d", imdb,
-                 d->temporada ? d->temporada : 1, d->episodio ? d->episodio : 1);
+                 d->temporada >= 0 && d->episodio > 0 ? d->temporada : 1, d->episodio > 0 ? d->episodio : 1);
         snprintf(d->tipo, sizeof d->tipo, "series");
       } else {
         snprintf(d->imdb, sizeof d->imdb, "%s", imdb);
@@ -1738,10 +1761,8 @@ int trakt_continuar(CatItem *saida, int max) {
   // abaixo; so sao esperados no fim, antes de a fileira sair.
   if (!filmes) carregarFilmesVistos(cab, pedido);
   printf("[trakt] historico: %d serie(s) com ultimo episodio visto\n", nUltLocal);
-  // "A SEGUIR": serie cujo ultimo episodio visto terminou e que nao esta
-  // pausada em nada. Entra com progresso 0 no episodio seguinte; enfeitar()
-  // confere no Cinemeta que ele existe (ou salta para a temporada seguinte) e
-  // descarta o que acabou. Ver ultLocal[].
+  // Up Next uses Trakt next_episode when available. Only history guesses
+  // need episode validation during metadata enrichment.
   nProxLocal = 0;
   { int u, nTar = 0, acabou = 0;
     TarefaProx *tar = calloc((size_t)nUltLocal, sizeof *tar);
@@ -1801,7 +1822,11 @@ int trakt_continuar(CatItem *saida, int max) {
         snprintf(d->tipo, sizeof d->tipo, "series");
         d->progresso = 0;
         d->retomadoMs = ultLocal[u].quandoMs;
-        if (nProxLocal < TK_ULT_MAX) snprintf(proxIdsLocal[nProxLocal++], sizeof proxIdsLocal[0], "%s", d->imdb);
+        if (nProxLocal < TK_ULT_MAX) {
+          TkProximo *p = &proxIdsLocal[nProxLocal++];
+          snprintf(p->id, sizeof p->id, "%s", d->imdb);
+          p->confirmado = tarDe[u] >= 0 && tar[tarDe[u]].estado == 1;
+        }
         printf("[trakt] a seguir: %s (ultimo visto T%dE%d, %lld)\n", d->imdb, ultLocal[u].temporada, ultLocal[u].episodio, ultLocal[u].quandoMs);
       }
     }
@@ -1809,14 +1834,12 @@ int trakt_continuar(CatItem *saida, int max) {
       printf("[trakt] a seguir conferido no Trakt: %d serie(s), %d sem proximo\n", nTar, acabou);
     free(tar); free(tarDe);
   }
-  // Pausados primeiro; recencia dentro de cada grupo. Insercao: n <= CONT_MAX.
+  // Last watched first, including next episodes after a completed episode.
   { int a, b;
     for (a = 1; a < n; a++) {
       CatItem t = saida[a];
-      for (b = a - 1; b >= 0 &&
-           ((saida[b].progresso == 0 && t.progresso > 0) ||
-            ((saida[b].progresso == 0) == (t.progresso == 0) &&
-             saida[b].retomadoMs < t.retomadoMs)); b--) saida[b + 1] = saida[b];
+      for (b = a - 1; b >= 0 && saida[b].retomadoMs < t.retomadoMs; b--)
+        saida[b + 1] = saida[b];
       saida[b + 1] = t;
     } }
   // O MAPA DE EPISODIOS VISTOS NAO SAI DAQUI. Ele e buscado por SERIE, em
@@ -1853,7 +1876,7 @@ int trakt_continuar(CatItem *saida, int max) {
 // Alguns clientes recebem 401 apenas no feed agregado. O grafo e o
 // historico publico dos perfis continuam acessiveis com a mesma credencial.
 static char *socialPorSeguidos(const char *const *cab, int max) {
-  char *lista=rede_baixar_com("https://api.trakt.tv/users/me/following?extended=full",10,cab);
+  char *lista=provedorBaixar("https://api.trakt.tv/users/me/following?extended=full",10,cab);
   if(!lista)return NULL;
   char *out=calloc(1,262144);size_t used=1;int n=0,consultados=0;
   if(!out){free(lista);return NULL;}out[0]='[';
@@ -1868,8 +1891,8 @@ static char *socialPorSeguidos(const char *const *cab, int max) {
     if(!id[0] || strspn(id,"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")!=strlen(id)){p=js_prox(f);continue;}
     consultados++;
     snprintf(url,sizeof url,"https://api.trakt.tv/users/%s/watching?extended=full",id);
-    char *body=rede_baixar_com(url,8,cab);int agora=body&&strchr(body,'{');
-    if(!agora){free(body);snprintf(url,sizeof url,"https://api.trakt.tv/users/%s/history?limit=1&extended=full",id);body=rede_baixar_com(url,8,cab);}
+    char *body=provedorBaixar(url,8,cab);int agora=body&&strchr(body,'{');
+    if(!agora){free(body);snprintf(url,sizeof url,"https://api.trakt.tv/users/%s/history?limit=1&extended=full",id);body=provedorBaixar(url,8,cab);}
     const char *b=body?strchr(body,'{'):NULL,*bf=b?js_fim(b):NULL;
     if(b&&bf&&bf>b+1) {
       size_t un=(size_t)(uf-u),bn=(size_t)(bf-b-2);
@@ -1904,13 +1927,13 @@ int trakt_social(CatItem *saida, int max) {
   if (!cabecalhosPedido(pedido, cab, aut, sizeof aut, chave, sizeof chave)) return 0;
   corpo = NULL;
   if (!socialSemFeed) {
-    corpo = rede_baixar_com(
+    corpo = provedorBaixar(
       "https://api.trakt.tv/users/me/friends/activities?extended=full&page=1&limit=12",
       20, cab);
     // Contas sem o escopo social novo podem receber 401 no grafo `friends`,
     // embora o token continue valido para historico. `following` e o fallback
     // honesto: ainda sao pessoas escolhidas pelo dono, nunca atividade global.
-    if (!corpo) corpo = rede_baixar_com(
+    if (!corpo) corpo = provedorBaixar(
       "https://api.trakt.tv/users/me/following/activities?extended=full&page=1&limit=12",
       20, cab);
     if (!corpo) {
@@ -2059,13 +2082,13 @@ int trakt_perfil(PerfilDados *d) {
   strftime(inicio,sizeof inicio,"%Y-%m-%dT%H%%3A%M%%3A%SZ",&utc);
   // Perfil e avatar. O avatar pode ser WebP no Trakt novo; o renderer so o
   // pede se o firmware aceitar, e a tela continua completa sem ele.
-  corpo=rede_baixar_com("https://api.trakt.tv/users/settings?extended=full",15,cab);
+  corpo=provedorBaixar("https://api.trakt.tv/users/settings?extended=full",15,cab);
   if(corpo){ const char *u=strstr(corpo,"\"user\""); const char *fu=u?js_fim(strchr(u,'{')):NULL;
     if(u&&fu){js_texto(u,fu,"name",d->nome,sizeof d->nome);js_texto(u,fu,"username",d->usuario,sizeof d->usuario);
       js_texto(u,fu,"full",d->avatar,sizeof d->avatar);} free(corpo); }
   snprintf(url,sizeof url,
     "https://api.trakt.tv/users/me/history?start_at=%s&extended=full&page=1&limit=100",inicio);
-  corpo=rede_baixar_com(url,25,cab);
+  corpo=provedorBaixar(url,25,cab);
   if (!corpo || !strchr(corpo, '[')) { free(corpo); return 0; }
   ranking = calloc(100, sizeof *ranking);
   if (!ranking) { free(corpo); return 0; }
@@ -2098,7 +2121,7 @@ int trakt_perfil(PerfilDados *d) {
       for(int i=0;i<nRanking;i++)if(imdb[0]&&!strcmp(ranking[i].id,imdb)){hi=i;break;}
       if(hi<0&&imdb[0]&&nRanking<100){hi=nRanking++;PerfilDestaque *h=&ranking[hi];
         snprintf(h->id,sizeof h->id,"%s",imdb);snprintf(h->titulo,sizeof h->titulo,"%s",titulo);
-        if(t>0&&e>0)snprintf(h->detalhe,sizeof h->detalhe,i18n("T%dE%d"),t,e);else snprintf(h->detalhe,sizeof h->detalhe,"Filme");
+        if(t>=0&&e>0)snprintf(h->detalhe,sizeof h->detalhe,i18n("T%dE%d"),t,e);else snprintf(h->detalhe,sizeof h->detalhe,"Filme");
         if(imdb[0]){snprintf(h->poster,sizeof h->poster,"https://images.metahub.space/poster/medium/%s/img",imdb);
           snprintf(h->backdrop,sizeof h->backdrop,"https://images.metahub.space/background/medium/%s/img",imdb);}}
       if(hi>=0){ranking[hi].plays++;if(runtime>0)ranking[hi].minutos+=runtime;}
@@ -2126,13 +2149,8 @@ int trakt_perfil(PerfilDados *d) {
   return historicoPedidoAtual(pedido);
 }
 
-// PAGINACAO (#6 Shield: biblioteca mostrava Trakt 213 de 1600+). A watchlist
-// aceita ?page=&limit= e, sem eles, devolve tudo; a colecao NAO pagina (a doc
-// do Trakt so lista page/limit na watchlist). O cabecalho X-Pagination-Page-
-// Count nao chega aqui (rede_baixar_com devolve so o corpo), entao a parada e a
-// do mapa de filmes vistos: pagina VAZIA, corpo igual ao anterior ou o teto da
-// plataforma. O Trakt pode capar a pagina abaixo do limit pedido, por isso
-// pagina curta NAO encerra. A colecao e pedida sem parametros, uma vez.
+// Watchlist pages follow response metadata, with empty/repeated-page fallback
+// when headers are unavailable. Collection remains a single request per type.
 #define TRAKT_LISTA_PAGINA 500
 #define TRAKT_LISTA_PAGINAS_MAX 64
 
@@ -2156,14 +2174,15 @@ static int listaNucleo(const char *qual, CatItem **pv, int *cap, int cresce,
     int pagina = 1;
     anterior = NULL;
     for (;;) {
-      int lidos = 0;
+      int lidos = 0, proxima = -1;
       if (paginavel)
-        snprintf(url, sizeof url, "https://api.trakt.tv/sync/%s/%s?page=%d&limit=%d",
+        // added/desc: the most recently added title comes first (#610).
+        snprintf(url, sizeof url, "https://api.trakt.tv/sync/%s/%s/added/desc?page=%d&limit=%d",
                  qual, tipo, pagina, TRAKT_LISTA_PAGINA);
       else
         snprintf(url, sizeof url, "https://api.trakt.tv/sync/%s/%s", qual, tipo);
       if (!historicoPedidoAtual(pedido)) break;
-      corpo = rede_baixar_com(url, 25, cab);
+      corpo = provedorGet(url, 25, cab, NULL, &proxima, pagina);
       if (!corpo) break;
       if (anterior && !strcmp(anterior, corpo)) { free(corpo); break; }
       paginas++;
@@ -2176,6 +2195,7 @@ static int listaNucleo(const char *qual, CatItem **pv, int *cap, int cresce,
         while (*p && (unsigned char)*p <= ' ') p++;
         if (*p != '{') break;
         f = js_fim(p);
+        lidos++;   // Pagination counts server entries, including titles without IMDb.
         bloco = strstr(p, passo ? "\"show\"" : "\"movie\"");
         if (bloco && bloco < f) {
           const char *fb = js_fim(strchr(bloco, '{'));
@@ -2183,7 +2203,7 @@ static int listaNucleo(const char *qual, CatItem **pv, int *cap, int cresce,
           js_texto(bloco, fb, "imdb", imdb, sizeof imdb);
         }
         if (imdb[0]) {
-          lidos++; visto++;
+          visto++;
           if (n < max) {
             CatItem *d;
             if (cresce && n >= *cap) {
@@ -2199,7 +2219,7 @@ static int listaNucleo(const char *qual, CatItem **pv, int *cap, int cresce,
             snprintf(d->titulo, sizeof d->titulo, "%s", titulo);
             snprintf(d->imdb, sizeof d->imdb, "%s", imdb);
             snprintf(d->tipo, sizeof d->tipo, "%s", passo ? "series" : "movie");
-            if (paginavel) d->naLista = 1;
+            if (paginavel) { d->naLista = 1; d->listaFontes = 1u << AJ_SALVOS_TRAKT; }
             else           d->naColecao = 1;
             // Arte SEM consultar: metahub deterministico pelo IMDb (ver
             // artemetahub.h). Uma consulta por item limitava a lista a dez.
@@ -2212,9 +2232,9 @@ static int listaNucleo(const char *qual, CatItem **pv, int *cap, int cresce,
         p = js_prox(f);
       }
       free(anterior); anterior = corpo;
-      if (!paginavel || !lidos || pagina >= TRAKT_LISTA_PAGINAS_MAX) break;
+      if (!paginavel || !lidos || !proxima || pagina >= TRAKT_LISTA_PAGINAS_MAX) break;
       if (n >= max) break;   // teto da plataforma: nao pede o resto
-      pagina++;
+      pagina = proxima > pagina ? proxima : pagina + 1;
     }
     free(anterior);
   }
@@ -2273,7 +2293,7 @@ static void idsScrobble(const char *id, ScrobbleEpIds *out) {
   memset(out, 0, sizeof *out);
   snprintf(base, sizeof base, "%s", id);
   dp = strchr(base, ':');
-  if (!dp || sscanf(dp + 1, "%d:%d", &t, &e) != 2 || t <= 0 || e <= 0) return;
+  if (!dp || sscanf(dp + 1, "%d:%d", &t, &e) != 2 || t < 0 || e <= 0) return;
   *dp = 0;
   meta = fichaBuscar("series", base);
   if (!meta) meta = metaprov_meta("series", base, 8, NULL);

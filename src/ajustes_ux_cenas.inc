@@ -203,7 +203,7 @@ static void ajcCenaHome(int op) {
     case AJ_HERO_CATALOGOS: case AJ_HERO_TRANSICAO: o.marca = AJC_M_HERO; break;
     case AJ_LANDSCAPE: o.paisagem = ajcLig(op); break;
     case AJ_FIL_ORDEM: case AJ_FIL_LIMITE: case AJ_ITENS_FILEIRA: case AJ_OCULTAR_NLANC:
-    case AJ_OCULTAR_FILMES_VISTOS:
+    case AJ_OCULTAR_FILMES_VISTOS: case AJ_BIB_HOME:
       o.hero = 0.0f; o.marca = AJC_M_FILEIRAS; break;
     case AJ_ROTULOS: case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: case AJ_SUFIXO_ESTILO: case AJ_ROTULO_POS: case AJ_LOGO_CARDS:
       o.hero = 0; o.marca = AJC_M_TITULOS; break;
@@ -486,6 +486,25 @@ static void ajcCenaVidro(int op) {
   ajc_barra(150, 140, 200, 0.85f); ajc_barras(150, 162, 300, 3, 1);
   ajc_acento_ret(150, 210, 100, 26, 13, 1);
   if (op != AJ_VIDRO_OPAC) ajcChaveCanto(op == AJ_VIDRO ? k : ajcLig(op));
+}
+// Foco na cor de destaque: tres linhas, a do meio em foco; o cinza de sempre
+// cede ao vidro tingido com o realce.
+static void ajcCenaFocoAcento(int op) {
+  float k = ajcLig(op), v = ajcLig(AJ_VIDRO);
+  int i;
+  ajc_ret(120, 70, 400, 220, 22, 0.08f, 0.085f, 0.10f, 0.9f);
+  for (i = 0; i < 3; i++) {
+    float y = 92 + i * 62;
+    if (i == 1) {
+      ajc_ret(136, y, 368, 50, 25, 1, 1, 1, 0.12f * (1 - k * v));
+      ajc_ret(136, y, 368, 50, 25, 1, 1, 1, 0.05f * k * v);
+      ajc_ret(136, y, 368, 50, 25, C.ar, C.ag, C.ab, gfx_foco_placa_alfa(C.ar, C.ag, C.ab) * k * v);
+      gfx_anel(ajc_r(136, y, 368, 50), 25.0f / 50.0f, ajc_px(1.5f), C.ar, C.ag, C.ab, 0.62f * k * v * C.a);
+    }
+    ajc_ret(158, y + 13, 24, 24, 12, 1, 1, 1, 0.55f);
+    ajc_barra(196, y + 16, i == 1 ? 190 : 140, i == 1 ? 0.9f : 0.5f);
+  }
+  ajcChaveCanto(k);
 }
 // Logo, abertura e icone do app.
 static void ajcCenaMarca(int op) {
@@ -901,7 +920,8 @@ static void ajcCenaOpcao(int sec, int op) {
     case AJ_PS_FUNDO: case AJ_PS_CONTINUAR: ajcCenaPerfis(op); return;
     case AJ_TEMA: case AJ_COR_LOGO: ajcCenaCor(op); return;
     case AJ_FUNDO: ajcCenaFundo(); return;
-    case AJ_VIDRO: case AJ_VIDRO_CONTORNO: case AJ_VIDRO_OPAC: case AJ_VIDRO_FOSCO: ajcCenaVidro(op); return;
+    case AJ_VIDRO: case AJ_VIDRO_CONTORNO: case AJ_VIDRO_OPAC: case AJ_VIDRO_FOSCO: case AJ_VIDRO_QUALIDADE: ajcCenaVidro(op); return;
+    case AJ_FOCO_ACENTO: ajcCenaFocoAcento(op); return;
     case AJ_LOGO_APP: case AJ_ABERTURA: case AJ_ICONE_APP: ajcCenaMarca(op); return;
     case AJ_FONTE_UI: case AJ_TAMANHO_UI: case AJ_TAMANHO_AJUSTES: ajcCenaTexto(op); return;
     case AJ_LAYOUT_AJUSTES: ajcCenaLayoutAjustes(op); return;
@@ -928,7 +948,7 @@ static void ajcCenaOpcao(int sec, int op) {
   if (sec == AJS_CARTAZES) switch (op) {
     case AJ_HERO_TRAILER: case AJ_FOCO_TRAILER: case AJ_DET_TRAILER_AUTO: case AJ_DET_TRAILER:
     case AJ_HERO_TRAILER_SOM: case AJ_DET_TRAILER_SOM: case AJ_TRAILER_FONTE: case AJ_HERO_TRAILER_ESPERA:
-    case AJ_TRAILER_QUAL: case AJ_TRAILER_ASPECTO: case AJ_TRAILER_ZOOM_TPK: case AJ_LOGO_TRAILER:
+    case AJ_TRAILER_QUAL: case AJ_TRAILER_ASPECTO: case AJ_TRAILER_ZOOM_TPK: case AJ_LOGO_TRAILER:  case AJ_TRAILER_AUDIO:
       sec = AJS_TRAILERS; break;
     default: break;
   }

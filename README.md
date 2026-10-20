@@ -1,4 +1,4 @@
-**Android TV and Mobile in one APK:** In Settings > Appearance, choose **Interface mode: TV / Mobile**. TV remains the default and keeps remote navigation. Mobile enables phone layouts, direct touch scrolling, portrait browsing, and the native keyboard; full-screen playback uses landscape. The choice is saved only on this device, and switching keeps the same app, account, and data. See [Android interface modes](docs/android/INTERFACE-MODES.md) for details.
+**Android TV and Mobile in one APK:** Automatic selects TV on Android TV / Google TV and Mobile on phones and tablets. In Settings > Appearance, **Interface mode** can override it with TV or Mobile. Mobile enables phone layouts, direct touch scrolling, portrait browsing, and the native keyboard; full-screen playback uses landscape. The choice is saved only on this device, and switching keeps the same app, account, and data. See [Android interface modes](docs/android/INTERFACE-MODES.md) for details.
 
 <picture>
   <source media="(max-width: 640px)" srcset="docs/assets/nuvio-readme-banner-mobile.png">
@@ -256,13 +256,34 @@ This is an independent, unofficial project, not affiliated with NuvioMedia. Cred
 
 ## Reporting a problem
 
-1. Right after the problem happens, send the log from the app: **Settings ›
-   About › Send log** (on LG you can also open the log panel from the remote).
-2. Open an [issue](https://github.com/iqui27/nuvio-native-legacy/issues) with your
-   TV model, the app version and what you did.
+### Troubleshoot first
+
+Most playback reports turn out to be the add-on, the debrid service or the
+connection, not this app. One minute of checks saves everyone time:
+
+1. **Play the same title with the same source in another player** (Stremio, the
+   official Nuvio app, VLC, Kodi). If it also fails there, ask the **add-on
+   author** or your **debrid's support** — nothing can be fixed here.
+2. **"Not cached", no sources, 404 or an expired link** are always add-on or
+   debrid side.
+3. **Try another source, then another title**, and run the internet speed test
+   on the TV: **Settings › This TV › Speed test** reports the
+   largest file your connection can handle. If the file you are playing is bigger
+   than that, the connection is the limit — pick a smaller source, that is not a
+   bug in this app.
+4. **Send the log and keep its code**: **Settings › About and help › Send
+   log › Send**. When it finishes, the screen shows a **6-character code**
+   (letters and digits, no I, L, O or U). That code is what we need in the issue.
 
 The log never carries credentials. Logs are kept for 30 days and are only used
 to fix bugs. You can also turn on automatic log sending in Settings.
+
+### File it
+
+1. Right after the problem happens, send the log (step 5 above).
+2. Open an [issue](https://github.com/iqui27/nuvio-native-legacy/issues) and fill
+   the **Bug report** form: platform, TV model and system version, app version,
+   the 6-character log code, and what you did.
 
 ---
 

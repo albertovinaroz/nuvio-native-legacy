@@ -72,7 +72,7 @@ void scrobble_corpo_ep(char *dst, size_t n, const char *id, double pct,
     if (ep->tmdb) snprintf(info.tmdb, sizeof info.tmdb, "%s", ep->tmdb);
     if (ep->trakt) snprintf(info.trakt, sizeof info.trakt, "%s", ep->trakt);
   }
-  metaep_scrobble_corpo(dst, n, base, t, e, (t > 0 && e > 0) ? &info : NULL, pct);
+  metaep_scrobble_corpo(dst, n, base, t, e, (t >= 0 && e > 0) ? &info : NULL, pct);
 }
 
 void scrobble_corpo(char *dst, size_t n, const char *id, double pct) {

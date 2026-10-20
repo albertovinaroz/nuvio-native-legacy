@@ -25,6 +25,7 @@ int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
 int ajustes_ocultar_nao_lancados(void) { return 0; }   // #369: descoberta.c le o ajuste
 int ajustes_ocultar_filmes_vistos(void) { return 0; }    // #366: descoberta.c le o ajuste
+#define NV_PERFIL_SESSAO_FORTE
 #include "../src/descoberta.c"
 #include "nvtmp.h"
 Uint32 SDL_GetTicks(void) { return 0; }
@@ -32,6 +33,8 @@ Uint32 SDL_GetTicks(void) { return 0; }
 #include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
+#define NV_TEST_SESSAO_PROPRIA
+#define NV_TEST_SOCIAL_PROPRIO
 #include "jellyfin_stub.inc"
 // Manifest loading is outside this metadata harness.
 void addons_lista_travar(void) {}
@@ -42,6 +45,18 @@ void ws_destino(const char *b, const char *u, int p, char out[20]) {
 void addons_manifesto_lido_base(int i, const char *b, const char *d,
                                unsigned v, const char *c) {
   (void)i; (void)b; (void)d; (void)v; (void)c;
+}
+int addons_identidade_recebida(const char *base, unsigned versao, uint64_t sessao,
+                               const char *corpo) {
+  (void)base; (void)versao; (void)sessao; (void)corpo;
+  fputs("unexpected addon identity publication in metadata fixture\n", stderr);
+  abort();
+}
+int addons_manifesto_recebido(const char *base, unsigned versao, uint64_t sessao,
+                              const char *corpo) {
+  (void)base; (void)versao; (void)sessao; (void)corpo;
+  fputs("unexpected addon manifest publication in metadata fixture\n", stderr);
+  abort();
 }
 
 // --- DUBLES: nenhum participa da regra, so fazem descoberta.c linkar ---------
@@ -88,7 +103,8 @@ int prog_gravar_local(const char *imdb, int t, int e, double p, double d, int to
 
 void  SDL_Delay(Uint32 ms)                 { usleep(ms * 1000); }
 int   ajustes_cw_fonte(void)               { return 0; }
-int   ajustes_tmdb_ligado(void)            { return 1; }
+static int fakeTmdbLigado = 1;
+int   ajustes_tmdb_ligado(void)            { return fakeTmdbLigado; }
 static int fakeMetaExterno, fakeTmdbBasico;
 int   ajustes_meta_externo(void)           { return fakeMetaExterno; }
 static int fakeSoCinemeta;
@@ -98,7 +114,8 @@ int   ajustes_logo_addon(void)             { return 0; }
 int   ajustes_tmdb_basico(void)            { return fakeTmdbBasico; }
 static int fakeTmdbArte;
 int   ajustes_tmdb_arte(void)              { return fakeTmdbArte; }
-int   ajustes_tmdb_elenco(void)            { return 0; }
+static int fakeTmdbElenco;
+int   ajustes_tmdb_elenco(void)            { return fakeTmdbElenco; }
 int   ajustes_tmdb_cw(void)                { return 0; }
 static const char *fakeIdioma = "pt-BR";
 const char *ajustes_tmdb_idioma(void)      { return fakeIdioma; }
@@ -152,7 +169,11 @@ int   prog_por_chave(const char *c, ProgRegistro *s) { (void)c; (void)s; return 
 void  prog_remover(const char *c)          { (void)c; }
 void  prog_marcar_removido(const char *i)  { (void)i; }
 int   prog_removido_vence(const char *i, long long ms) { (void)i; (void)ms; return 0; }
+int   prog_oculto_soltar(const char *i, long long ms) { (void)i; (void)ms; return 0; }
+int   prog_oculto_vence(const char *i, long long ms) { (void)i; (void)ms; return 0; }
 int   trakt_continuar(CatItem *s, int m)   { (void)s; (void)m; return 0; }
+int   trakt_e_a_seguir(const char *i)      { (void)i; return 0; }
+int   trakt_cw_concluiu(const char *i, long long ms) { (void)i; (void)ms; return 0; }
 int   trakt_continuar_falhou(void)        { return 0; }
 // Simkl (issue #110): sem vinculo nos testes de fileira, como o Trakt acima.
 int   simkl_ativo(void)                    { return 0; }
@@ -165,11 +186,13 @@ int   simkl_continuar(CatItem *s, int m)   { (void)s; (void)m; return 0; }
 int   simkl_e_a_seguir(const char *id)     { (void)id; return 0; }
 int   simkl_plantowatch(CatItem *s, int m) { (void)s; (void)m; return 0; }
 int   ajustes_salvos_no_simkl(void)        { return 0; }
-uint64_t perfis_sessao_geracao(void) { return 1; }
-int perfis_sessao_atual(uint64_t s) { return s == 1; }
-int perfis_sessao_travar(uint64_t s) { return s == 1; }
+// An isolated profile visit starts at generation 1. The title-identity
+// suite advances it to exercise stale synchronous lookup ownership.
+static uint64_t fakePerfilSessao = 1;
+uint64_t perfis_sessao_geracao(void) { return fakePerfilSessao; }
+int perfis_sessao_atual(uint64_t s) { return s == fakePerfilSessao; }
+int perfis_sessao_travar(uint64_t s) { return perfis_sessao_atual(s); }
 void perfis_sessao_destravar(void) {}
-int ajustes_ocultar_filmes_vistos(void) { return 0; }
 int trakt_enfeitar_lote_sessao(CatItem *s, int n, uint64_t sessao) {
   (void)sessao; (void)s; (void)n; return 0;
 }
@@ -991,8 +1014,9 @@ int main(void) {
     abrir();
     assert(cat_n_episodios(0) == 3);
     assert(!strcmp(cat_episodio(0, 0)->nome, "Nome do Xperience"));
-    assert(cat_item(0)->nElenco == 1 && !strcmp(cat_item(0)->elenco[0].nome, "Ator do Xperience"));
-    puts("ok  mescla: lista e elenco da base ficam; Cinemeta so preenche campos vazios");
+    // Integration also appends missing cast members from supplemental metadata.
+    assert(cat_item(0)->nElenco == 4 && !strcmp(cat_item(0)->elenco[0].nome, "Ator do Xperience"));
+    puts("ok  mescla: lista e elenco da base ficam; Cinemeta completa elenco ausente");
 
     // 26) Item do Cinemeta (origem "cinemeta"): nada muda, a lista e a do Cinemeta.
     limparCacheMeta(); nRotas = 0;
@@ -1291,6 +1315,71 @@ int main(void) {
     assert(cat_item(0)->temporadas[2] == 3);
     puts("ok  #372: cauda do fio velho nao repoe as abas que o fio novo trocou");
     nRotas = 0; limparCacheMeta(); }
+
+  // #205: filme com elenco so em memoria (nomes do catalogo, sem id de pessoa)
+  // ainda pede o casamento /credits do TMDB ao abrir.
+  { static const char *CREDITS =
+      "{\"cast\":[{\"id\":9001,\"name\":\"Rory Kinnear\",\"character\":\"X\"},"
+      "{\"id\":9002,\"name\":\"Jason Flemyng\",\"character\":\"Y\"}]}";
+    CatItem it;
+    limparCacheMeta(); nRotas = 0; nFake = 0; metaprov_zerar_pausa();
+    addonMeta = 0; fakeTmdbElenco = 1; fakeTmdbBasico = 0; fakeTmdbArte = 0;
+    snprintf(tmdbChave, sizeof tmdbChave, "%s", "01234567890123456789012345678901");
+    tmdbFind = "{\"movie_results\":[{\"id\":424242}]}";
+    rota("/meta/movie/tt28498219.json",
+         "{\"meta\":{\"id\":\"tt28498219\",\"type\":\"movie\",\"name\":\"Matchbox\",\"videos\":[]}}");
+    rota("themoviedb.org/3/movie/424242/credits", CREDITS);
+    rota("themoviedb.org/3/movie/424242/watch/providers", "{}");
+    memset(&it, 0, sizeof it);
+    snprintf(it.imdb, sizeof it.imdb, "%s", "tt28498219");
+    snprintf(it.tipo, sizeof it.tipo, "%s", "movie");
+    snprintf(it.titulo, sizeof it.titulo, "%s", "Matchbox the Movie");
+    it.nElenco = 2;
+    snprintf(it.elenco[0].nome, sizeof it.elenco[0].nome, "%s", "Rory Kinnear");
+    snprintf(it.elenco[1].nome, sizeof it.elenco[1].nome, "%s", "Jason Flemyng");
+    cat_definir_tudo(&it, 1, NULL, 0);
+    assert(desc_elenco_precisa_pessoas(cat_item(0)));
+    desc_episodios_garantir(0);
+    while (fioEpVivo) SDL_Delay(1);
+    assert(cat_item(0)->elenco[0].tmdb == 9001);
+    assert(cat_item(0)->elenco[1].tmdb == 9002);
+    assert(!desc_elenco_precisa_pessoas(cat_item(0)));
+    // Reopening can replace localized metadata while preserving every person ID.
+    it = *cat_item(0);
+    assert(desc_meta_elenco("{\"cast\":[{\"name\":\"Rory Kinnear\","
+                           "\"character\":\"Addon role\",\"photo\":\"https://addon.test/rory.jpg\"},"
+                           "{\"name\":\"Jason Flemyng\"}]}", &it, 0) == 2);
+    assert(it.elenco[0].tmdb == 9001 && it.elenco[1].tmdb == 9002);
+    assert(!strcmp(it.elenco[0].papel, "Addon role"));
+    nRotas = 0; nPedidos = 0;
+    rota("themoviedb.org/3/movie/424242/credits",
+         "{\"cast\":[{\"id\":9001,\"name\":\"Rory Kinnear\","
+         "\"character\":\"Papel localizado\",\"profile_path\":\"/rory.jpg\"},"
+         "{\"id\":9002,\"name\":\"Jason Flemyng\"},"
+         "{\"id\":9003,\"name\":\"Additional actor\"}]}");
+    fotosDoElenco(&it, it.imdb, 0, 0);
+    assert(pediu("/credits?"));
+    assert(!strcmp(it.elenco[0].papel, "Papel localizado"));
+    assert(!strcmp(it.elenco[0].foto, "https://image.tmdb.org/t/p/w185/rory.jpg"));
+    assert(it.nElenco == 3 && it.elenco[2].tmdb == 9003);
+
+    // Missing IDs alone must not schedule work when enrichment cannot run.
+    it.elenco[0].tmdb = it.elenco[1].tmdb = it.elenco[2].tmdb = 0;
+    for (int disabled = 0; disabled < 3; disabled++) {
+      fakeTmdbElenco = disabled != 0;
+      fakeTmdbLigado = disabled != 1;
+      tmdbChave[0] = disabled == 2 ? 0 : '0';
+      cat_definir_tudo(&it, 1, NULL, 0);
+      nPedidos = 0;
+      assert(!desc_elenco_precisa_pessoas(cat_item(0)));
+      desc_episodios_garantir(0);
+      assert(desc_episodios_precarregar(0) == 0);
+      assert(!fioEpVivo && nPedidos == 0);
+    }
+    fakeTmdbLigado = 1;
+    fakeTmdbElenco = 0; tmdbFind = NULL; tmdbChave[0] = 0; nRotas = 0;
+    limparCacheMeta();
+    puts("ok  #205: cast IDs, refresh after addon metadata, and integration scheduling gates"); }
 
   puts("detalheanime: tudo ok");
   return 0;

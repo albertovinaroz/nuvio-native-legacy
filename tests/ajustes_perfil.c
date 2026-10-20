@@ -33,7 +33,7 @@ int main(void) {
   assert(!ajustes_legenda_sync_auto() && !dePerfil(AJ_LEG_SYNC_AUTO));
   { char *blob = NULL;
     ajustes_mesclar_blob("{}", &blob);
-    assert(!blob || !strstr(blob, "legendaSyncAutoLocal")); free(blob); }
+    assert(!blob || !strstr(blob, "\"legendaSyncAutoLocal\"")); free(blob); }
 
   // Perfil 1: destaque desligado, 4K pedido. 2.0.2: ele manda o historico so
   // para o Simkl e nao quer o social; o perfil 2 e o contrario.
@@ -86,7 +86,7 @@ int main(void) {
   assert(ajustes_ocultar_filmes_vistos());
   { char *localBlob = NULL;
     ajustes_mesclar_blob("{}", &localBlob);
-    assert(!localBlob || !strstr(localBlob, "hideWatchedMoviesLocal"));
+    assert(localBlob && strstr(localBlob, "c_hideWatchedMoviesLocal"));
     free(localBlob); }
 
   // Perfil nunca usado aqui: nada muda.
@@ -140,8 +140,29 @@ int main(void) {
   assert(valor[AJ_GPU_EFEITOS] == 1);
   assert(valor[AJ_HERO] == 0);  // Person preference still follows the account.
 
+  // Arquivos privados dos provedores (conta + perfil) saem no logout; os
+  // compartilhados e o que nao termina em -pN.txt ficam.
+  static const char *const privados[] = {
+    "debrid-conta_x-p1.txt", "debrid-conta_x-p12.txt", "provider-scope-conta_x-p2.txt",
+    "fontefalha-conta_x-p3.txt", "fontesmortas-00ff00ff00ff00ff-p1.txt",
+    "debrid-conta_x-p1.txt.tmp" };
+  static const char *const ficam[] = { "debrid.txt", "fontefalha.txt", "fontesmortas.txt",
+                                       "debrid-conta_x.txt", "outra-conta_x-p1.txt" };
+  for (size_t i = 0; i < sizeof privados / sizeof *privados; i++)
+    assert(dados_gravar(privados[i], "x\n"));
+  for (size_t i = 0; i < sizeof ficam / sizeof *ficam; i++)
+    assert(dados_gravar(ficam[i], "x\n"));
+
   // Logout: nenhuma copia sobra.
   ajustes_perfil_esquecer();
+  for (size_t i = 0; i < sizeof privados / sizeof *privados; i++) {
+    char *t = dados_ler(privados[i]);
+    assert(!t);
+  }
+  for (size_t i = 0; i < sizeof ficam / sizeof *ficam; i++) {
+    char *t = dados_ler(ficam[i]);
+    assert(t); free(t);
+  }
   assert(ajustes_perfil_restaurar(1) == 0);
   assert(ajustes_perfil_restaurar(2) == 0);
 

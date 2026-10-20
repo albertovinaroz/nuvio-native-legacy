@@ -99,6 +99,9 @@ int col_extra_definir(const ColFolder *v, int n);
 // Missing/null/truncated replies retain the current snapshot. Returns folders;
 // callers use col_revisao(), including deletions and unchanged nonempty pulls.
 int col_definir_json(const char *json);
+// Retira referencias de addon comprovadamente desinstalado; pasta sem fonte
+// sai. Fontes TMDB/Trakt e as demais de uma pasta mista permanecem.
+int col_podar_fontes_addon(int (*ausente)(const char *id, const char *base));
 // Pure validation, safe on the sync worker before caching an account reply.
 int col_resposta_valida(const char *json);
 // TROCA DE PERFIL: tira da tela as colecoes do perfil anterior (as da conta e

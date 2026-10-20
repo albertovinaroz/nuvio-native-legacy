@@ -320,8 +320,10 @@ static void *fioRede(void *u) {
   const char *v[8];
   const char *const *cabs;
   int f;
+  if (it->xt && xtream_conexoes_limitadas()) { atomic_store(&L.fioOcupado, 0); return NULL; }
   if (it == &L.it[0] && L.xtConfig) {
     L.contaLida = xtream_conta_ler(&L.conta);
+    if (it->xt && xtream_conexoes_limitadas()) { atomic_store(&L.fioOcupado, 0); return NULL; } // No stream probes.
     if (L.conta.valido)
       printf("[livetv-diag] conta: status=%s formatos=%s%s telas=%d/%d vence=%lld\n", L.conta.status,
              L.conta.formatosDeclarados ? (L.conta.temM3u8 ? "m3u8 " : "") : "nao declarados",
@@ -411,8 +413,9 @@ static void iniciarRede(int i) {
 // Qual formato vai ao pipeline primeiro: o que a REDE mostrou servindo video,
 // na ordem do Xtream (xtream_formatos: o que a conta declara e o que ja tocou).
 static int proximoFormato(const LtdItem *it) {
+  if (it->xt && xtream_conexoes_limitadas()) return -1;
   const char *ext[2];
-  int k = it->xt ? xtream_formatos(ext) : 0, i;
+  int k = it->xt ? xtream_formatos_canal(it->id, ext) : 0, i;
   for (i = 0; i < k; i++) {
     int f = !strcmp(ext[i], "ts") ? F_TS : F_HLS;
     if (it->f[f].servido && !it->f[f].testou) return f;
@@ -717,6 +720,7 @@ void livetvdiag_evento(const SDL_Event *e) {
       ajustes_livetv_aplicar(L.rec.resolucao, L.rec.formato, L.rec.espera);
       if (L.recModo >= 0) ajustes_livetv_aplicar_modo(L.recModo);
       if (L.tocouModo[M_P]) ajustes_livetv_aplicar_proxy(1);
+      if (L.n > 0) guia_fonte_gravar_diag(L.it[0].id, L.rec.formato, L.recModo, L.tocouModo[M_P] ? 1 : -1);
       L.aplicado = 1;
       printf("[livetv-diag] aplicado: resolucao=%d formato=%d espera=%d\n", L.rec.resolucao,
              L.rec.formato, L.rec.espera);
@@ -927,26 +931,29 @@ static void desenharCanais(GfxRect r, float ar, float ag, float ab) {
   else snprintf(sub, sizeof sub, "%s", i18n("Abra o guia numa fileira com canais e volte aqui."));
   titulo(r, "Canais testados", sub);
 #ifdef NV_TOUCH_UI
+  if (layout_modo_mobile()) {
   toquerol_vincular(&toqueLtd, (GfxRect){r.x + 32.0f, r.y + 90.0f, r.w - 64.0f, r.h - 106.0f}, gfx_escala(),
                    0.0f, L.n * (LTD_LINHA + 4.0f) - (r.h - 106.0f), 1, &toqueLtdOffset);
   ponteiro_rolagem(toqueLtdRolar);
   gfx_recorte(r.x, r.y + 90.0f, r.w, r.h - 106.0f);
+  }
 #endif
   for (i = 0; i < L.n; i++) {
     const LtdItem *it = &L.it[i];
     GfxRect ln = { r.x + 32.0f, r.y + 90.0f + (float)i * (LTD_LINHA + 4.0f), r.w - 64.0f, LTD_LINHA };
 #ifdef NV_TOUCH_UI
-    ln.y -= toqueLtdOffset;
+    if (layout_modo_mobile()) ln.y -= toqueLtdOffset;
 #endif
     int cor, atual = i == L.atual && L.estado != E_PRONTO;
     float x = ln.x + 20, yc = ln.y + ln.h * 0.5f;
     TxtLinha tn, tr;
 #ifdef NV_TOUCH_UI
+    if (layout_modo_mobile()) {
     if (ln.y > r.y + r.h - 16) break;
     if (ln.y + ln.h < r.y + 90.0f) continue;
-#else
-    if (ln.y + ln.h > r.y + r.h - 16) break;
+    } else
 #endif
+    if (ln.y + ln.h > r.y + r.h - 16) break;
     textoResultado(it, res, sizeof res, det, sizeof det, &cor);
     if (atual) ajustes_ui_foco_linha(ln, 22);
     ajustes_ui_neutro((GfxRect){ x, yc - 21, 42, 42 }, 12, 0.07f);
@@ -969,7 +976,7 @@ static void desenharCanais(GfxRect r, float ar, float ag, float ab) {
     }
   }
 #ifdef NV_TOUCH_UI
-  gfx_sem_recorte();
+  if (layout_modo_mobile()) gfx_sem_recorte();
 #endif
 }
 

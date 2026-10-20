@@ -24,6 +24,8 @@ void assrender_definir_texto_estilo(const PlainAssStyle *style);
 int  assrender_atualizar(const char *corpo, size_t tamanho, unsigned geracao);
 void assrender_limpar(void);
 void assrender_limpar_fontes(void);
+/* Esvazia o cache de glifos/bitmaps do libass (aviso de memoria, #415). */
+void assrender_aliviar(void);
 
 /* Fontes extraidas de attachments Matroska. O nome e apenas informativo para
  * libass; os bytes sao copiados antes do retorno. */

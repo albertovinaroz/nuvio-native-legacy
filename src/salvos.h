@@ -122,10 +122,9 @@ int  salvos_mesmo_titulo(const char *a, const char *b);
 // `id` sem o sufixo ":<t>:<e>" em `out`. Id sem esse sufixo sai igual.
 void salvos_id_titulo(const char *id, char *out, size_t tam);
 
-// A UNIAO QUE A INTERFACE MOSTRA COMO "SALVOS": a lista local, na ordem de
-// insercao, e depois cada TITULO do catalogo com naLista — uma vez so, por
-// mais copias que o catalogo tenha dele (o mesmo titulo vive em varias
-// fileiras, cada uma com a sua copia) e por mais ids que ele use.
+// Saved rows follow the effective Library source: local insertion order for
+// Nuvio, then catalog titles marked for that source, once per title.
+// Catalog duplicates and episode IDs collapse into the same title.
 //   local >= 0: indice em salvos_item(); `cat` e a copia do catalogo que tem o
 //               progresso dele (-1 sem nenhuma).
 //   local <  0: so o catalogo tem; `cat` e o indice.

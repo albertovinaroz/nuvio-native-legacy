@@ -2,6 +2,7 @@
 // ela existe (sem Trakt, o "+" nao guardava nada) e por que ela nao e uma
 // quarta superficie de biblioteca.
 #include "salvos.h"
+#include "ajustes.h"
 #include "dados.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -327,6 +328,10 @@ int salvos_definir(const CatItem *ci, int salvo) {
 int salvos_aplicar_catalogo(void) {
   int i, marcados = 0, ultimo = -1;
   if (nItens < 1) return 0;
+  // A lista local e o feed Nuvio: so a fonte LOCAL pode apontar os itens dela
+  // no catalogo. Com Trakt/Simkl efetivos a marca viria acompanhada de um selo
+  // remoto errado (ver a nota da lista local em biblioteca.c).
+  if (!ajustes_fonte_traz_locais(ajustes_fonte_biblioteca())) return 0;
   // Catalogo vazio nao tem onde marcar. Sair sem tocar na marca faz a
   // reconciliacao tentar de novo assim que o catalogo existir.
   if (cat_n() < 1) return 0;
@@ -356,11 +361,12 @@ int salvos_aplicar_catalogo(void) {
 
 void salvos_reconciliar(void) {
   const CatItem *c;
+  if (!ajustes_fonte_traz_locais(ajustes_fonte_biblioteca())) return;
   if (nItens < 1 || cat_n() < 1) return;
   if (cat_n() != marcaCatN) { salvos_aplicar_catalogo(); return; }
   if (marcaIdx < 0 || marcaIdx >= cat_n()) return;
   c = cat_item(marcaIdx);
-  if (c && !strcmp(c->imdb, marcaId) && c->naLista) return;
+  if (c && !strcmp(c->imdb, marcaId) && (c->listaFontes & (1u << AJ_SALVOS_LOCAL))) return;
   salvos_aplicar_catalogo();
 }
 
@@ -420,6 +426,7 @@ static int tabAchar(const SalvosEntrada *out, unsigned h, const char *chave,
 
 int salvos_uniao(SalvosEntrada *out, int cap) {
   int i, k = 0, n = cat_n();
+  int fonte = ajustes_fonte_biblioteca();
   unsigned precisa = 16;
   char chave[64];
   if (!out || cap < 1) return 0;
@@ -438,7 +445,7 @@ int salvos_uniao(SalvosEntrada *out, int cap) {
   }
   memset(tabU, 0, sizeof *tabU * capTabU);
 
-  for (i = 0; i < nItens && k < cap; i++) {
+  for (i = 0; ajustes_fonte_traz_locais(fonte) && i < nItens && k < cap; i++) {
     unsigned vaga, h = hashTitulo(itens[i].id, chave, sizeof chave);
     // Arquivo antigo pode ter o mesmo titulo duas vezes; acharLocal acha o
     // primeiro, e e o primeiro que responde pelo titulo.
@@ -456,6 +463,9 @@ int salvos_uniao(SalvosEntrada *out, int cap) {
     unsigned vaga, h;
     int j;
     if (!c || !c->imdb[0]) continue;
+    // Local copies may supply metadata; remote rows must belong to this source.
+    if (!ajustes_fonte_traz_locais(fonte) &&
+        (!c->naLista || !(c->listaFontes & (1u << fonte)))) continue;
     h = hashTitulo(c->imdb, chave, sizeof chave);
     j = tabAchar(out, h, chave, &vaga);
     if (j >= 0) {
@@ -471,7 +481,7 @@ int salvos_uniao(SalvosEntrada *out, int cap) {
       }
       continue;
     }
-    if (!c->naLista || k >= cap) continue;
+    if (!c->naLista || !(c->listaFontes & (1u << fonte)) || k >= cap) continue;
     out[k].local = -1; out[k].cat = i; progU[k] = c->progresso > 0;
     tabU[vaga].h = h; tabU[vaga].ent = k;
     k++;

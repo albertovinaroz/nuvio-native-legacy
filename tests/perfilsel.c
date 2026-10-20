@@ -25,7 +25,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nvtmp.h"
-void servidores_perfil_trocou(void) {}   // servidores.c is not linked here
+static int servidoresTrocas, sessoesEncerradas;
+static void encerrarSessao(void) { sessoesEncerradas++; }
+void servidores_perfil_trocou(void) { servidoresTrocas++; } // not linked here
 void plugins_perfil_mudou(void) {}     // plugins.c is not linked here
 
 // --- pasta de dados de mentira ----------------------------------------------
@@ -59,6 +61,7 @@ void fil_definir_perfil(int p) { (void)p; }
 // fontepref.c idem: a fonte lembrada tambem e por perfil, e perfis.c so avisa.
 void fontepref_definir_perfil(int p) { (void)p; }
 void legmem_definir_perfil(int p) { (void)p; }
+void audiomem_definir_perfil(int p) { (void)p; }
 // arteescolha.c idem (#142): a arte escolhida a mao e por perfil.
 void arteesc_definir_perfil(int p) { (void)p; }
 // O ajuste "Usar os addons do perfil principal" (ajustes.c): o teste escolhe.
@@ -227,12 +230,21 @@ static void etapaUm(void) {
   assert(perfis_ativo() == 1);
 
   // G) Escolher encerra a pergunta DESTA sessao, e so dela.
+  perfis_ao_abrir_sessao(encerrarSessao);
   perfis_definir_ativo(2);
   assert(perfis_ativo() == 2);
   assert(perfis_precisa_escolher() == 0);
   assert(perfis_sem_escolha() == 0);      // a lista nao mudou
   assert(perfis_pode_dispensar() == 1);
   assert(perfis_indice_sugerido() == 1);
+  // Reopening the same profile intentionally starts a fresh session, including
+  // player teardown and personal-server reload; old publications are rejected.
+  { uint64_t anterior = perfis_sessao_geracao();
+    int encerradas = sessoesEncerradas, trocas = servidoresTrocas;
+    perfis_definir_ativo(2);
+    assert(perfis_ativo() == 2 && !perfis_sessao_atual(anterior));
+    assert(!perfis_sessao_travar(anterior));
+    assert(sessoesEncerradas == encerradas + 1 && servidoresTrocas == trocas + 1); }
 
   // G2) ADDONS DO PRINCIPAL. O perfil 2 tem a marca da conta: le os do 1 com o
   //     ajuste local ligado ou desligado. O perfil 3 NAO tem a marca: so o

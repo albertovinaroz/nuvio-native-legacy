@@ -189,6 +189,30 @@ int main(int argc,char **argv) {
     puts("ok  lixo no buffer MKV nao muda a decisao dos creditos");
   }
 
+  // v4 OpenAPI: GET /media, movie-media example; no tmdb_id in the body.
+  n = intro_extrair("{\"tvdb_id\":169,\"type\":\"movie\","
+                    "\"intro\":[{\"start_ms\":null,\"end_ms\":23000}],"
+                    "\"recap\":[{\"start_ms\":25000,\"end_ms\":134000}],"
+                    "\"credits\":[{\"start_ms\":5801777,\"end_ms\":6371111},"
+                                   "{\"start_ms\":6408000,\"end_ms\":null}],"
+                    "\"preview\":[{\"start_ms\":1680000,\"end_ms\":1740000}]}", v, 8);
+  assert(n == 5);
+  assert(v[0].tipo == INTRO_ABERTURA && v[0].inicio == 0 && v[0].fim == 23);
+  assert(v[1].tipo == INTRO_RESUMO && v[1].inicio == 25 && v[1].fim == 134);
+  assert(v[2].tipo == INTRO_CREDITOS && mesmoSeg(v[2].inicio, 5801.777) && mesmoSeg(v[2].fim, 6371.111));
+  assert(v[3].tipo == INTRO_CREDITOS && v[3].inicio == 6408 && v[3].fim == 0);
+  assert(v[4].tipo == INTRO_PREVIA && v[4].inicio == 1680 && v[4].fim == 1740);
+  // v4 OpenAPI: episode-media example; coordinates stay in the caller's order.
+  { const char *j = "{\"tvdb_id\":71663,\"type\":\"tv\",\"season\":1,\"episode\":1,"
+                    "\"intro\":[{\"start_ms\":30000,\"end_ms\":90000},"
+                                "{\"start_ms\":120000,\"end_ms\":150000}]}";
+    assert(intro_resposta_confere(j, 1, 1));
+    assert(!intro_resposta_confere(j, 1, 2));
+    assert(intro_extrair(j, v, 8) == 2);
+    assert(v[0].tipo == INTRO_ABERTURA && v[0].inicio == 30 && v[0].fim == 90);
+    assert(v[1].tipo == INTRO_ABERTURA && v[1].inicio == 120 && v[1].fim == 150); }
+  puts("ok  v4 OpenAPI samples: TVDB identity, all segments, caller coordinates");
+
   // FILME: /v3/media?imdb_id=tt0111161 (Shawshank). So creditos, sem fim.
   memset(v, 0xa5, sizeof v);
   n = intro_extrair("{\"tmdb_id\":278,\"type\":\"movie\","
@@ -420,9 +444,13 @@ int main(int argc,char **argv) {
   // --- 2.0.3: PEDIDOS (como o plugin oficial), FILME, PREVIA, ANISKIP --------
   { char url[400];
     intro_montar_url(url, sizeof url, "tt0388629", 37854, 4, 92, 1385.4);
-    assert(!strcmp(url, "https://api.theintrodb.org/v3/media?tmdb_id=37854&season=4&episode=92&duration_ms=1385400"));
+    assert(!strcmp(url, "https://api.theintrodb.org/v4/media?tmdb_id=37854&season=4&episode=92&duration_ms=1385400"));
     intro_montar_url(url, sizeof url, "tt1375666", 0, 0, 0, 0.0);
-    assert(!strcmp(url, "https://api.theintrodb.org/v3/media?imdb_id=tt1375666"));
+    assert(!strcmp(url, "https://api.theintrodb.org/v4/media?imdb_id=tt1375666"));
+    intro_montar_url(url, sizeof url, "tt12409194", 0, 0, 1, 1200.0);
+    assert(!strcmp(url, "https://api.theintrodb.org/v4/media?imdb_id=tt12409194&season=0&episode=1&duration_ms=1200000"));
+    assert(intro_resposta_confere("{\"season\":0,\"episode\":1}", 0, 1));
+    assert(!intro_resposta_confere("{\"season\":1,\"episode\":1}", 0, 1));
     intro_montar_url_aniskip(url, sizeof url, 21, 1, 1500.0);
     assert(strstr(url, "skip-times/21/1?types[]=op&types[]=ed&types[]=recap&episodeLength=1500"));
     puts("ok  URLs: tmdb_id + par do TMDB + duration_ms; imdb sozinho no filme; AniSkip");
@@ -468,6 +496,14 @@ int main(int argc,char **argv) {
     nt = esperar(2); nt = intro_trechos(t, 8);
     assert(nt == 2 && mesmoSeg(credFinal(t, nt), 1387.996));
     puts("ok  anime kitsu:12 -> MAL 21 -> AniSkip: abertura e ED");
+    // Especial sem um mapeamento MAL proprio nao herda os marcadores de E1 regular.
+    { int aniAntes;
+      pthread_mutex_lock(&fakeTrava); aniAntes = aniPedidos; pthread_mutex_unlock(&fakeTrava);
+      intro_pedir_ids("kitsu:12:1", 0, 0, 1, 0, 0);
+      assert(esperar(0) == 0);
+      pthread_mutex_lock(&fakeTrava); assert(aniPedidos == aniAntes); pthread_mutex_unlock(&fakeTrava);
+    }
+
     // #430: evidencia vem do TMDB ja baixado, antes ou depois do player.
     const char *anime = "{\"original_language\":\"ja\",\"genres\":[{\"id\":16}]}";
     intro_registrar_tmdb("tt5607616", 65942, anime);

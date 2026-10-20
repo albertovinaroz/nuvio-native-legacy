@@ -1,3 +1,4 @@
+#define NV_DUBLE_SESSAO
 #include "credfio.h"
 #include "sync.h"
 #include "perfisessao.h"
@@ -6,10 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Isolated upstream fixtures omit sync.c. Complete apps always provide the
-// scoped APIs; the legacy fallback is only for those account-free fixtures.
-extern int sync_credencial_pedido(SyncCredencialPedido *) NV_PERFIL_OPCIONAL;
-extern int sync_empurrar_credencial_pedido(const SyncCredencialPedido *, const char *, const char *) NV_PERFIL_OPCIONAL;
+// Isolated fixtures omit sync.c: weak legacy-equivalent defaults; sync.c's strong scoped APIs override them.
+__attribute__((weak)) int sync_credencial_pedido(SyncCredencialPedido *p) {
+  memset(p, 0, sizeof *p); p->sessao = nv_perfil_sessao_ler(); return 1;
+}
+__attribute__((weak)) int sync_empurrar_credencial_pedido(const SyncCredencialPedido *p, const char *prov, const char *j) {
+  (void)p; return sync_empurrar_credencial(prov, j);
+}
 #define CF_SLOTS 4
 typedef struct { char prov[16]; int estado, res; uint64_t sessao, pedido; } Slot;
 typedef struct { char prov[16]; char *json; SyncCredencialPedido dono; uint64_t pedido; } Pedido;
@@ -28,8 +32,7 @@ static void *fio(void *u) {
   Pedido *p = u;
   int r = 0;
   if (nv_perfil_sessao_atual(p->dono.sessao))
-    r = sync_empurrar_credencial_pedido ? sync_empurrar_credencial_pedido(&p->dono, p->prov, p->json)
-                                       : sync_empurrar_credencial(p->prov, p->json);
+    r = sync_empurrar_credencial_pedido(&p->dono, p->prov, p->json);
   if (nv_perfil_sessao_travar(p->dono.sessao)) {
     pthread_mutex_lock(&trava);
     Slot *s = achar(p->prov, 0);
@@ -48,9 +51,7 @@ int credfio_iniciar(const char *provider, const char *credJson) {
   if (!provider || !*provider || strlen(provider) >= sizeof slots[0].prov || !credJson) return 0;
   Pedido *p = calloc(1, sizeof *p);
   if (!p) return 0;
-  if (sync_credencial_pedido) {
-    if (!sync_credencial_pedido(&p->dono)) { free(p); return 0; }
-  } else p->dono.sessao = nv_perfil_sessao_ler();
+  if (!sync_credencial_pedido(&p->dono)) { free(p); return 0; }
   snprintf(p->prov, sizeof p->prov, "%s", provider);
   p->json = strdup(credJson);
   if (!p->json || !nv_perfil_sessao_travar(p->dono.sessao)) { free(p->json); free(p); return 0; }

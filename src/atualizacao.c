@@ -286,7 +286,7 @@ static float rolar, rolarAlvo, notasH, vistaH;
 static ToqueRolagem toqueNotas;
 static int toqueNotasRolar(const PonteiroRolagem *e) {
   int r = toquerol_evento(&toqueNotas, e);
-  if (toqueNotas.livre) rolarAlvo = rolar;
+  if (toquerol_livre(&toqueNotas)) rolarAlvo = rolar;
   return r;
 }
 #endif
@@ -1109,7 +1109,7 @@ void atualizacao_abrir(void) {
 void atualizacao_evento(const SDL_Event *e) {
 #ifdef NV_TOUCH_UI
   if (toquerol_navegacao(e)) {
-    if (toqueNotas.livre) rolarAlvo = rolar;
+    if (toquerol_livre(&toqueNotas)) rolarAlvo = rolar;
     toquerol_limpar(&toqueNotas);
   }
 #endif
@@ -1273,7 +1273,7 @@ void atualizacao_atualizar(float dt, Uint32 agora) {
   // Rolagem suave, mas curta (~120 ms para chegar): quem segura a seta quer
   // ver o texto andar, nao esperar.
 #ifdef NV_TOUCH_UI
-  if (!toqueNotas.livre)
+  if (!toquerol_livre(&toqueNotas))
 #endif
   { float d = rolarAlvo - rolar, f = dt * 1000.0f / 120.0f;
     if (f > 1.0f) f = 1.0f;

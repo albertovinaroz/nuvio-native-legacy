@@ -13,7 +13,7 @@ using NuvioTpk;
 using Tizen.Multimedia;
 class Test {
     static readonly Queue<Action> queue = new Queue<Action>();
-    static int failures, presos, alvoPreso;
+    static int failures, presos, alvoPreso, completed;
     static Video video;
     static readonly List<int> erros = new List<int>();
     static int Erros { get { lock (erros) return erros.Count; } }
@@ -35,9 +35,24 @@ class Test {
     static void OpenTocado() { Open(); Wait(() => Player.All.Count > 0 && Player.All[Player.All.Count - 1].Starts == 1); }
     static int Main() {
         NvVid.Registrar = (a,b,c,d,e,f,g) => {}; NvVid.RegistrarFaixas = a => {}; NvVid.RegistrarAspecto = a => {};
-        NvVid.Evento = (t,a,b) => { if (t == 5) lock (erros) erros.Add(a); if (t == 9) { alvoPreso = a; Interlocked.Increment(ref presos); } };
+        NvVid.Evento = (t,a,b) => { if (t == 4) Interlocked.Increment(ref completed); if (t == 5) lock (erros) erros.Add(a); if (t == 9) { alvoPreso = a; Interlocked.Increment(ref presos); } };
         NvVid.LogNativo = Console.WriteLine;
         NvVid.Faixa = (a,b,c) => {}; NvVid.FaixasFim = (a,b) => {};
+
+        // #302: a segment notification is not EOS while the native pipeline plays.
+        Setup(); OpenTocado(); var live = Player.All[0]; int ends = completed;
+        live.Complete(false);
+        Thread.Sleep(50);
+        Check(completed == ends && live.Starts == 1 && live.SeekCalls == 0 && !live.Disposed,
+              "segment completion while Playing neither ends nor restarts playback");
+        live.Complete(true); Wait(() => completed == ends + 1);
+        Open(); Wait(() => Player.All.Count == 2 && Player.All[1].Starts == 1);
+        Check(live.Disposed && live.Muted && live.Display == null && Player.Overlap == 0 &&
+              Player.All[1].SeekCalls == 0,
+              "real EOS recovery releases audio and video before a fresh source without resume seek");
+        live.Complete(true); Thread.Sleep(50);
+        Check(completed == ends + 1, "old completion cannot end the replacement session");
+        Entry("fParar"); Wait(() => Player.All[1].Disposed);
 
         // Parar e abrir: o velho sai mudo e sem plano ANTES do novo existir.
         Setup(); OpenTocado(); var old = Player.All[0];
@@ -209,6 +224,7 @@ namespace Tizen.Multimedia {
         public int PositionDelayMs, PositionCalls;
         public ManualResetEventSlim PositionEntered = new ManualResetEventSlim();
         public int GetPlayPosition() { Interlocked.Increment(ref PositionCalls); PositionEntered.Set(); Thread.Sleep(PositionDelayMs); return 1234; }
+        public void Complete(bool ended) { if (ended) State = PlayerState.Ready; PlaybackCompleted?.Invoke(this, new Event()); }
         public void Interromper() { State=PlayerState.Paused; PlaybackInterrupted?.Invoke(this, new Event()); }
         public Task SetPlayPositionAsync(int ms,bool precise) { SeekCalls++; if(FailSeek) throw new InvalidOperationException("seek InvalidOperation"); return SeekPending?.Task ?? Task.CompletedTask; }
     }

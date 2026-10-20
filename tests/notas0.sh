@@ -7,6 +7,6 @@ TMPDIR="${TMPDIR%/}"
 set -eu
 cd "$(dirname "$0")/.."
 cc -O1 -g -Wall -Wextra -DNV_EXTRAS_TESTE -Isrc -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
-  src/extras.c src/js.c tests/notas0.c \
+  src/extras.c src/notasfontes.c src/js.c tests/notas0.c \
   -lpthread -o ${TMPDIR:-/tmp}/nuvio-notas0-tests
 ${TMPDIR:-/tmp}/nuvio-notas0-tests

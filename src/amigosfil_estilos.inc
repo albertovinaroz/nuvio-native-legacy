@@ -71,7 +71,7 @@ static int afVivos(void) {
   return n;
 }
 static float afDetalheX(float x0) {
-  return fminf(x0 + 144 + afN * 112 + 16, amigosfilDireita() - 856);
+  return fminf(x0 + 144 + afN * 112 + 16, amigosfilDireita() - 424);
 }
 static GfxRect afRect(int i, float x0, float y) {
   int s = ajustes_amigos_estilo();
@@ -92,24 +92,25 @@ static GfxRect afRect(int i, float x0, float y) {
   } else r.x += i * (NV_DESTAQUE_W + 24.0f);
   return r;
 }
-static GfxRect afAcaoRect(int i, float y) {
-  float w = 224.0f, dir = amigosfilDireita();
-  if (ajustes_amigos_estilo() == 3)
-    return (GfxRect){dir - (i == afN ? 416 : 224), y + 34, i == afN ? 176 : 208, 42};
-  return (GfxRect){dir - (i == afN ? 2.0f * w + 16.0f : w), y - 55.0f, w, 42.0f};
-}
 static void afTexto(const char *s, float x, float y, float w, int fonte, float alpha) {
   TxtLinha t = txt_linha_corta(fonte, s, 238, 238, 244, 255, w);
   txt_desenhar_alpha(t, x, y, alpha);
 }
-static void afAnel(GfxRect r, int foco) {
+// The Home card corner (home.c raioDe): the setting's radius, capped for small cards.
+static float afRaio(GfxRect r) {
+  float v = ajustes_raio_poster_px() / r.h, teto = 0.5f * r.w / r.h;
+  return fminf(v, fminf(0.5f, teto));
+}
+// The Home card focus: accent ring outside the card, or 6% growth with the border off.
+static void afFocar(GfxRect *r, float raio, int foco) {
   if (!foco) return;
-  float ar, ag, ab;
-  ajustes_acento(&ar, &ag, &ab);
-  GfxRect b = {r.x - NV_ANEL_FOCO, r.y - NV_ANEL_FOCO,
-               r.w + 2 * NV_ANEL_FOCO, r.h + 2 * NV_ANEL_FOCO};
-  gfx_cor(b, 14.0f / b.h, ar, ag, ab, 1.0f);
-  afFoco = b;
+  if (ajustes_borda_foco()) {
+    svd_aro_foco(*r, raio, 1.0f, 1.0f);
+    afFoco = (GfxRect){r->x - NV_ANEL_FOCO, r->y - NV_ANEL_FOCO, r->w + 2 * NV_ANEL_FOCO, r->h + 2 * NV_ANEL_FOCO};
+  } else {
+    r->x -= r->w * 0.03f; r->y -= r->h * 0.03f; r->w *= 1.06f; r->h *= 1.06f;
+    afFoco = *r;
+  }
 }
 static void afLegenda(int i, GfxRect r, float alpha) {
   const SvAmigo *a = afAmigo(i);
@@ -126,6 +127,12 @@ static void afLegenda(int i, GfxRect r, float alpha) {
         break;
       }
     }
+  }
+  if ((ajustes_amigos_estilo() == 2 || ajustes_amigos_estilo() == 4) && e) {
+    // The title sits under the poster, never over its logo art.
+    afTexto(e->titulo, r.x, r.y + r.h + 12.0f, r.w, TXT_CAPTION, alpha);
+    afTexto(linha, r.x, r.y + r.h + 42.0f, r.w, TXT_CAPTION2, alpha * 0.65f);
+    return;
   }
   afTexto(linha, r.x, r.y + r.h + 12.0f, r.w, TXT_CAPTION, alpha);
   if (e) {
@@ -149,23 +156,20 @@ static void afCartao(int i, GfxRect r, int foco, Uint32 agora) {
 #ifdef NV_AMIGOSFIL_TESTE
   afUlt[i] = r;
 #endif
-  // People cards (no title) wear the home card shell: radius, focus ring.
-  float raio = 12.0f / r.h;   // same corner as the feed cards
-  if (e) afAnel(r, foco);
-  else if (foco) {
-    svd_aro_foco(r, raio, 1.0f, 1.0f);
-    afFoco = (GfxRect){r.x - NV_ANEL_FOCO, r.y - NV_ANEL_FOCO, r.w + 2 * NV_ANEL_FOCO, r.h + 2 * NV_ANEL_FOCO};
-  }
+  const int vertical = s == 2 || s == 4;
+  const GfxRect base = r;   // the caption anchor: focus growth never moves the text
+  float raio = afRaio(r);
+  afFocar(&r, raio, foco);
   if (s == 3) {
-    svd_superficie(r, .5f, 0, 1);
-    svd_rosto((GfxRect){r.x + 24, r.y + 4, 48, 48}, a, 0, 1, agora);
+    svd_superficie(r, raio, 0, 1);
+    svd_rosto((GfxRect){r.x + (r.w - 40) * .5f, r.y + 6, 40, 40}, a, 0, 1, agora);
     TxtLinha t = txt_linha_corta(TXT_CAPTION2, a->nome, 240, 240, 245, 255, r.w - 16);
-    txt_desenhar(t, r.x + (r.w - t.w) * .5f, r.y + 54);
+    txt_desenhar(t, r.x + (r.w - t.w) * .5f, r.y + r.h - t.h - 4);
     return;
   }
   if (s == 1 && (!e || e->acao != SV_AGORA)) {
     char linha[256], ep[32];
-    if (foco) svd_superficie(r, 12.0f / r.h, 0, 1);
+    if (foco) svd_superficie(r, raio, 0, 1);
     svd_rosto((GfxRect){r.x + 16, r.y + (r.h - 48) * .5f, 48, 48}, a, 0, 1, agora);
     snprintf(linha, sizeof linha, "%s%s%s", a->nome, e ? " " : "", e ? socialvis_verbo(e) : "");
     afTexto(linha, r.x + 82, r.y + 6, r.w - 96, TXT_CAPTION, 1);
@@ -176,48 +180,44 @@ static void afCartao(int i, GfxRect r, int foco, Uint32 agora) {
     }
     return;
   }
-  if (e && s != 2 && s != 4) gfx_card_forcar_cover_atual = 1.0f;   // fill the landscape card, no side bars
-  if (e) svd_poster(r, s == 2 || s == 4 ? (e->poster[0] ? e->poster : e->arte) : afArteDeitada(e), raio, 1);
-  else gfx_esqueleto(r, raio, NV_COR_ESQUELETO_R, NV_COR_ESQUELETO_G, NV_COR_ESQUELETO_B, 1.0f);   // home "no art" card
+  const char *arte = !e ? "" : vertical ? (e->poster[0] ? e->poster : e->arte) : afArteDeitada(e);
+  if (!vertical) gfx_card_forcar_cover_atual = 1.0f;   // fill the landscape card, no side bars
+  int comArte = svd_arte_card(r, arte, raio, 1);   // no art: the home skeleton card
   gfx_card_forcar_cover_atual = 0.0f;
-  if (e) gfx_veu_base(r, raio, .70f, .90f);   // home cards carry no veil over the empty placeholder
+  if (comArte && !vertical) gfx_veu_base(r, raio, .70f, .90f);   // the caption veil; vertical cards carry no caption
   if (e) {
-    afTexto(e->titulo, r.x + 16, r.y + r.h - 42, r.w - 32, TXT_CALLOUT, 1);
+    if (!vertical) afTexto(e->titulo, r.x + 16, r.y + r.h - 42, r.w - 32, TXT_CALLOUT, 1);
     if (e->pct >= 0 && (e->acao == SV_AGORA || e->acao == SV_INICIO))
       svd_barra((GfxRect){r.x + 16, r.y + r.h - 10, r.w - 32, 4}, e->pct, 1);
     if (e->acao == SV_AGORA) {
-      gfx_cor((GfxRect){r.x + r.w - 126, r.y + 16, 110, 32}, .5f, .65f, .08f, .16f, 1);
-      afTexto(i18n("Agora"), r.x + r.w - 114, r.y + 18, 90, TXT_CAPTION2, 1);
+      TxtLinha t = txt_linha_corta(TXT_CAPTION2, i18n("Agora"), 238, 238, 244, 255, 90);
+      GfxRect chip = {r.x + r.w - 16 - (t.w + 24), r.y + 16, t.w + 24.0f, 32};
+      gfx_cor(chip, .5f, .65f, .08f, .16f, 1);
+      txt_desenhar(t, chip.x + 12, chip.y + (chip.h - t.h) * .5f);
     }
   }
   if (s == 4 && e) {
     int n = 0;
-    for (int k = 0; k < socialvis_n_amigos() && n < 4; k++) {
+    for (int k = 0; k < socialvis_n_amigos() && n < 3; k++) {
       const SvAmigo *other = socialvis_amigo(k);
       for (int j = 0; j < other->nTit; j++) if (!strcmp(other->tit[j].imdb, e->imdb)) {
-        svd_avatar((GfxRect){r.x + 14 + n * 30, r.y + 16, 40, 40}, other->avatar, other->nome, other->id, 1);
+        svd_avatar((GfxRect){r.x + 16 + n * 26, r.y + 16, 40, 40}, other->avatar, other->nome, other->id, 1);
         n++; break;
       }
     }
   } else if (!e) {
     float d = r.h * 0.5f;   // big centered avatar
     svd_rosto((GfxRect){r.x + (r.w - d) * .5f, r.y + (r.h - d) * .5f, d, d}, a, 0, 1, agora);
-  } else {
-    svd_rosto((GfxRect){s == 2 ? r.x + (r.w - 48) * .5f : r.x + 16,
-                             s == 2 ? r.y + r.h - 12 : r.y + 16, 48, 48}, a, 0, 1, agora);
-  }
-  if (s == 2) {
-    afTexto(a->nome, r.x, r.y + r.h + 46, r.w, TXT_CAPTION, 1);
-    if (e) afTexto(socialvis_verbo(e), r.x, r.y + r.h + 74, r.w, TXT_CAPTION2, .65f);
-  } else afLegenda(i, r, 1);
+  } else svd_rosto((GfxRect){r.x + 16, r.y + 16, 48, 48}, a, 0, 1, agora);
+  afLegenda(i, base, 1);
 }
 static void afConvite(float x0, float y, int focada) {
   float w = amigosfilDireita() - x0;
   float iw = fminf(640.0f, w * .43f);
   float gap = 24.0f, ew = (w - iw - gap * 2.0f) * .5f;
-  GfxRect r = {x0, y + 8, iw, NV_DESTAQUE_H};
-  afAnel(r, focada);
-  gfx_cor(r, 16.0f / r.h, .12f, .12f, .15f, .95f);
+  GfxRect r = {x0, y + 8, iw, NV_DESTAQUE_H}, sh = r;
+  afFocar(&sh, afRaio(r), focada);
+  gfx_cor(sh, afRaio(r), .12f, .12f, .15f, .95f);
   float tx = x0 + 24, tw = iw - 48;
   if (celb_embutido(CELB_AMIGO)) {
     celb_desenhar_qr_em(CELB_AMIGO, (GfxRect){x0 + iw - 204, y + 32, 176, 176}, 1);
@@ -234,10 +234,10 @@ static void afConvite(float x0, float y, int focada) {
   for (int i = 0; i < 2; i++) {
     GfxRect c = {x0 + iw + gap + i * (ew + gap), y + 8, ew, NV_DESTAQUE_H};
     // Static, deliberately dimmed artwork: no catalog lookup or focus target.
-    gfx_cor(c, 12.0f / c.h, i ? .25f : .18f, i ? .20f : .12f, .16f, 1);
-    gfx_luz_canto(c, 12.0f / c.h, c.w * .6f, c.h * .38f, c.w * .65f,
+    gfx_cor(c, afRaio(c), i ? .25f : .18f, i ? .20f : .12f, .16f, 1);
+    gfx_luz_canto(c, afRaio(c), c.w * .6f, c.h * .38f, c.w * .65f,
                   .85f, .60f, .32f, .55f);
-    gfx_veu_base(c, 12.0f / c.h, .6f, .85f);
+    gfx_veu_base(c, afRaio(c), .6f, .85f);
     svd_avatar((GfxRect){c.x + 16, c.y + 16, 48, 48}, "", i ? "Teo" : "Ana", i ? "example-teo" : "example-ana", .5f);
     GfxRect chip = {c.x + c.w - 168, c.y + 16, 152, 28};
     gfx_cor(chip, .5f, .08f, .07f, .07f, .7f);
@@ -260,7 +260,7 @@ static void afAtualizar(float dt, int focada, int *colunaP) {
     const SvAmigo *a = afAmigo(i); const SvEvento *e = afEvento(i);
     if (!strcmp(a->id, afId) && !strcmp(e ? e->imdb : "", afImdb)) { c = i; break; }
   }
-  int max = socialvis_n_amigos() ? afN + 1 : 0;
+  int max = afN > 0 ? afN - 1 : 0;
   if (c < 0) c = 0;
   if (c > max) c = max;
   if (colunaP) *colunaP = c;
@@ -294,7 +294,7 @@ static void afDesenhar(float x0, float y, float corte, int focada, int coluna, U
   if (amigosfil_convite()) { afConvite(x0, y, focada); return; }
   float dir = amigosfilDireita();
   if (ajustes_amigos_estilo() == 3) {
-    svd_superficie((GfxRect){x0 - 8, y + 4, dir - x0 + 8, 104}, .5f, 0, 1);
+    svd_superficie((GfxRect){x0 - 8, y + 4, dir - x0 + 8, 104}, afRaio((GfxRect){x0 - 8, y + 4, dir - x0 + 8, 104}), 0, 1);
     afTexto(i18n("Amigos"), x0 + 16, y + 42, 112, TXT_CAPTION, 1);
     dir = afDetalheX(x0) - 16;
   }
@@ -304,7 +304,7 @@ static void afDesenhar(float x0, float y, float corte, int focada, int coluna, U
     GfxRect r = afRect(i, x0 - scroll, y);
     if (ajustes_amigos_estilo() == 1 && i == afVivos()) {
       GfxRect panel = {r.x, y + 8, r.w, 236};
-      svd_superficie(panel, 12.0f / panel.h, 0, 1);
+      svd_superficie(panel, afRaio(panel), 0, 1);
       afTexto(i18n("Assistiu recentemente"), r.x + 16, y + 16, r.w - 32, TXT_CAPTION2, .6f);
     }
     if (r.x + r.w < x0 || r.x > dir) continue;
@@ -319,23 +319,12 @@ static void afDesenhar(float x0, float y, float corte, int focada, int coluna, U
     const SvEvento *e = afEvento(c);
     if (e) {
       GfxRect art = {afDetalheX(x0), y + 20, 128, 72};
-      svd_poster(art, e->arte[0] ? e->arte : e->poster, .12f, 1);
-      float tw = amigosfilDireita() - 432 - art.x - 148;
+      svd_poster(art, e->arte[0] ? e->arte : e->poster, afRaio(art), 1);
+      float tw = amigosfilDireita() - art.x - 148 - 16;
       afTexto(e->titulo, art.x + 148, y + 24, tw, TXT_CAPTION, 1);
       char status[160]; socialvis_status(e, status, sizeof status);
       afTexto(status, art.x + 148, y + 57, tw, TXT_CAPTION2, .65f);
     }
-  }
-  for (int i = afN; i < afN + 2; i++) {
-    GfxRect r = afAcaoRect(i, y);
-    afAnel(r, focada && coluna == i);
-    gfx_cor(r, .5f, .14f, .14f, .17f, 1);
-    const char *label = i == afN ? i18n("Ver todos") : i18n("+ Adicionar");
-    TxtLinha t = txt_linha_corta(TXT_CAPTION, label, 240, 240, 245, 255, r.w - 24);
-    txt_desenhar(t, r.x + (r.w - t.w) * .5f, r.y + (r.h - t.h) * .5f);
-#ifdef NV_TOUCH_UI
-    alvoToque(r, corte, i, -1);
-#endif
   }
 }
 #ifdef NV_AMIGOSFIL_TESTE
@@ -354,7 +343,7 @@ void amigosfil_teste_conferir(int w, int h) {
   }
   if (afEstilo == 1) {
     int live = afVivos();
-    assert(afN - live <= 3); // Overflow belongs in See all, not another column.
+    assert(afN - live <= 3);
     for (int i = live; i < afN; i++) {
       GfxRect first = afRect(live, ultX0, 0), r = afRect(i, ultX0, 0);
       assert(r.x == first.x);
@@ -363,15 +352,9 @@ void amigosfil_teste_conferir(int w, int h) {
     }
   }
   if (afEstilo == 3) {
-    for (int i = afN; i < afN + 2; i++) {
-      GfxRect r = afAcaoRect(i, 0);
-      assert(r.y >= 4 && r.y + r.h <= 108);
-      TxtLinha label = txt_linha(TXT_CAPTION, i == afN ? i18n("Ver todos") : i18n("+ Adicionar"), 240, 240, 245, 255);
-      assert(label.w <= r.w - 24);
-    }
     float detail = afDetalheX(ultX0);
     assert(detail >= ultX0 + 144 + 96 + 16);
-    assert(detail + 128 + 148 < afAcaoRect(afN, 0).x);
+    assert(detail + 128 + 148 + 16 < amigosfilDireita());
     assert(afRect(0, ultX0, 0).x >= ultX0 + 128); // Label lives inside the strip.
   }
   assert(afFoco.w > 0 && afFoco.h > 0);

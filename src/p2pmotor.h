@@ -83,6 +83,23 @@ void p2pmotor_definir_usb(int usar);
 // 1 se ha pendrive gravavel agora — Ajustes cinza a opcao "Pendrive USB" com
 // isto. Resposta cacheada por ~2 s; a sonda nao cria nem apaga nada no volume.
 int p2pmotor_usb_presente(void);
+// Most actionable rejection from the last scan; NONE after success. No I/O.
+typedef enum {
+  P2PM_USB_NONE, P2PM_USB_NO_BASE, P2PM_USB_NOT_MOUNT, P2PM_USB_ALREADY_SEEN,
+  P2PM_USB_TIMEOUT, P2PM_USB_DATA_DIR, P2PM_USB_IO, P2PM_USB_READONLY,
+  P2PM_USB_DISABLED
+} P2pmUsbMotivo;
+P2pmUsbMotivo p2pmotor_usb_motivo(void);
+// Everything the USB cache modal draws. estado: 0 no drive, 1 found (emUso = the
+// cache goes there), 2 found but rejected (motivo says why). Sizes in bytes;
+// cache/limite/gravavel/emUso only for estado 1. Cached ~2 s, never writes.
+typedef struct {
+  int estado, emUso, gravavel, fat;
+  P2pmUsbMotivo motivo;
+  char nome[64], caminho[256], fs[32];
+  uint64_t total, livre, cache, limite;
+} P2pmUsbInfo;
+void p2pmotor_usb_info(P2pmUsbInfo *o);
 // A conta acima, pura (testes).
 uint64_t p2pmotor_teto_duro(uint64_t livre, unsigned escolhaMb);
 // #334: janela de streaming que o motor recebe para um teto duro (0 = sem
@@ -195,6 +212,11 @@ typedef int (*P2pmSondaFn)(const char *url, int (*parar)(void *), void *u); // 1
 void p2pmotor_teste_injetar(const P2pmOps *ops, P2pmLivreFn livre, P2pmSondaFn sonda,
                             const char *raiz, unsigned vigia_ms);
 void p2pmotor_teste_usb_base(const char *base);
+// Tizen: troca /opt/media por `dir` e devolve as raizes candidatas (uma por linha).
+unsigned p2pmotor_teste_usb_tizen(const char *dir, char *out, unsigned nout);
+// #205: lista (uma por linha, linha 0 = volume primario, ignorada) no lugar de
+// getExternalFilesDirs, e arquivo no formato /proc/mounts para o tipo do fs.
+void p2pmotor_teste_usb_android(const char *lista, const char *mounts);
 // Quantos eventos velhos (de outro pedido) foram descartados desde o inicio.
 unsigned p2pmotor_teste_descartados(void);
 #endif

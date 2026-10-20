@@ -16,6 +16,7 @@
 void *tpk_gl_criar(void);
 void  tpk_gl_trocar(void);
 void  tpk_tamanho(int *w, int *h);
+void  tpk_pedir_saida(int w, int h);
 int   tpk_gl_atributo(SDL_GLattr a, int *v);
 
 // A janela continua sendo do SDL (dummy): SDL_GetWindowSize e a fila de

@@ -234,6 +234,9 @@ extern const char *const TXT_FAMILIAS_PT[TXT_FAMILIA_N];
 // que o chamador escolheu para a legenda.
 void txt_definir_fonte_interface(TxtFamilia familia);
 TxtFamilia txt_fonte_interface(void);
+// Aviso de memoria: esvazia a grade de linhas rasterizadas (texturas de texto),
+// que voltam a existir sob demanda. So o fio de desenho chama.
+void txt_aliviar(void);
 // CORPO E PESO de um estilo, para teste e diagnostico (o desenho nao usa).
 void txt_estilo_medidas(TxtEstilo estilo, int *corpo, int *peso);
 // Que fonte desenharia a linha `s` no estilo dado, em texto ("principal",
@@ -311,6 +314,10 @@ TxtLinha txt_linha_corta_enfase(TxtEstilo estilo, const char *s, int r, int g,
 // Desenha no canto superior esquerdo (x,y).
 void txt_desenhar(TxtLinha l, float x, float y);
 void txt_desenhar_alpha(TxtLinha l, float x, float y, float alpha);
+void txt_desenhar_peso(TxtLinha l, float x, float y, float alpha, float peso);
+// Borda da legenda (b = textura na cor da borda): 1 = contorno opaco nas 8
+// direcoes, 2 = sombra deslocada. Desenhar ANTES do texto.
+void txt_desenhar_borda(TxtLinha b, float x, float y, int borda, float alpha);
 // Multiplica so o RGB da textura (0..1); preserva o alpha e o encaixe no pixel.
 void txt_desenhar_tom(TxtLinha l, float x, float y, float cr, float cg, float cb, float alpha);
 

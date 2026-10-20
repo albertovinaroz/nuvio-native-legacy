@@ -111,6 +111,7 @@ int main(int argc, char **argv) {
   assert(!strcmp(dados_dir(), dir));
   ajustes_iniciar();
   if (getenv("NUVIO_SHOT_SOLIDO")) ajustes_aplicar_blob("{\"vidro\":false}");
+  if (getenv("NUVIO_SHOT_ESCALA")) gfx_escala_txt_definir((float)atof(getenv("NUVIO_SHOT_ESCALA")));
   busca_iniciar();
   // NUVIO_VIDRO_TELAS=<dir> (tests/vidro_telas.sh): glass budget, popular grid.
   if (vt_ligado()) {
@@ -133,6 +134,17 @@ int main(int argc, char **argv) {
   tecla(SDLK_g);
   snprintf(nome, sizeof nome, "%s-digitado.bmp", saida);
   captura(nome);
+  // ?!# page: bottom row, 4th key; types "é" and ":".
+  { int i;
+    for (i = 0; i < 6; i++) tecla(SDLK_DOWN);
+    for (i = 0; i < 3; i++) tecla(SDLK_RIGHT);
+    tecla(SDLK_RETURN);
+    for (i = 0; i < 6; i++) tecla(SDLK_UP);
+    for (i = 0; i < 4; i++) tecla(SDLK_RIGHT);
+    tecla(SDLK_RETURN);
+    snprintf(nome, sizeof nome, "%s-simbolos.bmp", saida);
+    captura(nome);
+  }
 
   // COM HISTORICO: campo vazio mostra as pilulas no lugar do estado vazio.
   // Termos de tamanhos diferentes e um longo, para a quebra de linha e o
@@ -169,7 +181,7 @@ int main(int argc, char **argv) {
   captura(nome);
   { int i;
     for (i = 0; i < 6; i++) tecla(SDLK_DOWN);      /* fileira de baixo */
-    for (i = 0; i < 3; i++) tecla(SDLK_RIGHT);     /* tecla de layout */
+    for (i = 0; i < 4; i++) tecla(SDLK_RIGHT);     /* tecla de layout */
     tecla(SDLK_RETURN);                            /* cirilico */
     snprintf(nome, sizeof nome, "%s-cirilico.bmp", saida);
     captura(nome);

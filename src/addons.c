@@ -1,8 +1,10 @@
 #include "addons.h"
 #include "idbase.h"
+#include "idcanal.h"
 #include "idioma.h"
 #include "linguas.h"
 #include "streams.h"
+#include "livetv_regras.h"
 #include "debrid.h"
 #include "perfisessao.h"
 #include "rede.h"
@@ -13,6 +15,7 @@
 #include "fontecache.h"
 #include "fontefalha.h"
 #include "sessao.h"
+#include "sync.h"
 #include "perfis.h"
 #include "fontesmortas.h"
 #include "servidores.h"
@@ -42,7 +45,7 @@
 // perdia justamente os de legenda, que costumam ser os ultimos da lista.
 // 128: contas com 100 add-ons ultrapassavam o teto anterior e perdiam o resto.
 // O teto de lerAddons (sync.c) e o mesmo numero; o corte continua no log.
-#define ADD_MAX 128
+#define ADD_MAX ADDONS_MAX
 #define ADD_PREF_MAX 8
 #define ADD_PREF_TAM 24
 
@@ -66,6 +69,7 @@ static struct {
   // Catalogos de canal do manifesto (ver addons_catalogos_canal). `canalLido`
   // separa "nao declara nenhum" de "manifesto ainda nao lido".
   AddCatCanal canal[ADD_CANAL_MAX]; int nCanal, canalLido;
+  char tipoCatalogo[16];  // Exact first non-VOD catalog type for stream fallback.
   // #182: consultas SEGUIDAS em que o addon ficou sem resposta nas duas
   // tentativas. Com 2 ou mais ele e dado como fora do ar e nao ganha a segunda
   // chance (senao um addon morto somaria o prazo dela a toda abertura).
@@ -97,7 +101,6 @@ static void chaveEstatistica(const char *id, int plugin, char chave[32]) {
   uint64_t h = hashTexto(statsEscopo, id);
   snprintf(chave, 32, "%c-%016llx", plugin ? 'p' : 'a', (unsigned long long)h);
 }
-static const char *tipoCanalDeclarado(int i);
 static void copiarPedido(int i, AddonPedido *p) {
   memset(p, 0, sizeof *p);
   snprintf(p->nome, sizeof p->nome, "%s", addon[i].nome);
@@ -106,8 +109,7 @@ static void copiarPedido(int i, AddonPedido *p) {
   p->legenda = addon[i].legenda; p->sondado = addon[i].sondado;
   p->mudoSeg = addon[i].mudoSeg;
   chaveEstatistica(p->base, 0, p->estatistica);
-  { const char *t = tipoCanalDeclarado(i);
-    if (t) snprintf(p->tipoCanal, sizeof p->tipoCanal, "%s", t); }
+  snprintf(p->tipoCanal, sizeof p->tipoCanal, "%s", addon[i].tipoCatalogo);
 }
 static AddonPedido *capturarPedidos(uint64_t sessao, int *n, unsigned *versao) {
   AddonPedido *p = NULL;
@@ -465,12 +467,12 @@ static int carregarSemTrava(const char *dirArte) {
       size_t lenUrl = fimUrl ? (size_t)(fimUrl - (tab + 1)) : strlen(tab + 1);
       if (!nv_addon_url_cabe(linha, lenUrl)) continue; }
     memset(&addon[nAddon], 0, sizeof addon[nAddon]);
-    // Terceira coluna (opcional): 1 = fornece stream. Ausente vale 1, para
-    // arquivo antigo continuar funcionando.
-    memset(&addon[nAddon], 0, sizeof addon[nAddon]);
+    // Sem coluna de capacidade vale 1 como na conta (ver addons_definir_lista):
+    // legenda=0 escondia addon de legenda ate a sonda, e uma sonda que falha
+    // o deixava fora das legendas para sempre (#552).
     addon[nAddon].fonte = 1;
     addon[nAddon].catalogo = 1;
-    addon[nAddon].legenda = 0;
+    addon[nAddon].legenda = 1;
     { char *tab2 = strchr(tab + 1, '\t');
       if (tab2) {
         char *tab3;
@@ -650,6 +652,31 @@ static void esquecerSemTrava(void) {
   listaMudou();
   wsenvio_podar();   // lista vazia: nada do diario sobra para quem logou depois
   printf("[addons] lista esquecida (saiu da conta)\n");
+}
+
+int addons_travar_lista(unsigned versao, int perfil) {
+  pthread_mutex_lock(&addonTrava);
+  if (perfil > 0 && versao == versaoLista && perfil == addons_perfil_da_lista()) return 1;
+  pthread_mutex_unlock(&addonTrava);
+  return 0;
+}
+void addons_destravar_lista(void) { pthread_mutex_unlock(&addonTrava); }
+
+int addons_copiar_identidades(AddonIdentidade *saida, int max, unsigned versao, int perfil) {
+  int n = -1;
+  if (!saida || max < 0 || perfil <= 0) return -1;
+  pthread_mutex_lock(&addonTrava);
+  if (versao == versaoLista && perfil == addons_perfil_da_lista() && nAddon <= max) {
+    n = nAddon;
+    for (int i = 0; i < n; i++) {
+      snprintf(saida[i].id, sizeof saida[i].id, "%s", addon[i].id);
+      snprintf(saida[i].base, sizeof saida[i].base, "%s", addon[i].base);
+      saida[i].ativo = addon[i].ativo;
+    }
+    if (perfil != addons_perfil_da_lista()) n = -1;
+  }
+  pthread_mutex_unlock(&addonTrava);
+  return n;
 }
 
 int addons_n(void) { return nAddon; }
@@ -1051,10 +1078,25 @@ int addons_legendas_prontas(void) {
   pthread_mutex_lock(&legTrava); r = !fioLegVivo && legId[0]; pthread_mutex_unlock(&legTrava);
   return r;
 }
+// Tizen 4/5's manual ELF loader cannot initialize compiler TLS.
+static pthread_key_t legCopiaChave;
+static pthread_once_t legCopiaUmaVez = PTHREAD_ONCE_INIT;
+static int legCopiaPronta;
+static void iniciarLegCopia(void) {
+  legCopiaPronta = pthread_key_create(&legCopiaChave, free) == 0;
+}
 const Legenda *addons_legenda(int i) {
+  pthread_once(&legCopiaUmaVez, iniciarLegCopia);
+  if (!legCopiaPronta) return NULL;
+  Legenda *copia = pthread_getspecific(legCopiaChave);
+  if (!copia) {
+    copia = malloc(sizeof *copia);
+    if (!copia) return NULL;
+    if (pthread_setspecific(legCopiaChave, copia)) { free(copia); return NULL; }
+  }
   const Legenda *r = NULL;
   pthread_mutex_lock(&legTrava);
-  if (i >= 0 && i < nLegs) r = &legs[i];
+  if (i >= 0 && i < nLegs) { *copia = legs[i]; r = copia; }
   pthread_mutex_unlock(&legTrava);
   return r;
 }
@@ -1122,11 +1164,18 @@ static void episodioPedido(const char *id, int *temporada, int *episodio) {
   // idbase_episodio, e nao o corte no primeiro ':': "kitsu:41370:5" lia
   // temporada 41370 e filtrava toda fonte fora (idbase.h).
   idbase_episodio(id, temporada, episodio);
+  // Kitsu id:E nao informa temporada; zero ali nao quer dizer especial.
+  // O zero explicito de id:T:E precisa filtrar o especial certo.
+  if (id && !idbase_e_imdb(id)) {
+    const char *p = id + idbase_len(id);
+    int t, e;
+    if (*p == ':' && sscanf(p + 1, "%d:%d", &t, &e) == 1) *temporada = -1;
+  }
 }
 
 static int episodioCorreto(const char *obj, const char *fim, int temporada, int episodio) {
   int t, e;
-  if (temporada <= 0 || episodio <= 0) return 1;
+  if (temporada < 0 || episodio <= 0) return 1;
   t = (int)js_num(obj, fim, "season", -1);
   e = (int)js_num(obj, fim, "episode", -1);
   // Alguns addons antigos nao devolvem os campos. Quando devolvem, eles sao
@@ -1357,7 +1406,7 @@ static void *buscarUmAddon(void *u) {
           snprintf(d->idioma, sizeof d->idioma, "%s", cod);
           snprintf(d->provedor, sizeof d->provedor, "%s", origem->nome);
           snprintf(d->arquivo, sizeof d->arquivo, "%s", nome);
-          if (B->temporada > 0 && B->episodio > 0)
+          if (B->temporada >= 0 && B->episodio > 0)
             snprintf(d->rotulo, sizeof d->rotulo, i18n("T%dE%d  \xc2\xb7  %s%s%.22s"),
                      B->temporada, B->episodio, i18n(ling_nome(cod)), nome[0] ? "  \xc2\xb7  " : "", nome);
           else
@@ -1642,9 +1691,10 @@ static int alternarSemTrava(int i) {
 // "[addons] N vindos da conta", que seria mentira para uma lista que veio do
 // guia.
 //
-// Capacidades nascem SUPOSTAS como no carregador do arquivo (fonte e catalogo
-// sim, legenda nao) e `sondado` em 0: a sonda do manifesto corrige depois, e
-// ate la o custo de supor e uma consulta vazia.
+// Capacidades nascem SUPOSTAS como na lista da conta: tudo 1, inclusive
+// legenda (ver addons_definir_lista). `sondado` em 0 ate a sonda do
+// manifesto: ate la uma consulta vazia a mais e melhor que um addon de
+// legenda instalado pelo guia nunca ser consultado (#552).
 //
 // Devolve 1 se entrou, 0 se a lista esta cheia ou o addon ja existe. Comparacao
 // por base NORMALIZADA, e nao pela URL crua: "<base>", "<base>/" e
@@ -1678,10 +1728,11 @@ static int adicionarSemTrava(const char *nome, const char *urlManifest) {
   snprintf(addon[nAddon].base, sizeof addon[nAddon].base, "%s", nova);
   addon[nAddon].fonte = 1;
   addon[nAddon].catalogo = 1;
-  addon[nAddon].legenda = 0;
+  addon[nAddon].legenda = 1;
   addon[nAddon].ativo = 1;
   addon[nAddon].sondado = 0;
   addon[nAddon].canalLido = 0; addon[nAddon].nCanal = 0; addon[nAddon].mudoSeg = 0;
+  addon[nAddon].tipoCatalogo[0] = 0;
   nAddon++;
   listaMudou();
   // So o host: a base inteira ia para o log aqui, com a chave do addon no
@@ -1917,6 +1968,7 @@ static void capacidadesDoManifesto(int i, const char *corpo) {
   // sem resources legivel ainda declara catalogs[], e o guia precisa deles.
   { const char *p = js_array(corpo, NULL, "catalogs");
     addon[i].nCanal = 0;
+    addon[i].tipoCatalogo[0] = 0;
     while (p && addon[i].nCanal < ADD_CANAL_MAX) {
       const char *f = js_fim(p);
       AddCatCanal c;
@@ -1924,6 +1976,9 @@ static void capacidadesDoManifesto(int i, const char *corpo) {
       js_texto(p, f, "type", c.tipo, sizeof c.tipo);
       js_texto(p, f, "id",   c.id,   sizeof c.id);
       js_texto_raiz_em(p, f, "name", c.nome, sizeof c.nome);
+      if (!addon[i].tipoCatalogo[0] && c.tipo[0] &&
+          strcasecmp(c.tipo, "movie") && strcasecmp(c.tipo, "series"))
+        snprintf(addon[i].tipoCatalogo, sizeof addon[i].tipoCatalogo, "%s", c.tipo);
       if (c.id[0] && (!strcasecmp(c.tipo, "channel") || !strcasecmp(c.tipo, "tv") ||
                       !strcasecmp(c.tipo, "channels") || !strcasecmp(c.tipo, "live") ||
                       !strcasecmp(c.tipo, "iptv")))
@@ -2282,12 +2337,12 @@ static Resumo resumo;
 // viajar aqui e cada consulta tem o seu. A trava e por consulta tambem: duas
 // consultas ao mesmo tempo nao disputam nada.
 typedef struct {
-  const char *id, *tipo, *tipoAlt;
+  const char *id, *tipo;
   BaldeFonte *baldes;
   int nBaldes, proxBalde;
   int (*cancelado)(void *);   // NULL = nunca cancela
   void *ctx;
-  int timeout;                // segundos por requisicao (12 na 1a rodada)
+  int timeout;                // seconds per addon round, shared by type fallbacks
   int progresso;              // 1 = a busca real que publica aos poucos (#221)
   int rodada;                 // 0/1 = primeira, 2 = segunda chance
   Uint32 inicio;              // SDL_GetTicks do disparo, para o log por addon
@@ -2311,28 +2366,6 @@ static int semStreamSondado(const Consulta *c, int i) {
   pthread_mutex_unlock(&addonTrava);
   nv_perfil_sessao_destravar();
   return semStream;
-}
-
-// O NOME DE TIPO DE CANAL QUE O MANIFESTO DO ADDON USA: a literal do
-// catalogo declarado ("channel", "tv", "channels", "live", "iptv") ou
-// NULL (manifesto nao lido, ou nenhum catalogo de canal). Sai de catalogs[],
-// que capacidadesDoManifesto ja guarda para o guia: FrostView declara
-// "channel", IPTV Bridge e Meu Futebol "tv", e addon de lista traz
-// "live"/"iptv" — num manifesto MISTO (filme+serie+canal, como o do M3U
-// Mux) so o tipo declarado responde ao /stream/ dele. Devolve a literal,
-// nunca o campo do addon, porque o fio que le nao segura trava nenhuma.
-static const char *tipoCanalDeclarado(int i) {
-  int k;
-  if (i < 0 || i >= nAddon || !addon[i].canalLido) return NULL;
-  for (k = 0; k < addon[i].nCanal; k++) {
-    const char *t = addon[i].canal[k].tipo;
-    if (!strcasecmp(t, "channel"))  return "channel";
-    if (!strcasecmp(t, "tv"))       return "tv";
-    if (!strcasecmp(t, "channels")) return "channels";
-    if (!strcasecmp(t, "live"))     return "live";
-    if (!strcasecmp(t, "iptv"))     return "iptv";
-  }
-  return NULL;
 }
 
 #define ADD_PRAZO_VOD_S 30   // 1a rodada de filme/serie; a 2a soma mais 30 = 60 s do oficial
@@ -2361,7 +2394,9 @@ static void *fioFontes(void *u) {
     int meu, i, n, prazoS;
     const AddonPedido *origem;
     char url[NV_ADDON_PEDIDO_MAX], idUrl[768], *corpo;
-    const char *t1, *t2;
+    const char *t1;
+    const char *tipos[7];
+    int nTipos;
     Stream *achados;
     pthread_mutex_lock(&c->trava);
     if (c->proxBalde >= c->nBaldes) { pthread_mutex_unlock(&c->trava); return NULL; }
@@ -2374,38 +2409,26 @@ static void *fioFontes(void *u) {
     if (!origem->ativo) continue;   // desligado na conta: nunca consultado
     if (semStreamSondado(c, i)) continue;   // a sonda terminou depois dos baldes
     // Id codificado como o Nuvio web (nv_addon_id): "tt123:1:2" sai igual.
-    if (!nv_addon_id(idUrl, sizeof idUrl, c->id)) idUrl[0] = 0;
-    // O NOME QUE O MANIFESTO DECLARA VAI PRIMEIRO (issue #112). Ver
-    // tipoCanalDeclarado: o FrostView declara "channel" e o app perguntava
-    // "tv" antes, gastando uma viagem inteira por canal aberto so para
-    // receber a lista vazia que agora dispara o segundo nome logo abaixo.
-    { // So consulta o manifesto para pedido DE CANAL (tv/channel tem par em
-      // tipoAlt; "live"/"channels"/"iptv" sao canal tambem — a lista e a
-      // mesma do guia e do manifesto, ver tipoCanalDeclarado).
-      int canalReq = !strcmp(c->tipo, "tv") || !strcmp(c->tipo, "channel") ||
-                     !strcmp(c->tipo, "channels") || !strcmp(c->tipo, "live") ||
-                     !strcmp(c->tipo, "iptv");
-      const char *dec = canalReq && origem->tipoCanal[0] ? origem->tipoCanal : NULL;
-      t1 = c->tipo; t2 = c->tipoAlt;
-      if (dec && t2[0] && !strcmp(dec, t2)) { t1 = t2; t2 = c->tipo; }
-      // Canal FORA do par tv/channel ("live", "channels", "iptv"): tipoAlt
-      // nao tem par para ele, entao a segunda tentativa usa o nome declarado
-      // no manifesto — o mesmo do catalogo de onde o canal saiu. E quando o
-      // pedido veio por um dos dois nomes comuns mas o manifesto declara
-      // outro (addon misto que serve canais so por "live", por exemplo), o
-      // declarado e a segunda tentativa, e nao o par que ele nao tem.
-      if (dec && strcmp(dec, t1) && (!t2[0] || strcmp(dec, t2))) t2 = dec; }
+    { char longo[IDCANAL_LONGO_MAX + 1];   // apelido de canal longo (idcanal.h)
+      if (!nv_addon_id(idUrl, sizeof idUrl, idcanal_longo(c->id, longo, sizeof longo))) idUrl[0] = 0; }
+    // #588: preserve the clicked type, then the exact catalog type, before
+    // legacy channel names. Movie/series requests keep their single type.
+    t1 = c->tipo;
+    tipos[0] = t1; tipos[1] = origem->tipoCanal;
+    tipos[2] = "channel"; tipos[3] = "tv"; tipos[4] = "channels";
+    tipos[5] = "live"; tipos[6] = "iptv";
+    nTipos = !strcmp(t1, "movie") || !strcmp(t1, "series") ? 1 : 7;
     // Prazo da consulta (c->timeout): 30 s para filme/serie, 12 s para canal e
     // prefetch. Ver ADD_PRAZO_VOD_S em consultar().
     prazoS = prazoDoAddon(c, i);
+    Uint32 inicioAddon = SDL_GetTicks();
     corpo = nv_addon_pedido_coube(origem->nome, nv_addon_url(url, sizeof url, origem->base, "/stream/%s/%s.json",
                                     t1, idUrl), sizeof url) && idUrl[0]
             ? rede_baixar(url, prazoS) : NULL;
     if (consultaCancelada(c)) { free(corpo); break; }
     achados = NULL; n = 0;
     if (corpo) n = stream_extrair(corpo, origem->nome, &achados);
-    // CANAL AO VIVO TEM DOIS NOMES DE TIPO NO PROTOCOLO, e addons diferentes
-    // usam nomes diferentes.
+    // Retry the remaining type names after an empty or failed response.
     //
     // MEDIDO em 18/09 contra o addon de um relato ("canal aparece no guia e nao
     // abre", com "Could not open the source" na tela):
@@ -2427,12 +2450,23 @@ static void *fioFontes(void *u) {
     // dois alvos, porque este caminho nao tem ramo de plataforma (o log do
     // #112 e de uma Samsung, mas a URL e montada igual na LG). Com e sem
     // Origin: null e User-Agent a resposta e a mesma, byte a byte.
-    if (n <= 0 && t2 && t2[0] && !(consultaCancelada(c))) {
+    for (int t = 1; t < nTipos && n <= 0 && !consultaCancelada(c); t++) {
+      const char *t2 = tipos[t];
+      int repetido = 0;
+      if (!t2[0]) continue;
+      for (int k = 0; k < t; k++)
+        if (!strcmp(t2, tipos[k])) { repetido = 1; break; }
+      if (repetido) continue;
+      // The transport takes whole seconds: never round past the shared deadline.
+      Uint32 gasto = SDL_GetTicks() - inicioAddon;
+      if (gasto >= (Uint32)prazoS * 1000u) break;
+      int restanteS = ((Uint32)prazoS * 1000u - gasto) / 1000u;
+      if (restanteS <= 0) break;
       char *alt;
       alt = nv_addon_pedido_coube(origem->nome, nv_addon_url(url, sizeof url, origem->base, "/stream/%s/%s.json",
                                     t2, idUrl), sizeof url) && idUrl[0]
-            ? rede_baixar(url, prazoS) : NULL;
-      if (consultaCancelada(c)) { free(alt); free(corpo); free(achados); break; }
+            ? rede_baixar(url, restanteS) : NULL;
+      if (consultaCancelada(c)) { free(alt); free(corpo); free(achados); return NULL; }
       if (alt) {
         Stream *a2 = NULL;
         int n2 = stream_extrair(alt, origem->nome, &a2);
@@ -2513,18 +2547,6 @@ unsigned addons_fora_do_ar(char *nome, unsigned tam) {
   return s;
 }
 
-// O segundo nome de tipo de canal ao vivo; "" para os demais. Ver fioFontes.
-// Os raros "channels"/"live"/"iptv" alternam com "channel", o nome que a
-// maioria dos addons de lista usa para o /stream/ — quando o manifesto foi
-// lido o tipo declarado dele e que manda na segunda tentativa (fioFontes).
-static const char *tipoAlternativo(const char *tipo) {
-  if (!strcmp(tipo, "tv"))      return "channel";
-  if (!strcmp(tipo, "channel")) return "tv";
-  if (!strcmp(tipo, "channels") || !strcmp(tipo, "live") || !strcmp(tipo, "iptv"))
-    return "channel";
-  return "";
-}
-
 // SEGUNDA CHANCE (#182: "addons sometimes not loading, I must reload source a
 // few times to see the addon fetch (AIOStreams)"). Um addon que agrega varios
 // scrapers (AIOStreams) demora mais que os 12 s na primeira consulta de um
@@ -2553,7 +2575,7 @@ static void segundaChance(Consulta *c, int fios) {
   }
   if (m > 0) {
     c2.origens = c->origens; c2.nOrigens = c->nOrigens; c2.sessao = c->sessao; c2.versao = c->versao;
-    c2.id = c->id; c2.tipo = c->tipo; c2.tipoAlt = c->tipoAlt;
+    c2.id = c->id; c2.tipo = c->tipo;
     c2.nBaldes = m; c2.cancelado = c->cancelado; c2.ctx = c->ctx;
     c2.timeout = c->timeout > 20 ? c->timeout : 20;
     c2.progresso = c->progresso; c2.rodada = 2; c2.inicio = c->inicio;
@@ -2765,7 +2787,7 @@ static int consultar(const char *id, const char *tipo, const char *base, int fio
     free(extra.l);
     return 0;
   }
-  c.id = id; c.tipo = tipo; c.tipoAlt = tipoAlternativo(tipo);
+  c.id = id; c.tipo = tipo;
   c.cancelado = cancelado; c.ctx = ctx;
   c.progresso = progresso;
   // PRAZO DA BUSCA DE FILME/SERIE (paridade com o Nuvio oficial, #202). O
@@ -3057,6 +3079,43 @@ static int arrayDeFontesCompleto(const char *corpo) {
   }
   return 0;
 }
+int addons_consulta_filme(const AddonsConsulta *c, const char *id,
+                          int (*cancelado)(void *), void *ctx) {
+  if (!c || !id || !*id) return -1;
+  Uint32 inicio = SDL_GetTicks();
+  int resultado = 0;
+  for (int i = 0; i < c->n; i++) {
+    if (!nv_perfil_sessao_atual(c->sessao) || (cancelado && cancelado(ctx)) ||
+        SDL_GetTicks() - inicio >= 15000u) return -1;
+    const AddonCapturado *a = &c->addons[i];
+    if (!a->ativo || !a->fonte) continue;
+    char url[NV_ADDON_PEDIDO_MAX], idUrl[768];
+    if (!nv_addon_id(idUrl, sizeof idUrl, id) ||
+        !nv_addon_url(url, sizeof url, a->base, "/stream/movie/%s.json", idUrl)) continue;
+    // ponytail: one request, at most five seconds; whole movie at most 15 s.
+    Uint32 gasto = SDL_GetTicks() - inicio;
+    if (gasto >= 15000u) return -1;
+    int restante = (int)((15000u - gasto) / 1000u);
+    if (restante <= 0) return -1;
+    // Background check: a huge add-on answer is cut off (and rejected as an
+    // incomplete array) instead of growing memory during playback.
+    RedeControle teto = { 2L * 1024 * 1024, NULL };
+    RedeMedida medida;
+    char *corpo = rede_baixar_medido_controle(url, restante < 5 ? restante : 5, NULL, &teto, &medida);
+    if (!nv_perfil_sessao_atual(c->sessao) || (cancelado && cancelado(ctx))) { free(corpo); return -1; }
+    if (medida.limitado || !arrayDeFontesCompleto(corpo)) { free(corpo); resultado = -1; continue; }
+    Stream *fontes = NULL;
+    debrid_contexto_entrar(&c->debrid);
+    int n = stream_extrair(corpo, a->nome, &fontes), disponivel = 0;
+    free(corpo);
+    for (int k = 0; k < n; k++) if (stream_fonte_disponivel(&fontes[k])) { disponivel = 1; break; }
+    debrid_contexto_sair();
+    free(fontes);
+    if (disponivel) return 1;
+  }
+  return resultado;
+}
+
 static void *fioConsultaCapturada(void *u) {
   ConsultaCapturada *c = u;
   debrid_contexto_entrar(&c->snapshot->debrid);
@@ -3069,7 +3128,8 @@ static void *fioConsultaCapturada(void *u) {
     const AddonCapturado *a = &c->snapshot->addons[i];
     if (!a->ativo || !a->fonte) { c->baldes[i].respondeu = 1; continue; }
     char url[NV_ADDON_PEDIDO_MAX], idUrl[768];
-    if (!nv_addon_id(idUrl, sizeof idUrl, c->id) ||
+    char longo[IDCANAL_LONGO_MAX + 1];
+    if (!nv_addon_id(idUrl, sizeof idUrl, idcanal_longo(c->id, longo, sizeof longo)) ||
         !nv_addon_url(url, sizeof url, a->base, "/stream/%s/%s.json", c->tipo, idUrl)) continue;
     char *corpo = rede_baixar(url, 12);
     if (!corpo) {
@@ -3338,6 +3398,8 @@ static void buscarPedido(const char *imdb, const char *tipo, int forcar) {
   int serie, renovar;
   char id[sizeof alvoId];
   if (!imdb || !*imdb) return;
+  stream_filtro_tipo(tipo);
+  stream_folha_canal(nv_tipo_canal(tipo));
   if (jfid_e(imdb)) {
     // PERSONAL SERVER ITEM. No addon, no source cache, no "where to watch":
     // the target is already the exact movie/episode item on that server.
@@ -3550,9 +3612,12 @@ int addons_adicionar(const char *nome, const char *urlManifest) {
 
 int addons_alternar(int i) {
   int r;
+  char base[NV_ADDON_URL_MAX] = "";
   pthread_mutex_lock(&addonTrava);
+  if (i >= 0 && i < nAddon) snprintf(base, sizeof base, "%s", addon[i].base);
   r = alternarSemTrava(i);
   pthread_mutex_unlock(&addonTrava);
+  if (base[0]) sync_sujar_addons(base);
   return r;
 }
 

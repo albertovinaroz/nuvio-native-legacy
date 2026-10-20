@@ -406,19 +406,23 @@ int lst_ler_trakt(const char *json, int envelope) {
 // Cinemeta sem credencial nenhuma, que e o mesmo caminho da fileira "Continuar
 // assistindo".
 int lst_ler_simkl_itens(const char *json, int serie, CatItem *dst, int max) {
-  const char *vetor = serie ? "shows" : "movies";
-  const char *interno = serie ? "show" : "movie";
+  // Anime e um TERCEIRO tipo no Simkl (raiz "anime", objeto interno "anime")
+  // e vem do endpoint /sync/all-items/anime/<estado>: vai para o lado das
+  // series, junto com o que ja veio de shows.
+  static const char *vetores[] = { "movies", "shows", "anime" };
+  static const char *chaves[]  = { "movie", "show", "anime" };
   const char *p;
-  int n = 0;
+  int n = 0, k;
   if (!json || !dst) return 0;
-  for (p = js_array(json, NULL, vetor); p && *p == '{' && n < max;
+  for (k = serie ? 1 : 0; k < (serie ? 3 : 1) && n < max; k++)
+  for (p = js_array(json, NULL, vetores[k]); p && *p == '{' && n < max;
        p = js_prox(js_fim(p))) {
     const char *f = js_fim(p);
     char obj[900] = "";
     const char *oi = p, *of = f;
     CatItem *d = &dst[n];
     char imdb[32] = "";
-    if (brutoRaiz(p, f, interno, obj, sizeof obj)) { oi = obj; of = obj + strlen(obj); }
+    if (brutoRaiz(p, f, chaves[k], obj, sizeof obj)) { oi = obj; of = obj + strlen(obj); }
     memset(d, 0, sizeof *d);
     js_texto_raiz_em(oi, of, "title", d->titulo, sizeof d->titulo);
     { char ids[300] = "";
@@ -676,25 +680,46 @@ static char     itEstado[16], itMidia[8];
 typedef struct {
   unsigned geracao;
   uint64_t sessao;
-  char estado[16], midia[8], cliente[160], app[120], token[400];
+  char estado[16], midia[8], cid[200], nome[120], token[400];
 } SimklTarefa;
+
+static char *fioSimklBaixar(const char *caminho, const SimklTarefa *t,
+                            const char *const *cab) {
+  char url[500];
+  snprintf(url, sizeof url,
+           "https://api.simkl.com%s?client_id=%s&app-name=%s"
+           "&app-version=1.0.1&extended=full",
+           caminho, t->cid, t->nome);
+  return rede_baixar_com(url, 20, cab);
+}
 
 static void *fioSimkl(void *u) {
   SimklTarefa *t = u;
-  char url[500], cid[200], nome[120], aut[430];
+  char url[40], aut[430];
   const char *cab[3];
   CatItem *lote = malloc(sizeof *lote * LST_ITENS_MAX);
-  int n = 0, serie = !strcasecmp(t->midia, "TV");
-  nuvem_url_escapar(t->cliente, cid, sizeof cid);
-  nuvem_url_escapar(t->app, nome, sizeof nome);
-  snprintf(url, sizeof url,
-           "https://api.simkl.com/sync/all-items/%s/%s"
-           "?client_id=%s&app-name=%s&app-version=1.0.1&extended=full",
-           serie ? "shows" : "movies", t->estado, cid, nome);
+  int n = 0, nA, i, j, serie = !strcasecmp(t->midia, "TV");
+  snprintf(url, sizeof url, "/sync/all-items/%s/%s", serie ? "shows" : "movies",
+           t->estado);
   snprintf(aut, sizeof aut, "Authorization: Bearer %s", t->token);
   cab[0] = aut; cab[1] = "Accept: application/json"; cab[2] = NULL;
-  char *corpo = lote && perfis_sessao_atual(t->sessao) ? rede_baixar_com(url, 20, cab) : NULL;
+  char *corpo = lote && perfis_sessao_atual(t->sessao) ? fioSimklBaixar(url, t, cab) : NULL;
   if (corpo) { n = lst_ler_simkl_itens(corpo, serie, lote, LST_ITENS_MAX); free(corpo); }
+  // ANIME: terceiro tipo do Simkl. Na lista de TV, o mesmo estado pede o
+  // endpoint /anime/ e o leitor ja aceita a raiz "anime". Dedup por imdb.
+  if (serie && n < LST_ITENS_MAX && perfis_sessao_atual(t->sessao)) {
+    snprintf(url, sizeof url, "/sync/all-items/anime/%s", t->estado);
+    corpo = fioSimklBaixar(url, t, cab);
+    if (corpo) {
+      nA = lst_ler_simkl_itens(corpo, 1, lote + n, LST_ITENS_MAX - n);
+      free(corpo);
+      for (i = n; i < n + nA; i++) {
+        for (j = 0; j < n; j++) if (!strcmp(lote[j].imdb, lote[i].imdb)) break;
+        if (j < n) memmove(lote + i, lote + i + 1, sizeof lote[0] * (size_t)(n + nA - i - 1)), nA--, i--;
+      }
+      n += nA;
+    }
+  }
   if (n && perfis_sessao_atual(t->sessao))
     n = trakt_enfeitar_lote_sessao(lote, n, t->sessao);
   if (perfis_sessao_travar(t->sessao)) {
@@ -728,8 +753,9 @@ void lst_abrir(const LstLista *l, const char *midia) {
     uint64_t sessao = perfis_sessao_geracao();
     if (!t || !perfis_sessao_travar(sessao)) { free(t); return; }
     t->sessao = sessao;
-    snprintf(t->cliente, sizeof t->cliente, "%s", nuvem_simkl_cliente());
-    snprintf(t->app, sizeof t->app, "%s", nuvem_simkl_app()[0] ? nuvem_simkl_app() : "nuvio");
+    nuvem_url_escapar(nuvem_simkl_cliente(), t->cid, sizeof t->cid);
+    nuvem_url_escapar(nuvem_simkl_app()[0] ? nuvem_simkl_app() : "nuvio",
+                      t->nome, sizeof t->nome);
     snprintf(t->token, sizeof t->token, "%s", simklauth_token());
     pthread_mutex_lock(&itTrava);
     t->geracao = itGeracao;

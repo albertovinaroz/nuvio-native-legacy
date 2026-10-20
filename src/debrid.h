@@ -157,4 +157,26 @@ const char *debrid_sem_plano_frase(int mascara);
 // curta da ilha ("Seu TorBox está sem plano...").
 const char *debrid_sem_plano_nome(int mascara);
 
+// ARQUIVOS DE UMA FONTE NO TORBOX (partes.h). Nao dependem da busca em curso;
+// a chave e a efetiva do TorBox na hora da chamada. Nenhuma URL vai para log.
+//   debrid_tb_disponivel: 1 ha chave que pode usar a API, 0 sem chave,
+//                         -1 conta sem plano para a API.
+//   debrid_tb_mylist:     BLOQUEIA. GET torrents/mylist ou usenet/mylist
+//                         (id <= 0 = todos os itens; fresco = bypass_cache,
+//                         sem ele vem a copia em cache do TorBox, mais
+//                         rapida). Corpo (free) ou NULL; *st recebe o HTTP.
+//   debrid_tb_link:       BLOQUEIA. requestdl de um arquivo; 1 = `url` e o
+//                         link do CDN.
+//   debrid_tb_adicionar:  BLOQUEIA. Poe o torrent na conta SO se ja estiver em
+//                         cache; devolve o id ou -1.
+// Changes only with account session or effective TorBox key, never a search.
+unsigned debrid_tb_geracao(void);
+int   debrid_tb_disponivel(void);
+// Uma pagina de DEBRID_TB_PAGINA itens (o teto do TorBox): conta com mais
+// itens que isso precisa de mais paginas (`pagina` 0, 1, ...).
+#define DEBRID_TB_PAGINA 1000
+char *debrid_tb_mylist(int usenet, int id, int pagina, int fresco, int *st);
+int   debrid_tb_link(int usenet, int id, int arquivo, char *url, unsigned n);
+int   debrid_tb_adicionar(const char *hash);
+
 #endif

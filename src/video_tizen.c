@@ -82,6 +82,7 @@
 #if defined(__EMSCRIPTEN__) && !defined(NV_VIDAA)
 
 #include "video.h"
+#include "avroi.h"
 #include "video_reconexao.h"
 #include "linguas.h"
 #include "audioescolha.h"
@@ -93,7 +94,9 @@
 #include <SDL2/SDL.h>
 #include <emscripten.h>
 #include <emscripten/threading.h>
+#ifndef NV_UM_FIO
 #include <emscripten/proxying.h>
+#endif
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -265,11 +268,11 @@ EM_JS(double, nv_av, (const char *cmd, const char *txt,
   if (op === "abrir") {
     var p = pl();
     if (!p) return 0;
-    var geracao = ++S.geracao;
     // Fechar antes de abrir. Sem isto o segundo titulo da sessao encontra o
     // player em estado PLAYING e o open() e recusado — o mesmo formato do bug
     // "abrir -> sair -> abrir" que o caminho da LG ja tinha.
-    try { if (S.aberto) { p.stop(); p.close(); } } catch (e) {}
+    if (S.aberto && !encerrar()) return 0;
+    var geracao = ++S.geracao;
     S.aberto = 0; S.tocando = 0; S.pronto = 0; S.posMs = 0;
     S.durMs = 0; S.tDur = 0; S.tEvento = 0; S.tSeek = 0; S.tPos = 0;
     S.erro = ""; S.fim = 0; S.bufPct = 0; S.larg = 0; S.alt = 0;
@@ -446,6 +449,7 @@ EM_JS(double, nv_av, (const char *cmd, const char *txt,
   if (op === "roi") {
     var p8 = pl();
     if (!p8 || !S.aberto) return 0;
+    if (typeof p8.setVideoRoi !== "function") return -1;
     try { p8.setVideoRoi(a, b, c, d); } catch (e) {
       if (!S.avisouRoi) { S.avisouRoi = 1;
         try { console.log("[video] setVideoRoi recusou: " + e); } catch (e2) {} }
@@ -732,15 +736,26 @@ EM_JS(double, nv_av, (const char *cmd, const char *txt,
     return 1;
   }
 
-  if (op === "encerrar") {
-    var pb = pl();
-    ++S.geracao;
-    try { if (pb && S.aberto) { pb.stop(); pb.close(); } } catch (e) {}
-    S.aberto = 0; S.tocando = 0; S.pronto = 0; S.trilhas = null;
-    return 1;
-  }
+  if (op === "encerrar") return encerrar();
 
   return 0;
+
+  function encerrar() {
+    var pb = pl();
+    ++S.geracao;
+    var ok = 1;
+    S.erro = "";
+    if (S.aberto) {
+      if (!pb) { S.erro = "close: AVPlay unavailable"; ok = 0; }
+      else {
+        try { pb.stop(); } catch (e) { S.erro = "stop: " + e; ok = 0; }
+        try { pb.close(); S.aberto = 0; }
+        catch (e) { S.erro += " close: " + e; ok = 0; }
+      }
+    }
+    S.tocando = 0; S.pronto = 0; S.trilhas = null;
+    return ok;
+  }
 });
 
 // Indices do vetor devolvido por "estado". Precisam casar com a ordem escrita
@@ -768,6 +783,7 @@ static int executarNoPrincipal(int p) {
 
 // Fila de proxy criada UMA VEZ: por chamada vazaria uma fila por operacao de
 // video, e duas threads chegando juntas na primeira criariam duas.
+#ifndef NV_UM_FIO
 static em_proxying_queue *filaPrincipal;
 static pthread_once_t filaUmaVez = PTHREAD_ONCE_INIT;
 static void criarFila(void) { filaPrincipal = em_proxying_queue_create(); }
@@ -776,6 +792,7 @@ static void criarFila(void) { filaPrincipal = em_proxying_queue_create(); }
 // nasceu para a assinatura EM_FUNC_SIG_II da API antiga. O resultado nao se
 // perde: sai em p.res, dentro do proprio Pedido.
 static void executarNoPrincipalV(void *arg) { (void)executarNoPrincipal((int)(uintptr_t)arg); }
+#endif
 
 
 static void logarErro(const char *onde);
@@ -790,6 +807,12 @@ static double avChamar(const char *cmd, const char *txt,
   if (emscripten_is_main_browser_thread()) {
     executarNoPrincipal((int)(uintptr_t)&p);
   } else {
+#ifdef NV_UM_FIO
+    // Single-thread asm.js/VIDAA-st: there is no proxying queue. Run the
+    // request inline on this fiber; the AVPlay calls are JS EM_JS stubs that
+    // complete synchronously and write p.res.
+    executarNoPrincipal((int)(uintptr_t)&p);
+#else
     // emscripten_sync_run_in_main_runtime_thread FOI REMOVIDA do runtime. Ela
     // ainda e DECLARADA em emscripten/threading_legacy.h, entao o compilador
     // aceita e so o wasm-ld reclama, com "undefined symbol:
@@ -801,6 +824,7 @@ static double avChamar(const char *cmd, const char *txt,
     emscripten_proxy_sync(filaPrincipal,
                           emscripten_main_runtime_thread_id(),
                           executarNoPrincipalV, &p);
+#endif
   }
   return p.res;
 }
@@ -865,6 +889,12 @@ static int faixasLidas;
 // Retangulo pedido pela interface, em 1920x1080. Guardado para nao repetir a
 // mesma chamada a cada quadro — o mesmo cuidado do caminho da LG.
 static int janX, janY, janW = 1920, janH = 1080;
+// setVideoRoi fica valendo no AVPlay ate ser trocado. 1 = pode haver recorte
+// de fonte antigo (zoom, ou titulo novo cujo estado nao se conhece).
+static int roiAtivo;
+static int roiResetTentativas;
+static Uint32 roiResetEm;
+static int roiAplicar(int sx, int sy, int sw, int sh);
 
 // AVANCO COM REPOUSO, identico ao do webOS e pela mesma razao medida la:
 // segurar a seta produzia quatro seeks em 0,8 s, e os tres primeiros sao
@@ -916,6 +946,8 @@ int video_tocar(const char *url) {
   // Titulo novo: o marcador do anterior nao vale. Sem isto um filme sem
   // capitulos herdaria os creditos do filme de antes.
   creditosNomeado = creditosUltimo = 0.0;
+  roiResetTentativas = 0;
+  roiAtivo = 1;   // o recorte do titulo anterior pode ter ficado no player
   snprintf(urlAtual, sizeof urlAtual, "%s", url);
   nv_recon_zerar(&recon);
   reconPermitida = reconProxima; reconProxima = 0; reconIniciou = 0;
@@ -978,6 +1010,7 @@ static void escolherAudioPreferido(void) {
     // A Samsung nao toca DTS/TrueHD e o .wgt nao converte: escolher uma deixaria
     // o filme mudo. So a mao (a folha de faixas continua listando).
     c[i].pode = !c[i].dts;
+    c[i].numero = faixaAudio[i].numero;
   }
   k = audioesc_escolher(c, nAudio, &o);
   if (k < 0) {
@@ -1241,6 +1274,7 @@ int video_recarregar(void) {
 }
 
 void video_bombear(void) {
+  video_recorte_reaplicar();
   double est[EST_N];
   int estavaPronto = pronto;
 
@@ -1279,6 +1313,11 @@ void video_bombear(void) {
   if (est[EST_ALT]  > 0) vidH = (int)est[EST_ALT];
   if (pronto && posSeg > 0.5) reconIniciou = 1;
   if (pronto && reconBuscar < 0) nv_recon_progresso(&recon, posSeg);
+  if (!houveErro && (!pronto || reconBuscar >= 0 || (!pausaPedida && bufPct < 100)) &&
+      nv_recon_expirou(&recon, SDL_GetTicks())) {
+    snprintf(erroTexto, sizeof erroTexto, "network recovery timeout");
+    if (!nv_recon_erro(&recon, 1, SDL_GetTicks(), recon.alvo)) houveErro = 1;
+  }
   // Esperando a reconexao, o erro da sessao morta segue no estado ate o
   // proximo open: nao e erro novo.
   if (est[EST_ERRO] != 0 && !houveErro && !recon.pendente) {
@@ -1357,6 +1396,7 @@ void video_parar(void) {
   reconFaixasPend = 0; reconBuscar = -1.0;
   recarregarPausa = -1; pausaPedida = 0;
   seekEm = 0; mkvPendente = 0;
+  roiResetTentativas = 0;
   if (temAvplay) AV0("parar");
   ativo = tocando = pronto = terminou = 0;
   posSeg = durSeg = 0;
@@ -1367,7 +1407,13 @@ void video_parar(void) {
 // Trailer mudo no fundo nao passa pelo AVPlay neste alvo (trailer.c usa o
 // embed do YouTube); o volume fica por conta da TV.
 void video_volume(int pct) { (void)pct; }
-void video_recorte_reaplicar(void) {}
+void video_recorte_reaplicar(void) {
+  if (!roiResetTentativas || !temAvplay || !ativo ||
+      (int)(SDL_GetTicks() - roiResetEm) < 0) return;
+  --roiResetTentativas;
+  roiResetEm = SDL_GetTicks() + 250;
+  roiAplicar(0, 0, 0, 0);
+}
 // Tizen: o AVPlay recebe o retangulo em unidades de tela 1920x1080 do proprio
 // firmware, sem relacao com o drawable do GL; nada a escalar (#176 e so LG).
 void video_escala_definir(int sw, int sh) { (void)sw; (void)sh; }
@@ -1425,7 +1471,23 @@ static int aplicarRect(int x, int y, int w, int h) {
   return 1;
 }
 
-void video_janela(int x, int y, int w, int h) {
+// Manda ao AVPlay o recorte que avroi_pedido decidir. Devolve 1 se mandou.
+static int roiAplicar(int sx, int sy, int sw, int sh) {
+  int o[4], k = avroi_pedido(roiAtivo, sx, sy, sw, sh,
+                             (int)video_largura(), (int)video_altura(), o);
+  if (!k) return 0;
+  double r = avChamar("roi", NULL, o[0], o[1], o[2], o[3], NULL, 0);
+  if (r < 1) {
+    // Only a missing API rules out a stale crop; rejection must retry.
+    if (r < 0) { roiAtivo = 0; roiResetTentativas = 0; }
+    return 0;
+  }
+  roiAtivo = k == 1;
+  roiResetTentativas = 0;
+  return 1;
+}
+
+static void janelaGrampeada(int x, int y, int w, int h) {
   // GRAMPEIA A TELA, e so este caminho grampeia. Ver video_janela_fonte: o
   // recorte emulado PRECISA de um retangulo que saia da tela, e passar por aqui
   // era o que anulava o zoom inteiro.
@@ -1435,6 +1497,17 @@ void video_janela(int x, int y, int w, int h) {
   if (x + w > 1920) w = 1920 - x;
   if (y + h > 1080) h = 1080 - y;
   aplicarRect(x, y, w, h);
+}
+
+// Destino simples = quadro inteiro. Um recorte antigo (zoom que saiu, miniatura,
+// titulo novo) esticaria a imagem dentro deste retangulo, entao limpa antes.
+void video_janela(int x, int y, int w, int h) {
+  roiResetTentativas = 0;
+  if (roiAtivo && !roiAplicar(0, 0, 0, 0) && roiAtivo) {
+    roiResetTentativas = 3;
+    roiResetEm = SDL_GetTicks() + 250;
+  }
+  janelaGrampeada(x, y, w, h);
 }
 
 // RECORTE DE FONTE: setVideoRoi (ver a op "roi" no JS).
@@ -1486,13 +1559,15 @@ void video_janela(int x, int y, int w, int h) {
 // dele — e o log abaixo mostra exatamente o retangulo pedido.
 void video_janela_fonte(int sx, int sy, int sw, int sh,
                         int dx, int dy, int dw, int dh) {
+  roiResetTentativas = 0;
   double qw = video_largura(), qh = video_altura();
   double ex, ey;
   int X, Y, W, H;
 
   // Sem as dimensoes do quadro, ou sem recorte de verdade, o destino cru serve.
   if (qw < 2.0 || qh < 2.0 || sw <= 0 || sh <= 0) { video_janela(dx, dy, dw, dh); return; }
-  // Recorte que cobre o quadro inteiro E o caso sem zoom: mesma coisa.
+  // Recorte que cobre o quadro inteiro E o caso sem zoom: mesma coisa (e
+  // video_janela devolve o quadro inteiro ao ROI se um zoom o deixou recortado).
   if (sx <= 0 && sy <= 0 && sw >= (int)qw && sh >= (int)qh) { video_janela(dx, dy, dw, dh); return; }
 
   ex = (double)dw / (double)sw;
@@ -1513,11 +1588,11 @@ void video_janela_fonte(int sx, int sy, int sw, int sh,
   //
   // A Samsung documenta o ROI junto do PLAYER_DISPLAY_MODE_FULL_SCREEN, que e
   // o modo que este arquivo ja seleciona no open (ver a nota la em cima).
-  if (avChamar("roi", NULL, sx, sy, sw, sh, NULL, 0) >= 1) {
+  if (roiAplicar(sx, sy, sw, sh)) {
     printf("[video] roi %d,%d %dx%d de %.0fx%.0f (recorte na fonte)\n",
            sx, sy, sw, sh, qw, qh);
     fflush(stdout);
-    video_janela(dx, dy, dw, dh);
+    janelaGrampeada(dx, dy, dw, dh);
     return;
   }
 

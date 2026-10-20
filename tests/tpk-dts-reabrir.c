@@ -21,6 +21,12 @@
 #include "dts/dts_hls_tpk.h"
 #include "audioescolha.h"
 
+// These fixtures never resolve a TorBox file link. Fail closed if requested.
+int debrid_tb_link(int usenet, int item, int file, char *dst, unsigned n) {
+  (void)usenet; (void)item; (void)file;
+  if (n) dst[0] = 0;
+  return 0;
+}
 const char *i18n(const char *s) { return s; }
 const char *ling_nome(const char *c) { return c; }
 int ling_casa(const char *c, const char *p) { return c && p && !strcmp(c, p); }
@@ -75,13 +81,15 @@ static long faixa(unsigned char *o, int num, int tipo, const char *codec, const 
   if (canais) { unsigned char a[8]; long k = uintEl(a, 0x9F, 1, (unsigned)canais); n += el(d + n, 0xE1, 1, a, k); }
   return el(o, 0xAE, 1, d, n);
 }
+static int duplicateDts;
 static int misto;   // + a Japanese AAC track the TV plays
 static const char *videoCodec = "V_MPEGH/ISO/HEVC";
 static void montarCabecalho(void) {
   unsigned char t[768];
   long n = 0;
   n += faixa(t + n, 1, 1, videoCodec, NULL, 0);
-  n += faixa(t + n, 2, 2, "A_DTS", "eng", 6);
+  n += faixa(t + n, 2, 2, "A_DTS", duplicateDts ? "jpn" : "eng", 6);
+  if (duplicateDts) n += faixa(t + n, 7, 2, "A_DTS", "jpn", 6);
   if (misto) n += faixa(t + n, 6, 2, "A_AAC", "jpn", 2);
   n += faixa(t + n, 3, 17, "S_HDMV/PGS", "eng", 0);
   n += faixa(t + n, 4, 17, "S_TEXT/ASS", "eng", 0);
@@ -112,6 +120,7 @@ int dts_tpk_abrir(const char *url, const char *headers, int audio_ordinal, int s
                   int modo, double inicio, char *out, size_t n) {
   (void)url; (void)headers; (void)audio_ordinal; (void)stereo_aac; (void)modo;
   abriuConversor++;
+  SDL_Delay(3);   // like the TV: starting the local server takes a few ms
   snprintf(out, n, "http://127.0.0.1:1/tok/v.ts?t=%.0f", inicio);
   return 1;
 }
@@ -346,6 +355,113 @@ int main(void) {
   videoCodec = "V_MPEG4/ISO/AVC"; montarCabecalho(); abriuConversor = 0;
   video_tocar("http://h/g.mkv");
   ok(abriuConversor == 1 && dts_tpk_e_url(ultUrl), "H.264 video, only DTS: converts");
+  video_parar();
+  // Identical Japanese DTS tracks: remember the second through the menu's
+  // identity, then restore it before the next episode opens its converter.
+  duplicateDts = 1; montarCabecalho(); pref = "jpn";
+  audioesc_titulo("tt550"); audioesc_fonte_binge("release550");
+  video_tocar("http://h/episode1.mkv");
+  playerPronto(); bombear(3);
+  ok(video_n_audio() == 2, "two identical Japanese DTS tracks in the converted menu");
+  {
+    const VideoFaixa *f = video_audio(1);
+    if (f) {
+      audioesc_lembrar_faixa(f->idioma, f->codec, f->rotulo, f->canais,
+                            video_audio_numero_memoria(f));
+      video_escolher_audio(1);
+    }
+  }
+  video_parar();
+  video_tocar("http://h/episode2.mkv");
+  playerPronto(); bombear(3);
+  ok(video_audio_atual() == 1 && video_audio(1)->stream_id == 7,
+     "same bingeGroup restores the second identical Japanese DTS track");
+  video_parar();
+  audioesc_fonte_binge("another-release");
+  video_tocar("http://h/episode3.mkv");
+  playerPronto(); bombear(3);
+  ok(video_audio_atual() == 0, "another bingeGroup falls back to the first Japanese DTS track");
+  video_parar();
+  duplicateDts = 0; audioesc_fonte_binge("");
+  // KAGUYA BD T3 SHAPE (16/10): Japanese DTS-HD MA first and default, English
+  // FLAC second. The TV hides the DTS, so its one audio track (A0) is the FLAC
+  // and the file-to-player match is "none". English preferred: the FLAC plays,
+  // nothing converts. Japanese preferred: the Japanese DTS converts.
+  { unsigned char t[512]; long n = 0;
+    n += faixa(t + n, 1, 1, "V_MPEG4/ISO/AVC", "eng", 0);
+    n += faixa(t + n, 2, 2, "A_DTS", "jpn", 6);
+    n += faixa(t + n, 3, 2, "A_FLAC", "eng", 2);
+    n += faixa(t + n, 4, 17, "S_TEXT/ASS", "eng", 0);
+    cabN = 0; cab[cabN++] = 0x1A; cab[cabN++] = 0x45; cab[cabN++] = 0xDF; cab[cabN++] = 0xA3; cab[cabN++] = 0x80;
+    cabN += el(cab + cabN, 0x1654AE6B, 4, t, n);
+    { unsigned char z[64] = {0}; cabN += el(cab + cabN, 0xEC, 1, z, sizeof z); } }
+  audioesc_titulo("tt-bdt3");   // not the tt550 memory above
+  cabPronto = 1; abriuConversor = 0; pref = "eng"; pref2 = ""; orig = ""; tvLang = "eng";
+  video_tocar("http://h/t3.mkv");
+  ok(!abriuConversor && !dts_tpk_e_url(ultUrl), "BD T3 shape, English preferred: the original opens (English FLAC playable)");
+  inicioStream = -1; posMs = 2000;
+  playerPronto(); bombear(20);
+  ok(!abriuConversor && video_audio_atual() >= 0 && video_audio(video_audio_atual()) &&
+     !strcmp(video_audio(video_audio_atual())->idioma, "eng") && video_audio(video_audio_atual())->numero >= 0,
+     "BD T3 shape, English preferred: plays the TV's English track (the FLAC), no conversion");
+  video_parar();
+  abriuConversor = 0; pref = "jpn"; tvLang = "eng";
+  video_tocar("http://h/t3b.mkv");
+  ok(abriuConversor == 1 && dts_tpk_e_url(ultUrl), "BD T3 shape, Japanese preferred: converts the Japanese DTS");
+  video_parar();
+  pref = "";
+
+  // THE CONVERTER RESCUES A DTS-ONLY FILE THE TV REFUSES (16/10, TTGA): the
+  // header is not known at open, the TV says AudioCodecNotSupported. That is
+  // not a failed source: no `falhou`, the Prepare error after it is ignored,
+  // and the converter takes over as soon as the header is read.
+  misto = 0; pref = ""; videoCodec = "V_MPEG4/ISO/AVC"; montarCabecalho();
+  cabPronto = 0; abriuConversor = 0;
+  video_tocar("http://h/r.mkv");
+  ok(!abriuConversor, "rescue: the original opens (header not known yet)");
+  cabPronto = 1;   // the header probe finds the tracks
+  video_tpk_log_host("erro AudioCodecNotSupported");
+  nv_tpk_video_evento(5, (int)0xFE6C002Eu, 0);
+  bombear(1);
+  ok(!video_falhou(), "rescue: AudioCodecNotSupported is not a failed source");
+  // The Prepare exception of the ORIGINAL that follows, before the converted
+  // player opens (later ones the host drops: Video.cs checks the session).
+  nv_tpk_video_evento(5, -1, 0);
+  bombear(1);
+  ok(!video_falhou(), "rescue: the Prepare error after it is ignored too");
+  { Uint32 t0 = SDL_GetTicks(); while (!abriuConversor && SDL_GetTicks() - t0 < 3000) bombear(1); }
+  ok(abriuConversor == 1 && dts_tpk_e_url(ultUrl) && !video_falhou(), "rescue: the converter takes over, no error");
+  // S95C 16/10: the converter gave up on the same tick ("o player nao preparou
+  // em 45 s", 0 requests) because convBombear's clock was read before the
+  // converter opened. It must still be converting a moment later.
+  bombear(10);
+  ok(video_tpk_convertendo() && !video_falhou() && dts_tpk_e_url(ultUrl), "rescue: still converting a moment later (no instant give-up)");
+  video_parar();
+  // HEADER PROBE COMES BACK EMPTY (host paused for side reads, network): the
+  // converter reads the file itself and takes over; the original never even
+  // prepared (S95C 16/10: the TTGA file failed ~2 s after open, "no error code").
+  cabPronto = 0; abriuConversor = 0;
+  video_tocar("http://h/r2.mkv");
+  nv_tpk_video_evento(5, (int)0xFE6C002Eu, 0);
+  { Uint32 t0 = SDL_GetTicks(); while (!abriuConversor && !video_falhou() && SDL_GetTicks() - t0 < 4000) bombear(1); }
+  bombear(10);
+  ok(!video_falhou() && abriuConversor >= 1 && video_tpk_convertendo(), "rescue, header not read: the converter's own probe takes over");
+  { Uint32 t0 = SDL_GetTicks(); while (!dts_tpk_e_url(ultUrl) && SDL_GetTicks() - t0 < 3000) bombear(1); }
+  ok(dts_tpk_e_url(ultUrl) && !video_falhou(), "rescue, header not read: the player opens the converted stream");
+  video_parar();
+  // Nothing to convert (only a FLAC the TV refuses, say): failed at once, as before.
+  cabPronto = 1; misto = 0;
+  { unsigned char t[512]; long n = 0;   // video + one AAC: no DTS/TrueHD track
+    n += faixa(t + n, 1, 1, "V_MPEG4/ISO/AVC", NULL, 0);
+    n += faixa(t + n, 2, 2, "A_AAC", "eng", 2);
+    cabN = 0; cab[cabN++] = 0x1A; cab[cabN++] = 0x45; cab[cabN++] = 0xDF; cab[cabN++] = 0xA3; cab[cabN++] = 0x80;
+    cabN += el(cab + cabN, 0x1654AE6B, 4, t, n);
+    { unsigned char z[64] = {0}; cabN += el(cab + cabN, 0xEC, 1, z, sizeof z); } }
+  abriuConversor = 0;
+  video_tocar("http://h/s.mkv");
+  nv_tpk_video_evento(5, (int)0xFE6C002Eu, 0);
+  { Uint32 t0 = SDL_GetTicks(); while (!video_falhou() && SDL_GetTicks() - t0 < 3000) bombear(1); }
+  ok(video_falhou() && !abriuConversor, "rescue: nothing to convert -> failed right away");
   video_parar();
   printf(falhas ? "tpk-dts-reabrir: %d FAIL(S)\n" : "tpk-dts-reabrir: ok\n", falhas);
   return falhas != 0;

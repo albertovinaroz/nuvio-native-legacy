@@ -35,7 +35,7 @@ static void ids_do_video(const char *video, const char *fim, MetaEpInfo *out) {
 
 int metaep_buscar(const char *corpo, int t, int e, MetaEpInfo *out) {
   const char *p;
-  if (!corpo || t <= 0 || e <= 0) return 0;
+  if (!corpo || t < 0 || e <= 0 || js_videos_temporadas_falsas(corpo)) return 0;
   p = js_array(corpo, NULL, "videos");
   while (p) {
     const char *f = js_fim(p);
@@ -61,7 +61,7 @@ int metaep_existe(const char *corpo, int t, int e) {
 
 static const char *video_por_se(const char *corpo, int t, int e,
                                 const char **fim) {
-  const char *p = js_array(corpo, NULL, "videos");
+  const char *p = js_videos_temporadas_falsas(corpo) ? NULL : js_array(corpo, NULL, "videos");
   while (p) {
     const char *f = js_fim(p);
     int tv = metaep_temporada(p, f);
@@ -98,16 +98,16 @@ int metaep_proximo(const char *corpo, int t, int e, MetaEpInfo *out) {
   const char *p;
   int melhorT = 0, melhorE = 0;
   MetaEpInfo melhor;
-  if (!corpo || t <= 0 || e <= 0) return 0;
+  if (!corpo || t < 0 || e <= 0 || js_videos_temporadas_falsas(corpo)) return 0;
   memset(&melhor, 0, sizeof melhor);
   p = js_array(corpo, NULL, "videos");
   while (p) {
     const char *f = js_fim(p);
     int tv = metaep_temporada(p, f);
     int ev = (int)js_num(p, f, "episode", 0);
-    if (tv <= 0 || ev <= 0) { p = js_prox(f); continue; }
+    if (tv < 0 || ev <= 0) { p = js_prox(f); continue; }
     if (tv < t || (tv == t && ev <= e)) { p = js_prox(f); continue; }
-    if (!melhorT || tv < melhorT || (tv == melhorT && ev < melhorE)) {
+    if (!melhorE || tv < melhorT || (tv == melhorT && ev < melhorE)) {
       melhorT = tv; melhorE = ev;
       memset(&melhor, 0, sizeof melhor);
       melhor.temporada = tv;
@@ -116,7 +116,7 @@ int metaep_proximo(const char *corpo, int t, int e, MetaEpInfo *out) {
     }
     p = js_prox(f);
   }
-  if (!melhorT) return 0;
+  if (!melhorE) return 0;
   if (out) *out = melhor;
   return 1;
 }
@@ -127,20 +127,15 @@ void metaep_scrobble_corpo(char *dst, size_t n, const char *showImdb,
   if (pct < 0.0) pct = 0.0;
   if (pct > 100.0) pct = 100.0;
   if (!showImdb || !showImdb[0]) { dst[0] = 0; return; }
-  if (t > 0 && e > 0) {
-    if (ep && (ep->tvdb[0] || ep->tmdb[0] || ep->trakt[0])) {
+  if (t >= 0 && e > 0) {
+    if (ep && (ep->tvdb[0] || ep->trakt[0])) {
       char ids[220] = "";
-      if (showImdb[0] == 't' && showImdb[1] == 't')
-        snprintf(ids, sizeof ids, "\"imdb\":\"%s\"", showImdb);
+      // These IDs identify the episode, not the show. Trakt's episode
+      // contract supports TVDB/Trakt; TMDB-only metadata uses the pair below.
       if (ep->tvdb[0]) {
         size_t u = strlen(ids);
         snprintf(ids + u, sizeof ids - u, "%s\"tvdb\":%s",
                  ids[0] ? "," : "", ep->tvdb);
-      }
-      if (ep->tmdb[0]) {
-        size_t u = strlen(ids);
-        snprintf(ids + u, sizeof ids - u, "%s\"tmdb\":%s",
-                 ids[0] ? "," : "", ep->tmdb);
       }
       if (ep->trakt[0]) {
         size_t u = strlen(ids);
@@ -148,9 +143,8 @@ void metaep_scrobble_corpo(char *dst, size_t n, const char *showImdb,
                  ids[0] ? "," : "", ep->trakt);
       }
       snprintf(dst, n,
-               "{\"show\":{\"ids\":{%s}},"
-               "\"episode\":{\"season\":%d,\"number\":%d},\"progress\":%.2f}",
-               ids, t, e, pct);
+               "{\"episode\":{\"ids\":{%s}},\"progress\":%.2f}",
+               ids, pct);
       return;
     }
     snprintf(dst, n,

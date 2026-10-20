@@ -35,6 +35,11 @@
 /* Real code only in the Samsung .tpk build with FFmpeg (and the host smoke
  * test). webOS also defines NV_DTS_FFMPEG but never remuxes: stubs there keep
  * its binary as it was. */
+#include "../audsync.h"
+#include <stdatomic.h>
+static atomic_int audioOffsetMs;
+void dts_remux_set_audio_offset_ms(int ms) { atomic_store(&audioOffsetMs, audsync_offset_ms(ms)); }
+
 #if !defined(NV_DTS_FFMPEG) || !(defined(NV_TPK) || defined(NV_DTS_REMUX_TEST))
 int dts_remux_available(void) { return 0; }
 DtsRemux *dts_remux_open(const char *u, const char *h, int t, int s, double g, volatile int *c, char *err, size_t n) {
@@ -181,6 +186,7 @@ struct DtsRemux {
   char *url, *headers;
   DtsEngine *probe;                 /* reader of dts_remux_open, handed to the 1st generator */
   int vs, as, mov, stereo_aac;
+  int audio_offset_ms;             /* stable across this source's segments and seeks */
   AVCodecParameters *vpar, *apar;
   AVRational vtb, atb, vfps;
   char lang[16];
@@ -419,6 +425,7 @@ DtsRemux *dts_remux_new(volatile int *cancel) {
   pthread_mutex_init(&r->lock, NULL);
   r->vs = r->as = -1;
   r->extCancel = cancel;
+  r->audio_offset_ms = atomic_load(&audioOffsetMs);
   return r;
 }
 
@@ -1041,6 +1048,11 @@ static int videoPacket(DtsRemuxGen *g, AVPacket *p, char *err, size_t errn) {
 static int writePkt(DtsRemuxGen *g, AVPacket *p, AVRational tb, AVStream *os, DtsRemuxStats *st, int video) {
   int rr;
   av_packet_rescale_ts(p, tb, os->time_base);
+  if (!video && g->src->audio_offset_ms) {
+    int64_t shift = av_rescale_q(g->src->audio_offset_ms, (AVRational){1, 1000}, os->time_base);
+    if (p->pts != AV_NOPTS_VALUE) p->pts += shift;
+    if (p->dts != AV_NOPTS_VALUE) p->dts += shift;
+  }
   p->stream_index = os->index;
   rr = av_interleaved_write_frame(g->oc, p);
   av_packet_free(&p);

@@ -99,6 +99,16 @@ static void dense(char *json, size_t size, int provider) {
   strncat(json, "]}", size - strlen(json) - 1);
 }
 int main(void) {
+  {
+    int t, e;
+    episodioPedido("tt12409194:0:1", &t, &e); assert(t == 0 && e == 1);
+    assert(episodioCorreto("{\"season\":0,\"episode\":1}", NULL, t, e));
+    assert(!episodioCorreto("{\"season\":1,\"episode\":1}", NULL, t, e));
+    episodioPedido("kitsu:41370:5", &t, &e); assert(t == -1 && e == 5);
+    assert(episodioCorreto("{\"season\":1,\"episode\":5}", NULL, t, e));
+    episodioPedido("kitsu:41370:0:5", &t, &e); assert(t == 0 && e == 5);
+  }
+
   responses[0] = "{\"subtitles\":[{\"lang\":\"ron\",\"url\":\"https://fixture.invalid/ro.srt\"},{\"lang\":\"spa\",\"url\":\"https://fixture.invalid/es.srt\"},{\"lang\":\"eng\",\"url\":\"https://fixture.invalid/en.srt\"},{\"lang\":\"kor\",\"url\":\"https://fixture.invalid/ko.srt\"}]}";
   ling_conta_legenda("ro"); ling_conta_legenda2(""); ling_local_legenda("*"); run(1, "tt123", "movie");
   assert(nLegs == 4 && !strcmp(legs[0].idioma, "ron") && !strcmp(legs[3].idioma, "kor"));

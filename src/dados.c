@@ -11,6 +11,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
+#ifndef __EMSCRIPTEN__
+#include <ifaddrs.h>
+#include <sys/socket.h>
+#ifdef __APPLE__
+#include <net/if_dl.h>
+#else
+#include <netpacket/packet.h>
+#endif
+#endif
 
 #ifndef __EMSCRIPTEN__
 static void espacoGravado(const char *nome);
@@ -600,6 +609,54 @@ void dados_uuid(char *dst, unsigned tam) {
     dst[i] = hex[rand() & 15];
   }
   dst[36] = 0;
+}
+
+const char *dados_aparelho_id(void) {
+  static char id[64];
+  if (id[0]) return id;
+  const char *raw = getenv("NUVIO_DEVICE_ID");
+  char hardware[128] = "";
+#ifndef __EMSCRIPTEN__
+  if (!raw || !*raw) {
+    // Native TV network interfaces survive uninstall. Prefer wired over Wi-Fi;
+    // enumerate interfaces, not currently connected routes.
+    struct ifaddrs *list = NULL;
+    char best[64] = "";
+    if (!getifaddrs(&list)) {
+      for (struct ifaddrs *p = list; p; p = p->ifa_next) {
+        if (!p->ifa_addr || !p->ifa_name || !strncmp(p->ifa_name, "lo", 2)) continue;
+        const unsigned char *mac = NULL;
+#ifdef __APPLE__
+        if (p->ifa_addr->sa_family == AF_LINK) {
+          struct sockaddr_dl *a = (struct sockaddr_dl *)p->ifa_addr;
+          if (a->sdl_alen == 6) mac = (const unsigned char *)LLADDR(a);
+        }
+#else
+        if (p->ifa_addr->sa_family == AF_PACKET) {
+          struct sockaddr_ll *a = (struct sockaddr_ll *)p->ifa_addr;
+          if (a->sll_halen == 6) mac = a->sll_addr;
+        }
+#endif
+        if (!mac || !(mac[0] | mac[1] | mac[2] | mac[3] | mac[4] | mac[5])) continue;
+        if (!best[0] || strcmp(p->ifa_name, best) < 0) {
+          snprintf(best, sizeof best, "%s", p->ifa_name);
+          snprintf(hardware, sizeof hardware, "%02x%02x%02x%02x%02x%02x",
+                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        }
+      }
+      freeifaddrs(list);
+    }
+    raw = hardware;
+  }
+#else
+  (void)hardware;
+#endif
+  if (!raw || !*raw) return "";
+  // Opaque identifier, never upload/log the raw DUID, Android ID or MAC.
+  unsigned long long h = 1469598103934665603ULL;
+  for (; *raw; raw++) { h ^= (unsigned char)*raw; h *= 1099511628211ULL; }
+  snprintf(id, sizeof id, "device-%016llx", h);
+  return id;
 }
 
 const char *dados_cliente_id(void) {

@@ -14,6 +14,10 @@ float sinopse_bloco(TxtEstilo original, const char *texto, int r, int g, int b,
 float sinopse_bloco_corta(TxtEstilo original, const char *texto, int r, int g, int b,
                           float x, float y, float larg, float leading, float alpha, int maxLinhas);
 void sinopse_abrir(const char *titulo, const char *texto);
+void sinopse_comentario(const char *autor, const char *texto, const char *data,
+                        int nota, int curtidas, int respostas, int spoiler,
+                        int posicao, int total);
+int sinopse_comentario_aberto(void);
 void sinopse_fechar(void);
 int sinopse_aberta(void);
 void sinopse_evento(const SDL_Event *e);

@@ -75,8 +75,10 @@ static void inicial(const char *nome, char *dst, size_t tam) {
 
 static void foto(GfxRect r, const char *url, const char *nome, const char *id, float a) {
   GLuint t = (url && url[0]) ? tex_obter_larg(url, r.w) : 0;
-  gfx_rect(r, 0, GFX_DISCO, 0, 0, 0, 0, 0.09f, 0.09f, 0.10f, a);
-  if (t) {
+  // A black or failed picture (the disc stayed empty on the TV) is no picture:
+  // the initial-letter disc takes its place.
+  if (t && !tex_falhou(url) && tex_luminancia(url) > 2) {
+    gfx_rect(r, 0, GFX_DISCO, 0, 0, 0, 0, 0.09f, 0.09f, 0.10f, a);
     gfx_tex_aspect_atual = tex_aspecto(url);
     gfx_rect(r, t, GFX_AVATAR, 0, 0, 0, 0, 1, 1, 1, a);
     gfx_tex_aspect_atual = 0.0f;
@@ -235,6 +237,16 @@ void svd_poster(GfxRect r, const char *url, float raio, float a) {
   } else {
     gfx_cor(r, raio, NV_COR_ESQUELETO_R, NV_COR_ESQUELETO_G, NV_COR_ESQUELETO_B, a);
   }
+}
+
+// A ARTE DO CARTAO, ou o esqueleto da home quando nao ha arte; 1 se a arte esta na tela.
+int svd_arte_card(GfxRect r, const char *url, float raio, float a) {
+  if (!(url && url[0] && tex_obter_larg(url, r.w))) {
+    gfx_esqueleto(r, raio, NV_COR_ESQUELETO_R, NV_COR_ESQUELETO_G, NV_COR_ESQUELETO_B, a);
+    return 0;
+  }
+  svd_poster(r, url, raio, a);
+  return 1;
 }
 
 // O ARO DE FOCO DA HOME: a cor de realce por fora do cartao, com o raio de

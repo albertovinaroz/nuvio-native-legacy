@@ -182,6 +182,23 @@ int ptv_heroi_max(PtvPlataforma p, long mem) {
   return 1920;
 }
 
+// Trailer em MP4 progressive (#584): sem ABR, o Samsung mostra o que ja baixou,
+// entao o 1080p chega borrado e demora a firmar. Em Automatico (teto 0) a TV
+// Samsung de 2 GB ou menos comeca no 720p. `alt` vem em ordem decrescente;
+// devolve o indice da maior definicao que nao passa do teto (ou a menor).
+int ptv_trailer_indice(PtvPlataforma p, long mem, int teto, const int *alt, int n) {
+  int i;
+  if (!teto && (p == PTV_TIZEN || p == PTV_TPK) && mem > 0 && mem <= 2048) teto = 720;
+  for (i = 0; i < n; i++) if (!teto || alt[i] <= teto) return i;
+  return n - 1;
+}
+
+// Teto duro (Android fraco): -1 quando nem a menor definicao cabe no teto.
+int ptv_trailer_indice_duro(PtvPlataforma p, long mem, int teto, const int *alt, int n) {
+  int i = ptv_trailer_indice(p, mem, teto, alt, n);
+  return (teto && alt[i] > teto) ? -1 : i;
+}
+
 void ptv_padrao(PtvPlataforma p, long mem, PtvPerfil *out) {
   if (!out) return;
   out->texMb = ptv_tex_auto_mb(p, mem);

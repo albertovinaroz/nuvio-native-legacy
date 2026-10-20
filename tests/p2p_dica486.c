@@ -11,6 +11,7 @@
 // nos Ajustes: "ligue o P2P" seria uma dica impossivel de seguir.
 #include <assert.h>
 #include "../src/streams.c"
+#include "stub_player_source_actions.h"
 
 static int p2pLig, motor = 1, debrid, cargaMotor;
 static pthread_t fioUi;

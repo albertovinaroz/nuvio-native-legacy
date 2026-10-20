@@ -79,10 +79,10 @@ int main(void) {
   assert(!ferror(f) && feof(f));
   fclose(f); json[n] = 0;
   count = stream_extrair(json, "fixture", &v);
-  assert(count == 9);
-  assert(!v[0].notWebReady && v[1].notWebReady && v[2].notWebReady);
+  assert(count == 10);
+  assert(!v[0].notWebReady && v[1].notWebReady && v[2].notWebReady && v[9].notWebReady);
   assert(!v[2].url[0] && !strcmp(v[2].infoHash, "abc"));
-  for (int i = 3; i < count; i++) assert(!v[i].notWebReady);
+  for (int i = 3; i < 9; i++) assert(!v[i].notWebReady);
   assert(!strcmp(v[8].url, "https://example.invalid/media.mp4"));
   free(v);
   puts("PASS: parser isolado, cache explicito, notWebReady ancorado e externalUrl sem midia oculto.");

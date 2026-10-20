@@ -91,7 +91,8 @@
 #define SP_LINHA_W    (SP_W - SP_LINHA_X * 2.0f)
 #define SP_LINHA_PADX   22.0f
 #define SP_LINHA_RAIO   22.0f
-#define SP_KICK_Y      (SP_Y + 40.0f)
+// Reserve a full font line plus breathing room above the title/tab row.
+#define SP_KICK_Y      fminf(SP_Y + 40.0f, SP_ABAS_Y - txt_linha(TXT_MINI, "Ag", 255, 255, 255, 255).h - 12.0f)
 #define SP_TIT_Y       (SP_Y + 62.0f)
 // ABAS. Elas so existem quando o servico de recomendacoes foi compilado
 // (recomenda_ativo); sem ele o painel e exatamente o que era, sem uma linha a
@@ -610,12 +611,12 @@ static int ehSerie(const char *tipo, int nTemporadas) {
 // quadro e comparar dois inteiros, e a reconstrucao so acontece quando ha o
 // que mostrar de diferente (tests/salvospainel.sh conta quantas vezes).
 static unsigned marcaRevCat, marcaRevSalvos, marcaRevOrg, marcaRevRet;
-static int reconstrucoes, fundosPintados;
+static int reconstrucoes, fundosPintados, marcaFonte = -1;
 int spainel_n_reconstrucoes(void) { return reconstrucoes; }
 int spainel_n_fundos(void) { return fundosPintados; }
 static int listaVelha(void) {
   sorg_carregar();   // troca de perfil sobe a revisao da organizacao
-  return marcaCatN < 0 || sorg_revisao() != marcaRevOrg || cat_revisao_itens() != marcaRevCat ||
+  return marcaFonte != ajustes_fonte_biblioteca() || marcaCatN < 0 || sorg_revisao() != marcaRevOrg || cat_revisao_itens() != marcaRevCat ||
          salvos_revisao() != marcaRevSalvos || cat_n() != marcaCatN ||
          cw_retido_rev() != marcaRevRet;
 }
@@ -763,6 +764,7 @@ static void reconstruir(void) {
   marcaCatN = catN;
   marcaRevCat = revCat;
   marcaRevSalvos = revSalvos;
+  marcaFonte = ajustes_fonte_biblioteca();
   marcaRevRet = cw_retido_rev();
   // O FOCO DAS ABAS (-1) NAO E UM FOCO FORA DA FAIXA. Sem esta guarda, uma
   // reconstrucao com a lista vazia jogaria o foco de volta para a linha 0, que
@@ -2671,7 +2673,7 @@ void spainel_atualizar(float dt, Uint32 agora) {
     if (topoR + POP_LINHA_H - alvoR > janela) alvoR = topoR + POP_LINHA_H - janela;
     if (topoR < alvoR) alvoR = topoR;
 #ifdef NV_TOUCH_UI
-    if (!toquePop.livre)
+    if (!toquerol_livre(&toquePop))
 #endif
     popRol = ajustes_animacoes_reduzidas() ? alvoR : anim_mola(popRol, alvoR, dt, NV_MOLA_FOCO);
   }
@@ -2723,7 +2725,7 @@ void spainel_atualizar(float dt, Uint32 agora) {
   }
   if (alvo < 0.0f) alvo = 0.0f;
 #ifdef NV_TOUCH_UI
-  if (toquePainel.livre) { scrollY = toquerol_clamp(scrollY, 0, toquePainelMax()); velY = 0; }
+  if (toquerol_livre(&toquePainel)) { scrollY = toquerol_clamp(scrollY, 0, toquePainelMax()); velY = 0; }
   else
 #endif
   scrollY = anim_mola2_reduzida(&velY, scrollY, alvo, dt, NV_MOLA2_SCROLL,
@@ -2809,7 +2811,10 @@ static float focoTexto(float f) { (void)f; return 0.0f; }
 static void superficieItem(GfxRect r, float raio, float f, float a) {
   float v = focoVisual(f);
   if (v <= .001f || a <= .001f) return;
-  if (ajustes_vidro()) { gfx_cor(r, raio, 1, 1, 1, .12f * v * a); return; }
+  if (ajustes_vidro()) {
+    if (!gfx_foco_placa(r, raio, v, a)) gfx_cor(r, raio, 1, 1, 1, .12f * v * a);
+    return;
+  }
   // NO SOLIDO A LINHA FOCADA SOBE: #2b2d34 com a sombra curta do mockup
   // (".row.foco" solido: 0 10px 30px a 40 %) e o fio claro de 1 px no topo
   // ("inset 0 1px 0" a 6 %). Sem a sombra o degrau cinza sobre o cinza do
@@ -3561,7 +3566,7 @@ static void desenhaAbas(float dx, float a, float larguraDisp) {
         if (foco == SP_FOCO_ABAS && !editLapis) {
           if (ajustes_vidro()) gfx_vidro_pilula_cheia(p, 0.5f, 1.0f, a);
           else { botao_luz(p, .55f, a); gfx_cor(p, 0.5f, ar, ag, ab, a); }
-        } else {
+        } else if (!gfx_foco_placa(p, 0.5f, 1.0f, a)) {
           if (ajustes_vidro()) gfx_cor(p, 0.5f, 1, 1, 1, .14f * a);
           else gfx_cor(p, 0.5f, .204f, .212f, .243f, a);
         }
@@ -3596,7 +3601,7 @@ static void desenhaAbas(float dx, float a, float larguraDisp) {
       contaDaAba(i, &novo);
       // Sobre a pilula de acento a contagem vai na tinta do foco: no acento
       // ela sumiria justamente na aba em que o dedo esta.
-      if (focada) {
+      if (focada || (ativa && ajustes_foco_acento())) {
         char b[16];
         int n = contaDaAba(i, &novo);
         snprintf(b, sizeof b, "%d", n > 99 ? 99 : n);
@@ -3605,7 +3610,7 @@ static void desenhaAbas(float dx, float a, float larguraDisp) {
       }
       txt_desenhar_alpha(num, x + SP_SEG_PX + SP_SEG_ICO + SP_SEG_NUM,
                          p.y + (p.h - num.h) * 0.5f,
-                         a * (novo ? 1.0f : focada ? 0.7f : 0.45f));
+                         a * (novo ? 1.0f : focada || (ativa && ajustes_foco_acento()) ? 0.7f : 0.45f));
     }
     x += w + SP_SEG_VAO;
   }
@@ -4671,7 +4676,7 @@ static void desenhaEditar(float dx, float a) {
 #ifdef NV_TOUCH_UI
   float topo = SP_LISTA_Y + SP_FOCO_AR + 6.0f, base = SP_LISTA_BASE;
   float maximo = fmaxf(0, n * SPE_LIN_H + 18 + NV_CTRL_H - (base - topo));
-  if (!toqueEditar.livre) {
+  if (!toquerol_livre(&toqueEditar)) {
     float fim = editLin >= n ? n * SPE_LIN_H + 18 + NV_CTRL_H : (editLin + 1) * SPE_LIN_H;
     toqueEditarOffset = toquerol_clamp(fim - (base - topo), 0, maximo);
   }
@@ -4966,6 +4971,7 @@ static void desenharPainel(Uint32 agora) {
   // veu ja nao custa nada por quadro; o que sobra sao a entrada, a saida e o
   // painel sobre outras telas.
   if (!veuNoFundo) veuInteiro();
+  gfx_vidro_cobrir();   // the veil covers the home glass drawn before: the island frosts
   // Painel flutuante escuro e neutro; o veu separa a camada do conteudo sem
   // uma luz decorativa colorida competindo com posters e selos.
   { GfxRect p = { SP_X + x, SP_Y, SP_W, SP_H };

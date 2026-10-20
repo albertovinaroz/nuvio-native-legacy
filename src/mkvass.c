@@ -484,6 +484,7 @@ typedef struct {
   unsigned long escala;    // TimestampScale (ns por unidade)
   Off      posTracks, posCues, posInfo;   // absolutas; -1 = SeekHead nao disse
   Off      posAttachments;
+  Off      posSeek2;       // SeekHead que o primeiro aponta (mkvpropedit); -1 nenhum
   int      seekHeadVisto;
   Off      segFim;         // fim do Segment (absoluto); -1 = tamanho desconhecido
   Off      primeiroCluster;// posicao do primeiro Cluster; -1 = ainda nao visto
@@ -1551,7 +1552,8 @@ static void lerSeekHead(Fio *f, const unsigned char *p, long n) {
       if (alvo == ID_TRACKS)      f->posTracks = f->segIni + pos;
       if (alvo == ID_CUES)        f->posCues = f->segIni + pos;
       if (alvo == ID_INFO)        f->posInfo = f->segIni + pos;
-      if (alvo == ID_ATTACHMENTS) f->posAttachments = f->segIni + pos; }
+      if (alvo == ID_ATTACHMENTS) f->posAttachments = f->segIni + pos;
+      if (alvo == ID_SEEKHEAD)    f->posSeek2 = f->segIni + pos; }
   }
 }
 
@@ -1754,7 +1756,7 @@ static int lerCabecalho(Fio *f) {
   f->segFim = segTam >= 0 && segTam <= LLONG_MAX - o ? o + segTam : -1;
   f->primeiroCluster = -1;
   f->escala = 1000000UL;
-  f->posTracks = f->posCues = f->posInfo = f->posAttachments = -1;
+  f->posTracks = f->posCues = f->posInfo = f->posAttachments = f->posSeek2 = -1;
   while (o < n) {
     id = lerId(p + o, n - o, &ui);
     if (!id) break;
@@ -2082,6 +2084,25 @@ static int lerCues(Fio *f) {
   // o indice por bloco nao existe.
   ClVarre *daFaixa = NULL, *doVideo = NULL;
   int nFaixa = 0, capFaixa = 0, nVideo = 0, capVideo = 0;
+  // SEEKHEAD ENCADEADO (dono, 16/10, log 21: Baka and Test [KH] S1-01). O
+  // mkvpropedit, sem espaco no SeekHead do inicio, deixa nele UMA entrada que
+  // aponta para um segundo SeekHead no fim do arquivo, e e esse que diz onde
+  // esta o Cues. Sem segui-lo a legenda baixava o arquivo inteiro (~128 MB por
+  // minuto) achando que nao havia indice.
+  if (f->posCues < 0 && f->posSeek2 > 0) {
+    long n2 = 0; int u1 = 0, u2 = 0;
+    long quer = f->segFim > f->posSeek2 && f->segFim - f->posSeek2 < 4096 ? (long)(f->segFim - f->posSeek2) : 4096;
+    unsigned char *q = rangeInsistir(f, f->posSeek2, quer, &n2);
+    unsigned long id2 = q ? lerId(q, n2, &u1) : 0;
+    long t2 = id2 == ID_SEEKHEAD ? lerTam(q + u1, n2 - u1, &u2) : -1;
+    Off antes = f->posSeek2;
+    if (t2 > 0 && u1 + u2 + t2 <= n2) lerSeekHead(f, q + u1 + u2, t2);
+    f->posSeek2 = -1;   // nunca encadeia de novo
+    printf("[mkvass] faixa %d: segundo SeekHead em %lld (%s): Cues %s\n", f->faixa, (long long)antes,
+           id2 == ID_SEEKHEAD ? "lido" : "ilegivel", f->posCues >= 0 ? "achado" : "nao listado");
+    fflush(stdout);
+    free(q);
+  }
   // Sem Cues no SeekHead: nao ha indice nenhum. Varre do primeiro Cluster.
   if (f->posCues < 0) return armarVarreduraInteira(f) ? 0 : MKVASS_NOGO_SEM_INDICE;
   // UM Range com folga (MKVASS_CUES_1) em vez de "16 bytes para ler o tamanho

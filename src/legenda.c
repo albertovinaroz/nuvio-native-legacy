@@ -37,10 +37,22 @@ static double tempo(const char *s) {
   return -1;
 }
 
-static void entidade(char *s) {
+static int tagsAss(const char *t, size_t n, LegendaCue *c);
+
+static void entidade(char *s, LegendaCue *c) {
   char *r=s,*w=s;
+  LegendaCue estilo = {0};
   while (*r) {
-    if (*r=='<' ) {
+    char *antes = w;
+    if (*r=='{' && r[1]=='\\' && strchr(r,'}')) {
+      char *fim = strchr(r,'}');
+      tagsAss(r+1,(size_t)(fim-r-1),&estilo);
+      r = fim+1;
+    } else if (*r=='<' ) {
+      if (!strncasecmp(r,"<i>",3)) estilo.italico=1;
+      else if (!strncasecmp(r,"</i>",4)) estilo.italico=0;
+      else if (!strncasecmp(r,"<b>",3)) estilo.negrito=1;
+      else if (!strncasecmp(r,"</b>",4)) estilo.negrito=0;
       if (!strncasecmp(r,"<br",3)) { *w++='\n'; }
       while (*r && *r!='>') r++;
       if (*r) r++;
@@ -50,6 +62,12 @@ static void entidade(char *s) {
     else if (!strncmp(r,"&quot;",6)) { *w++='"'; r+=6; }
     else if (!strncmp(r,"&#39;",5))  { *w++='\''; r+=5; }
     else *w++=*r++;
+    // Cue-wide emphasis is the fallback renderer's existing granularity.
+    // Closing tags must not erase emphasis already used by visible text.
+    if (w > antes && !isspace((unsigned char)w[-1])) {
+      c->italico |= estilo.italico;
+      c->negrito |= estilo.negrito;
+    }
   }
   *w=0;
 }
@@ -112,11 +130,11 @@ static int extrairSrt(const char *corpo,LegendaCue **saida,int *parcial) {
       if(l>resta)l=resta;memcpy(texto+usado,p,l);usado+=l;texto[usado]=0;
       p=nl?nl:p+strlen(p);
     }
-    entidade(texto); if(!texto[0])continue;
     { LegendaCue *nv=crescer(v,n,&cap); if(!nv){if(parcial)*parcial=1;break;} v=nv; }
     memset(&v[n],0,sizeof v[n]);
     v[n].inicio=ini; v[n].fim=fim; v[n].cor=-1;
     v[n].posX=v[n].posY=-1.0f; v[n].ordem=n;
+    entidade(texto,&v[n]); if(!texto[0])continue;
     snprintf(v[n].texto,sizeof v[n].texto,"%s",texto); n++;
   }
   free(buf);

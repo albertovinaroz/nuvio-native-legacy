@@ -7,8 +7,17 @@
 #include "posplay.h"
 #include "catalogo.h"
 #include "intro.h"
+#include "rede.h"
 #include "idbase.h"
 #include "proximopreparo.h"
+
+// Intro HTTP is outside this metadata-prefetch fixture.
+int rede_pedir(const RedePedido *pedido, RedeResposta *resposta) {
+  (void)pedido; (void)resposta; abort();
+}
+void rede_resposta_limpar(RedeResposta *resposta) {
+  (void)resposta; abort();
+}
 
 static CatItem titulo;
 static CatEp episodios[2];
@@ -44,7 +53,8 @@ int proximopreparo_agendar(int c, int t, int e, const char *atual, const char *a
   assert(!"native video preparation is disabled"); return 0;
 }
 void proximopreparo_passo(const char *atual) { (void)atual; }
-void proximopreparo_cancelar(void) {}
+static int cancelamentos556;
+void proximopreparo_cancelar(void) { cancelamentos556++; }
 int proximopreparo_renovar(const char *atual, const char *alvo) {
   (void)atual; (void)alvo;
   assert(!"native video preparation is disabled"); return 0;
@@ -305,6 +315,23 @@ int main(void) {
   assert(pedidos == antes + 1 && !strcmp(listaAlvo, "kitsu:42:99"));
   episodios[1].vid[0] = 0; strcpy(titulo.imdb, "tt42:1:1");
   puts("PASS: ID opaco do catalogo reutilizado pela busca real");
+
+  // #556: preparar e abrir S00E02 conserva a temporada, sem cair em S01.
+  strcpy(titulo.imdb, "tt42:0:1"); titulo.temporada = atualT = 0;
+  episodios[0].temporada = episodios[1].temporada = 0;
+  iniciar(); antes = pedidos; quadro(1140, 1); esperarFim();
+  { FontecacheEscopo e = escopo(); Stream *l = NULL; int n = 0; Uint32 idade;
+    assert(fontecache_vod_pegar("tt42:0:2", "series", "", &e, &l, &n, &idade) == FC_ACERTO && n == 2);
+    free(l); }
+  quadro(1150, 1);
+  { int antesCancelar = cancelamentos556;
+    dispensar(SDLK_RETURN);
+    assert(cancelamentos556 == antesCancelar); }
+  { int t, e; assert(posplay_pediu_episodio(&t, &e) && t == 0 && e == 2); }
+  buscarTitulo("tt42:0:2", "series");
+  assert(pedidos == antes + 1 && !strcmp(listaAlvo, "tt42:0:2"));
+  strcpy(titulo.imdb, "tt42:1:1"); titulo.temporada = atualT = 1;
+  episodios[0].temporada = episodios[1].temporada = 1;
 
   fontesRede = 0; iniciar(); quadro(1140, 1); esperarFim(); assert(!cacheProximo());
   fontesRede = FONTECACHE_VOD_BYTES / sizeof(Stream) + 1;

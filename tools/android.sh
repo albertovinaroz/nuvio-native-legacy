@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build do Nuvio para Android TV/Mobile (SDL2 + GLES2, nucleo C em libmain.so).
 #
+#   tools/android.sh --debug-only -> debug only, never read release signing keys
 #   tools/android.sh            -> APK debug em build/android/Nuvio-<v>-android-debug.apk
 #   NUVIO_RUST_MKVCORE=0 tools/android.sh -> nucleo mkv em C (padrao: Rust, ligado em 14/10/2026)
 #   NUVIO_P2P_MOTOR=<raiz> tools/android.sh -> motor P2P (padrao: pasta achada por tools/p2p-motor/pasta.sh; =none desliga)
@@ -25,7 +26,8 @@ if [ "${NUVIO_ANDROID_OFFLINE:-0}" = 1 ]; then
   export CARGO_NET_OFFLINE=true
 fi
 RELEASE_ONLY=0
-case "${1:-}" in "") ;; --release-only) RELEASE_ONLY=1;; *) echo "opcao desconhecida: $1" >&2; exit 2;; esac
+DEBUG_ONLY=0
+case "${1:-}" in "") ;; --release-only) RELEASE_ONLY=1;; --debug-only) DEBUG_ONLY=1;; *) echo "opcao desconhecida: $1" >&2; exit 2;; esac
 CACHE="${NUVIO_ANDROID_CACHE:-$HOME/.cache/nuvio-android}"
 EST="$RAIZ/build/android"
 
@@ -110,10 +112,10 @@ TAREFAS=()
 # Chave de release FIXA (o Android so atualiza por cima com a mesma
 # assinatura): ~/.nuvio-android/release.env, fora do repo, chmod 600. A copia
 # de seguranca e o item do Vaultwarden. Variaveis no ambiente ganham do arquivo.
-if [ -z "${NUVIO_KEYSTORE:-}" ] && [ -f "$HOME/.nuvio-android/release.env" ]; then
+if [ "$DEBUG_ONLY" = 0 ] && [ -z "${NUVIO_KEYSTORE:-}" ] && [ -f "$HOME/.nuvio-android/release.env" ]; then
   set -a; . "$HOME/.nuvio-android/release.env"; set +a
 fi
-[ -n "${NUVIO_KEYSTORE:-}" ] && TAREFAS+=(assembleRelease)
+[ "$DEBUG_ONLY" = 0 ] && [ -n "${NUVIO_KEYSTORE:-}" ] && TAREFAS+=(assembleRelease)
 [ "${#TAREFAS[@]}" -gt 0 ] || { echo "android.sh: release-only exige chave" >&2; exit 1; }
 [ -z "${NUVIO_BUILD_JOBS:-}" ] || GR+=(--max-workers="$NUVIO_BUILD_JOBS")
 "${GR[@]}" "${TAREFAS[@]}"
@@ -126,7 +128,7 @@ if [ "$RELEASE_ONLY" = 0 ]; then
   cp "$DBG" "$SAIDA/Nuvio-$VER-android-debug.apk"
   APKS+=("$SAIDA/Nuvio-$VER-android-debug.apk")
 fi
-if [ -n "${NUVIO_KEYSTORE:-}" ]; then
+if [ "$DEBUG_ONLY" = 0 ] && [ -n "${NUVIO_KEYSTORE:-}" ]; then
   cp android/app/build/outputs/apk/release/app-release.apk "$SAIDA/Nuvio-$VER-android.apk"
   APKS+=("$SAIDA/Nuvio-$VER-android.apk")
 else
@@ -134,7 +136,7 @@ else
 fi
 
 # Mesma lista de credenciais de pessoa do tools/release-samsung.sh.
-SEGREDO='(^|/)(debrid|provider-scope|fontefalha|fontesmortas|catalogo-|guia-(fav|modo|preview|cache|addons|lembretes)|epg-extra|recomendacoes|amigos-vistos)[^/]*\.(txt|json|bin|ts|id)(\.tmp[^/]*)?$|(^|/)(trakt|addons|tmdb|mdblist|sessao|simkl[^/]*|fanart|diag-token)\.txt$|collections\.json$|catalogo-rede\.bin|local\.properties|\.env$|(^|/)(trakt|stalker|xtream|listas)-p[0-9]|(^|/)conta-[^/]*\.txt(\.tmp)?$'
+SEGREDO='(^|/)(livetv-contas-|epg-conta-|m3u-|debrid|provider-scope|fontefalha|fontesmortas|catalogo-|guia-(fav|modo|preview|cache|addons|lembretes|categorias)|epg-extra|recomendacoes|amigos-vistos)[^/]*\.(txt|json|bin|ts|id)(\.tmp[^/]*)?$|(^|/)(trakt|addons|tmdb|mdblist|sessao|simkl[^/]*|fanart|diag-token)\.txt$|collections\.json$|catalogo-rede\.bin|local\.properties|\.env$|(^|/)(trakt|stalker|xtream|listas)-p[0-9]|(^|/)conta-[^/]*\.txt(\.tmp)?$'
 for a in "${APKS[@]}"; do
   L=$(unzip -Z1 "$a")
   for need in lib/arm64-v8a/libmain.so lib/armeabi-v7a/libmain.so lib/arm64-v8a/libSDL2.so lib/armeabi-v7a/libSDL2.so; do

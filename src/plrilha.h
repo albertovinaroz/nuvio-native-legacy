@@ -38,6 +38,7 @@ typedef struct {
   void *u;
   int aberta;               // 1 = pilula aberta de 64 (aviso), 0 = 56
   int modal;                // 1 = miolo do modal (.86)
+  int video;                // 1 = video vivo atras (botao/isla translucidos, nunca opacos)
   int ancoraTopo;           // 1 = (centro) o corpo acompanha o TOPO da forma enquanto ela cresce ou encolhe, em vez de ficar centrado no tamanho final
   int centro;               // 1 = cartao SOZINHO no meio da tela (sem relogio nem medidor); so o corpo
   int baixa;                // 1 = prioridade baixa: cede a qualquer outro pedido do quadro (a guia parental)
@@ -48,6 +49,7 @@ typedef struct {
   // (a de falha da legenda: faixas_pilula_tecla). NULL = so informativa.
   void (*ponteiroOk)(int a, int b);
   float insetEsq;           // recuo esquerdo do cabecalho do corpo (o titulo); 0 = 28
+  int semSombra;            // 1 = material sem a sombra caida (Fontes)
   int tituloLeve;           // 1 = titulo delicado (PLR_TIT_*): Medium um degrau abaixo, cinza polido
 } PlrIlhaPedido;
 
@@ -82,6 +84,7 @@ float plrilha_corpo_alfa(void);
 #ifdef NV_SHOT_HOOKS
 // Capturas: hora fixa (0 = a do relogio).
 void plrilha_shot_hora(time_t t);
+int plrilha_shot_centro(GfxRect *r);
 // A linha do ultimo quadro: x do texto, x do fim da linha, se tinha "termina as".
 void plrilha_shot_linha(float *txtX, float *fimX, int *temFim);
 #endif

@@ -15,6 +15,13 @@
 
 const char *addons_base_por_id(const char *id) { (void)id; return ""; }
 
+// A conta nao faz parte deste teste da ordem. Sem o retrato de addons
+// (tests/fileiras.c tem o mesmo par de dubles fracos).
+unsigned addons_versao(void) { return 0; }
+int addons_perfil_da_lista(void) { return -1; }
+int addons_travar_lista(unsigned versao, int perfil) { (void)versao; (void)perfil; return 0; }
+void addons_destravar_lista(void) {}
+
 // Dubles de dados.c como tests/fileiras.c: sem arquivo ate o round-trip pedir.
 static int usaArquivo;
 int dados_gravar(const char *nome, const char *conteudo) {

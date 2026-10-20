@@ -41,6 +41,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRendererCapabilitiesList
 import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.RendererCapabilities
@@ -89,10 +90,12 @@ object NvPlayer {
     private const val EV_PRIMEIRO_QUADRO = 8
     private const val EV_AUDIO_SEM_DECODER = 9
     private const val EV_SUPERFICIE_ESTAVEL = 10
+    private const val EV_LIVE_RECOVERY = 11
+    private const val EV_LIVE_SEGMENT = 12
 
     private const val TELA_W = 1920   // coordenadas de layout do app
     private const val TELA_H = 1080
-    private const val FAIXAS_MAX = 32 // NV_FAIXA_MAX do C
+    private const val FAIXAS_MAX = 64 // NV_FAIXA_MAX do C
     private const val TIQUE_MS = 250L
     private const val RETRY_DECODER_MS = 5000L
 
@@ -125,10 +128,14 @@ object NvPlayer {
     private var fracaoAtual = 0
     private var fracaoPendente = 0
     private var geracaoNative = 0
+    @Volatile private var limitedNext = false
+    private var limitedSession = false
+    @JvmStatic fun limitedConnections(on: Int) { limitedNext = on != 0 }
     private var urlAtual = ""
     private var cabAtual = ""
     private var abriuEm = 0L
     private var retentou = false
+    private var recuperacaoLive: LiveWindowRecovery? = null
     private var pronto = false
     private var duracaoEnviada = -1
     private var videoW = 0
@@ -150,9 +157,12 @@ object NvPlayer {
     private var quadrosPerdidos = 0L
     private var statsTiques = 0
     private var bufferAlvoMs = androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
+    private var bufferMinMs = 0
+    private var bufferBytes = 0
 
     // --- natives (src/video_android.c, Java_space_nuvio_nativelegacy_NvPlayer_*) ---
     @JvmStatic external fun nativeIniciar()
+    @JvmStatic external fun nativeLimitedStatus(): Int
     @JvmStatic external fun nativeEvento(tipo: Int, a: Int, b: Int)
     // flags (#287): 1 = forcada (SELECTION_FLAG_FORCED), 2 = SDH
     // (ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND); nome = Format.label.
@@ -160,7 +170,8 @@ object NvPlayer {
     @JvmStatic external fun nativeFaixa(tipo: Int, idx: Int, lingua: String, flags: Int, nome: String, mime: String, canais: Int)
     @JvmStatic external fun nativeFaixasFim(selAudio: Int, selLeg: Int)
     @JvmStatic external fun nativeLegenda(texto: String, durMs: Int)
-    @JvmStatic external fun nativePos(ms: Int)
+    @JvmStatic external fun nativePos(ms: Long, bufferFimMs: Long, live: Boolean,
+                                      sampleBytes: Int, geracao: Int)
     @JvmStatic external fun nativeDecoder4k(hevc: Int, avc: Int, vp9: Int, av1: Int)
     @JvmStatic external fun nativeTela(hdr: Int, dv: Int)
     @JvmStatic external fun nativeHdr(hdr: String, dv: Int, atmos: Int)
@@ -175,7 +186,8 @@ object NvPlayer {
     // a frente e o alvo do DefaultLoadControl em ms, conexoes abertas, 1o byte,
     // quadros perdidos (onDroppedVideoFrames) e entregues; host final.
     @JvmStatic external fun nativeStats(bytes: Long, bufferMs: Int, alvoMs: Int, conexoes: Int,
-                                        primeiroByteMs: Int, perdidos: Long, quadros: Long, host: String)
+                                        primeiroByteMs: Int, perdidos: Long, quadros: Long, host: String,
+                                        minMs: Int, alvoMb: Int, carregando: Int)
 
     // F06 sincronia por audio (AudioSyncTap.kt / AudioSyncSink.kt). Fio de
     // reproducao; o C so copia para um anel limitado (src/audsync.c).
@@ -336,6 +348,8 @@ object NvPlayer {
             else -> null
         }
         return "erro=${erro.javaClass.simpleName}" +
+            (if (erro is AudioSink.UnexpectedDiscontinuityException)
+                " expectedUs=${erro.expectedPresentationTimeUs} actualUs=${erro.actualPresentationTimeUs}" else "") +
             (codigo?.let { " errorCode=$it" } ?: "") +
             (formato?.let { " hz=${it.sampleRate} canais=${it.channelCount} encoding=${it.pcmEncoding} mime=${it.sampleMimeType}" } ?: "") +
             (recuperavel?.let { " isRecoverable=$it" } ?: "")
@@ -369,7 +383,7 @@ object NvPlayer {
     private const val PREPARO_MAX_US = 5_000_000L
     private const val PREPARO_ESPERA_MS = 30_000L
 
-    private class CargaPlayer(minMs: Int, maxMs: Int, bytes: Int, preparando: Boolean) :
+    private class CargaPlayer(val minMs: Int, maxMs: Int, val bytes: Int, preparando: Boolean) :
         DefaultLoadControl(DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE),
             minMs, maxMs, 2_500, 5_000, bytes, false, 0, false) {
         @Volatile var adotada = !preparando
@@ -623,6 +637,7 @@ object NvPlayer {
         var liberado = false
         @Volatile var adotado = carga.adotada
         @Volatile var audioFormato = AudioSyncTap.FMT_NENHUM
+        @Volatile var velocidadePcm = false
         val proc = GanhoAudioProcessor()
         val tap = AudioSyncTap(
             { pcm, n, pts -> if (adotado) try { nativeAudioPcm(pcm, n, pts) } catch (_: UnsatisfiedLinkError) {} },
@@ -643,7 +658,7 @@ object NvPlayer {
 
     private class Preparo(val token: Int, val pedido: Int, val url: String, val cab: String,
                           val inicioMs: Int, val fracao: Int, val buffer: Int, val cacheMb: Int, val proximo: Boolean = false,
-                          val idiomaAudio: String = "") {
+                          val idiomaAudio: String = "", val kbps: Int = 0) {
         var recursos: RecursosPlayer? = null
         var ouvinte: Player.Listener? = null
         var analitico: AnalyticsListener? = null
@@ -697,18 +712,18 @@ object NvPlayer {
     }
 
     @JvmOverloads @JvmStatic fun preparar(url: String, cabecalhos: String, inicioMs: Int, fracao: Int,
-                           token: Int, buffer: Int, cacheMb: Int, idiomaAudio: String = "") {
-        enfileirarPreparo(url, cabecalhos, inicioMs, fracao, token, buffer, cacheMb, false, idiomaAudio)
+                           token: Int, buffer: Int, cacheMb: Int, idiomaAudio: String = "", kbps: Int = 0) {
+        enfileirarPreparo(url, cabecalhos, inicioMs, fracao, token, buffer, cacheMb, false, idiomaAudio, kbps)
     }
 
     @JvmOverloads @JvmStatic fun prepararProximo(url: String, cabecalhos: String, inicioMs: Int, fracao: Int,
-                                  token: Int, buffer: Int, cacheMb: Int, idiomaAudio: String = "") {
-        enfileirarPreparo(url, cabecalhos, inicioMs, fracao, token, buffer, cacheMb, true, idiomaAudio)
+                                  token: Int, buffer: Int, cacheMb: Int, idiomaAudio: String = "", kbps: Int = 0) {
+        enfileirarPreparo(url, cabecalhos, inicioMs, fracao, token, buffer, cacheMb, true, idiomaAudio, kbps)
     }
 
     private fun enfileirarPreparo(url: String, cabecalhos: String, inicioMs: Int, fracao: Int,
-                                 token: Int, buffer: Int, cacheMb: Int, proximo: Boolean, idiomaAudio: String) {
-        if (token <= 0 || url.isEmpty()) return
+                                 token: Int, buffer: Int, cacheMb: Int, proximo: Boolean, idiomaAudio: String, kbps: Int) {
+        if (token <= 0 || url.isEmpty() || limitedNext) return
         val pedido = synchronized(travaPreparo) {
             val n = pedidosPreparo.incrementAndGet()
             consultaPreparo = ConsultaPreparo(token, 1)
@@ -718,7 +733,7 @@ object NvPlayer {
             if (pedido != pedidosPreparo.get()) return@post
             soltarPreparo()
             val s = Preparo(token, pedido, url, cabecalhos, inicioMs.coerceAtLeast(0),
-                if (inicioMs > 0) 0 else fracao.coerceIn(0, 9999), buffer.coerceIn(0, 3), cacheMb.coerceIn(0, 1024), proximo, idiomaAudio)
+                if (inicioMs > 0) 0 else fracao.coerceIn(0, 9999), buffer.coerceIn(0, 256), cacheMb.coerceIn(0, 1024), proximo, idiomaAudio, kbps.coerceIn(0, 400_000))
             preparo = s
             prepararMain(s, SystemClock.elapsedRealtime())
         }
@@ -736,7 +751,7 @@ object NvPlayer {
             return
         }
         try {
-            val r = criarPlayer(act, s.url, s.cab, s.buffer, s.cacheMb, true, 0, !s.proximo, s.idiomaAudio)
+            val r = criarPlayer(act, s.url, s.cab, s.buffer, s.cacheMb, true, 0, !s.proximo, s.idiomaAudio, kbps = s.kbps)
             s.recursos = r
             if (s.proximo) {
                 prepararFonteProxima(act, s, r)
@@ -1107,9 +1122,12 @@ object NvPlayer {
     @JvmStatic fun volume(pct: Int) { principal.post { player?.volume = pct.coerceIn(0, 100) / 100f } }
     // F07: cache limit for the NEXT opens (MB, 0 = off) and the session volume
     // 0..200 (above 100 only while the audio is PCM).
-    // #338: buffer size preset (0 Auto, 1 Low, 2 Medium, 3 High), sticky, read at open.
+    // #338: buffer size in MiB (0 Auto; C already clamped it to free RAM), sticky, read at open.
     @Volatile private var bufferPreset = 0
-    @JvmStatic fun buffer(preset: Int) { bufferPreset = preset.coerceIn(0, 3) }
+    @JvmStatic fun buffer(mb: Int) { bufferPreset = mb.coerceIn(0, 256) }
+    // Declared kbps of the next open (0 = unknown/trailer), sticky like buffer().
+    @Volatile private var kbpsDeclarado = 0
+    @JvmStatic fun kbps(k: Int) { kbpsDeclarado = k.coerceIn(0, 400_000) }
     @JvmStatic fun cache(mb: Int) { cacheMbPedido = mb.coerceIn(0, 1024) }
     @JvmStatic fun cacheTitle(id: String) { tituloPedido = id }
     // Profile switch (C side): the kept cache belongs to the old profile.
@@ -1117,13 +1135,86 @@ object NvPlayer {
     @JvmStatic fun ganho(pct: Int) {
         principal.post { ganhoPct = GanhoMath.pct(pct); aplicarGanho() }
     }
-    // #202: velocidade em centesimos. O C reaplica a cada abertura (o player
-    // novo nasce em 1x), entao aqui nao fica estado.
+    // C reapplies speed after each open; keep PCM policy with that player.
     @JvmStatic fun velocidade(centesimos: Int) {
         val v = centesimos.coerceIn(25, 400) / 100f
-        principal.post { player?.setPlaybackSpeed(v) }
+        val pedido = pedidos.get()
+        principal.post {
+            if (pedido != pedidos.get()) return@post
+            val p = player ?: return@post
+            val r = recursosAtuais ?: return@post
+            val pcm = v != 1f
+            if (r.velocidadePcm != pcm) {
+                val pos = p.currentPosition
+                r.velocidadePcm = pcm
+                // Re-select the audio decoder against the new sink capabilities.
+                // stop/prepare keeps the media source, track overrides and pause.
+                p.stop()
+                p.seekTo(pos)
+                p.setPlaybackSpeed(v)
+                p.prepare()
+            } else p.setPlaybackSpeed(v)
+            Log.i(TAG, "[speed] requested=$v parameters=${p.playbackParameters.speed} pcm=$pcm")
+        }
     }
-    @JvmStatic fun janela(x: Int, y: Int, w: Int, h: Int, encaixa: Int) { principal.post { definirJanela(x, y, w, h, encaixa != 0) } }
+    private val janelaPedido = AtomicInteger()
+    // Request -> applied on the UI thread (definida) -> acknowledged after a
+    // traversal on a valid surface (aplicada). Lifecycle/layout events drop the
+    // acknowledgement and rearm it; the SDL-side query never mutates state.
+    @Volatile private var janelaDefinida = -1
+    @Volatile private var janelaAplicada = -1
+    @Volatile private var janelaSuperficieAplicada: SurfaceView? = null
+    private var janelaUltimoPedido: List<Any?>? = null
+    @JvmStatic fun janelaPronta(): Boolean {
+        val sv = superficie ?: return false
+        return !sv.isLayoutRequested && sv.visibility == View.VISIBLE &&
+            sv.holder.surface.isValid && !recriando && !recriaAgendada &&
+            janelaAplicada == janelaPedido.get() && janelaSuperficieAplicada === sv
+    }
+    private fun observarJanela(sv: SurfaceView) {
+        sv.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or2, ob ->
+            if (superficie === sv && (l != ol || t != ot || r != or2 || b != ob))
+                recuperarJanela(sv)
+        }
+    }
+    private fun recuperarJanela(sv: SurfaceView) {
+        janelaSuperficieAplicada = null
+        // A request still queued confirms itself once applied.
+        val pedido = janelaPedido.get()
+        if (janelaDefinida == pedido) confirmarJanela(sv, pedido)
+    }
+    private fun confirmarJanela(sv: SurfaceView, pedido: Int) {
+        // A queued request is not a laid-out SurfaceView. Acknowledge only
+        // after traversal, and never let an old request acknowledge a new one.
+        sv.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (pedido != janelaPedido.get() || superficie !== sv || player == null) {
+                    sv.viewTreeObserver.removeOnPreDrawListener(this)
+                } else if (!sv.isLayoutRequested && sv.visibility == View.VISIBLE &&
+                           sv.holder.surface.isValid && !recriando && !recriaAgendada) {
+                    janelaSuperficieAplicada = sv
+                    janelaAplicada = pedido
+                    sv.viewTreeObserver.removeOnPreDrawListener(this)
+                }
+                return true
+            }
+        })
+        sv.invalidate()
+    }
+    @Synchronized @JvmStatic fun janela(x: Int, y: Int, w: Int, h: Int, encaixa: Int) {
+        val geometria = listOf(x, y, w, h, encaixa, superficie)
+        // Crop retries still apply layout, but unchanged requests keep their acknowledgement.
+        val pedido = if (geometria == janelaUltimoPedido) janelaPedido.get() else {
+            janelaUltimoPedido = geometria
+            janelaPedido.incrementAndGet()
+        }
+        principal.post {
+            definirJanela(x, y, w, h, encaixa != 0)
+            janelaDefinida = pedido
+            val sv = superficie ?: return@post
+            confirmarJanela(sv, pedido)
+        }
+    }
     @JvmStatic fun escolher(tipo: Int, idx: Int) { principal.post { escolherMain(tipo, idx) } }
 
     // --- abrir / liberar ------------------------------------------------------
@@ -1146,7 +1237,7 @@ object NvPlayer {
     // factory stay dormant until this same player becomes the active session.
     private fun criarPlayer(act: Activity, url: String, cabecalhos: String, preset: Int,
                             pedidoCache: Int, preparando: Boolean, geracao: Int, construir: Boolean = true,
-                            idiomaAudio: String = "", titulo: String = ""): RecursosPlayer {
+                            idiomaAudio: String = "", titulo: String = "", kbps: Int = kbpsDeclarado): RecursosPlayer {
         // Em aparelho de pouca RAM (ActivityManager: isLowRamDevice,
         // memoryClass <= 128 MB ou totalMem <= 3 GiB; a TCL de 2,4 GB tem
         // memoryClass 192 e so cai pelo totalMem)
@@ -1160,13 +1251,16 @@ object NvPlayer {
                         (totalMem in 1L..(3L shl 30)))).also { poucaRamAparelho = it }
         val tetoBuffer = if (poucaRam) (heap / 8).coerceIn(24L shl 20, 48L shl 20).toInt()
                          else (heap / 4).coerceIn(32L shl 20, 96L shl 20).toInt()
-        val (minMs, maxMs, bytes) = when (preset) {
-            1 -> Triple(15_000, 25_000, tetoBuffer / 2)
-            2 -> Triple(50_000, 80_000, tetoBuffer)
-            3 -> Triple(90_000, 150_000, (heap / 3).coerceIn(32L shl 20,
-                      (if (poucaRam) 48L else 96L) shl 20).toInt())
-            else -> Triple(50_000, 50_000, tetoBuffer)
-        }
+        // preset = MiB from Settings (0 Auto). ExoPlayer holds it in the Java heap: never past heap/3.
+        // Auto with a high declared bitrate: 48 MB is ~7 s of a 52.8 Mbps remux
+        // (TCL rebuffered every 12-30 s). Aim at 30 s of it, never past heap/5
+        // and 80 MB on low RAM (the 575 MB PSS kill), heap/3 and 192 MB otherwise.
+        val porBitrate = kbps.toLong() * 1000 / 8 * 30
+        val tetoAlto = if (poucaRam) minOf(heap / 5, 80L shl 20) else minOf(heap / 3, 192L shl 20)
+        val autoBytes = porBitrate.coerceAtMost(tetoAlto).coerceAtLeast(tetoBuffer.toLong()).toInt()
+        val (minMs, maxMs, bytes) = if (preset > 0)
+            Triple(50_000, 150_000, minOf(preset.toLong() shl 20, heap / 3).toInt())
+        else Triple(50_000, 50_000, autoBytes)
         val r = RecursosPlayer(CargaPlayer(minMs, maxMs, bytes, preparando), maxMs, if (preparando) idiomaAudio else "")
         try {
             val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
@@ -1183,10 +1277,16 @@ object NvPlayer {
                 else props[nome] = valor
             }
             http.setDefaultRequestProperties(props)
+            val limited = !preparando && limitedNext
+            // Check only once per player. HLS segments share the same connection gate.
+            val checked = java.util.concurrent.atomic.AtomicBoolean()
+            val serialHttp: DataSource.Factory = if (limited) LimitedDataSource.Factory(http, { r.carga.cancelada }) {
+                if (checked.compareAndSet(false, true)) nativeLimitedStatus() else 0
+            } else http
             val baixa = url.lowercase()
             val adaptativo = baixa.contains(".m3u8") || baixa.contains("m3u8?") || baixa.contains(".mpd")
             // Cache off or not applicable for a VOD: whatever was kept is stale.
-            if (pedidoCache <= 0) { r.cacheEstado = CacheSessao.DESLIGADO; if (titulo.isNotEmpty()) CacheMidia.descartar("setting off") }
+            if (pedidoCache <= 0 || limited) { r.cacheEstado = CacheSessao.DESLIGADO; if (titulo.isNotEmpty()) CacheMidia.descartar("setting off") }
             else if (adaptativo || !ParaleloDataSource.serve(Uri.parse(url))) {
                 r.cacheEstado = CacheSessao.NAO_SE_APLICA
                 if (titulo.isNotEmpty()) CacheMidia.descartar("not progressive")
@@ -1208,10 +1308,11 @@ object NvPlayer {
                 r.cache = c; r.cacheEstado = estado
             }
             r.rede = { token ->
-                val rede = ParaleloDataSource.Factory(ua, props, http, medidor, token)
+                val rede: DataSource.Factory = if (limited) serialHttp
+                    else ParaleloDataSource.Factory(ua, props, http, medidor, token)
                 r.cache?.fabrica(rede) ?: rede
             }
-            val origemPreparo = r.cache?.fabrica(http) ?: http
+            val origemPreparo = r.cache?.fabrica(serialHttp) ?: serialHttp
             val token = if (preparando) 0L else medidor.sessao(geracao).also { medidorToken = it }
             r.origem = OrigemPlayer(if (preparando) origemPreparo else r.rede(token), r.carga)
             // ON: platform decoder/passthrough first, FFmpeg only as fallback.
@@ -1219,9 +1320,10 @@ object NvPlayer {
             r.renderizadores = object : androidx.media3.exoplayer.DefaultRenderersFactory(act) {
                 override fun buildAudioSink(context: Context, enableFloatOutput: Boolean,
                                             enableAudioTrackPlaybackParams: Boolean): AudioSink =
-                    AudioSyncSink(DefaultAudioSink.Builder(context).setEnableFloatOutput(enableFloatOutput)
-                        .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-                        .setAudioProcessors(arrayOf(r.proc)).build(), r.tap)
+                    // Sonic needs integer PCM; float output bypasses audio processors.
+                    AudioSyncSink(DefaultAudioSink.Builder(context).setEnableFloatOutput(false)
+                        .setEnableAudioTrackPlaybackParams(false)
+                        .setAudioProcessors(arrayOf(r.proc)).build(), r.tap, { r.velocidadePcm })
             }.setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
                 .setEnableDecoderFallback(true)
             r.fabricaMidia = DefaultMediaSourceFactory(act)
@@ -1229,7 +1331,15 @@ object NvPlayer {
                 // nao empilhar outra rodada invisivel do Loader antes da
                 // maquina de reconexao 3/10/25 s do nucleo.
                 .setLoadErrorHandlingPolicy(PoliticaErroParalelo())
-                .setDataSourceFactory(DefaultDataSource.Factory(act, r.origem))
+                .setDataSourceFactory(if (limited) DefaultDataSource.Factory(act, r.origem) else LivePlaylistDataSource.Factory(
+                    DefaultDataSource.Factory(act, r.origem),
+                    DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
+                        .setConnectTimeoutMs(2000).setReadTimeoutMs(2000)
+                        .setUserAgent(ua).setDefaultRequestProperties(props.filterKeys {
+                            !it.equals("If-None-Match", true) && !it.equals("If-Modified-Since", true)
+                        }),
+                    report = { Log.i(TAG, it) },
+                ))
             if (construir) construirPlayer(act, r)
             Log.i(TAG, "[player] buffer preset=$preset min=${minMs / 1000}s max=${maxMs / 1000}s teto=${bytes shr 20}MB preparo=$preparando")
             return r
@@ -1252,8 +1362,9 @@ object NvPlayer {
             try { r.p.audioSessionId = androidx.media3.common.util.Util.generateAudioSessionIdV21(act) }
             catch (e: Exception) { Log.w(TAG, "sessao de audio nova: $e") }
         }
+        // Sem foco de audio: o volume da soundbar/HDMI nao pode pausar (#581).
         r.p.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), r.adotado)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
         r.p.trackSelectionParameters = r.p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
     }
@@ -1280,9 +1391,9 @@ object NvPlayer {
         }
         // MStar/Amlogic: o overlay e o decoder antigos precisam sair antes do novo.
         // Poll no Handler deixa Back/parar funcionar enquanto o release corre em fundo.
-        if (preparada?.proximo == true || (semRecriar && preparada == null)) {
+        if (limitedNext || limitedSession || preparada?.proximo == true || (semRecriar && preparada == null)) {
             val ms = SystemClock.elapsedRealtime() - espera
-            if (liberacoesEmCurso.get() > 0 && ms < 3000) {
+            if (liberacoesEmCurso.get() > 0 && (limitedNext || limitedSession || ms < 3000)) {
                 principal.postDelayed({
                     abrirMain(url, cabecalhos, reabrindo, inicioMs, geracao, pedido, fracao, espera, preparada)
                 }, 25)
@@ -1290,6 +1401,7 @@ object NvPlayer {
             }
             Log.i(TAG, "[player] esperou o release anterior $ms ms (pendentes=${liberacoesEmCurso.get()})")
         }
+        limitedSession = limitedNext
         novaSuperficie(act)
         mostrarQuadro(url, tituloPedido)
         pedidoAtivo = pedido
@@ -1325,11 +1437,11 @@ object NvPlayer {
             tap = r.tap
             cacheMidia = r.cache; cacheEstado = r.cacheEstado
             if (preparada == null && r.cache != null) { tituloAberto = titulo; chaveAberta = url.substringBefore('#') }
-            bufferAlvoMs = r.alvoMs
+            bufferAlvoMs = r.alvoMs; bufferMinMs = r.carga.minMs; bufferBytes = r.carga.bytes
             if (preparada != null) {
                 decoderDv = preparada.decoderDv
                 p.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), false)
                 try { nativeAudioEstado(r.audioFormato) } catch (_: UnsatisfiedLinkError) {}
             }
             aplicarGanho()
@@ -1401,6 +1513,8 @@ object NvPlayer {
     // Sobe a sessao e solta tudo; qualquer callback pendente do player velho
     // morre na conferencia do numero.
     private fun liberar() {
+        recuperacaoLive?.cancel()
+        recuperacaoLive = null
         sessao++
         medidor.encerrar()
         val recursos = recursosAtuais
@@ -1459,6 +1573,7 @@ object NvPlayer {
         sv.isFocusable = false
         sv.isFocusableInTouchMode = false
         sv.holder.addCallback(antesDoMedia3)
+        observarJanela(sv)
         c.addView(sv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         superficie = sv
     }
@@ -1469,12 +1584,15 @@ object NvPlayer {
     private var destruirIni = 0L
     private val antesDoMedia3 = object : SurfaceHolder.Callback {
         override fun surfaceCreated(h: SurfaceHolder) {
+            superficie?.let { if (h === it.holder) recuperarJanela(it) }
             Log.i(TAG, "[dvtrace] created sessao=$sessao holder=${System.identityHashCode(h)} atual=${h === superficie?.holder} hdr=$ultHdr frame=${h.surfaceFrame}")
         }
         override fun surfaceChanged(h: SurfaceHolder, f: Int, w: Int, a: Int) {
+            superficie?.let { if (h === it.holder) recuperarJanela(it) }
             Log.i(TAG, "[dvtrace] changed sessao=$sessao holder=${System.identityHashCode(h)} atual=${h === superficie?.holder} tamanho=${w}x$a formato=$f hdr=$ultHdr")
         }
         override fun surfaceDestroyed(h: SurfaceHolder) {
+            superficie?.let { if (h === it.holder) recuperarJanela(it) }
             destruirIni = SystemClock.elapsedRealtime()
             Log.i(TAG, "[dvtrace] destroyed sessao=$sessao holder=${System.identityHashCode(h)} atual=${h === superficie?.holder} hdr=$ultHdr")
         }
@@ -1512,7 +1630,11 @@ object NvPlayer {
         override fun run() {
             if (!atual(minha)) return
             val p = player ?: return
-            try { nativePos(p.currentPosition.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) } catch (e: UnsatisfiedLinkError) { }
+            // Keep the signed live-window clock for stall detection. Only the
+            // native UI position is clamped; a moving negative position is valid.
+            try { nativePos(p.currentPosition, p.bufferedPosition, p.isCurrentMediaItemLive,
+                recursosAtuais?.carga?.allocator?.totalBytesAllocated ?: -1, geracaoNative)
+            } catch (e: UnsatisfiedLinkError) { }
             if (++statsTiques >= 4) { statsTiques = 0; relatarStats(p) }
             if (cacheMidia != null && cacheEstado == CacheSessao.ATIVO && ++cacheTiques >= CACHE_RELATO_TIQUES) {
                 cacheTiques = 0
@@ -1538,7 +1660,8 @@ object NvPlayer {
             nativeStats(if (e.usado) e.bytes.get() else -1L, buf,
                 bufferAlvoMs,
                 if (e.usado) e.conexoes.get().coerceAtLeast(0) else -1,
-                e.primeiroByteMs, perdidos, quadros, e.host)
+                e.primeiroByteMs, perdidos, quadros, e.host,
+                bufferMinMs, bufferBytes shr 20, if (p.isLoading) 1 else 0)
         } catch (t: UnsatisfiedLinkError) { }
     }
 
@@ -1835,6 +1958,16 @@ object NvPlayer {
     // --- eventos do player ----------------------------------------------------
 
     private fun ouvinte(minha: Int) = object : Player.Listener {
+        private var liveSegmentMs = -1
+        private val live = LiveWindowRecovery(
+            schedule = { tarefa, atraso -> principal.postDelayed(tarefa, atraso) },
+            unschedule = { tarefa -> principal.removeCallbacks(tarefa) },
+            active = { atual(minha) },
+            status = { prazoMs ->
+                if (atual(minha)) ev(EV_LIVE_RECOVERY, prazoMs.toInt(), geracaoNative)
+            },
+        )
+        init { recuperacaoLive = live }
         override fun onPlaybackStateChanged(state: Int) {
             if (!atual(minha)) return
             val p = player ?: return
@@ -1842,7 +1975,9 @@ object NvPlayer {
             when (state) {
                 Player.STATE_BUFFERING -> ev(EV_BUFFER, 0)
                 Player.STATE_READY -> {
+                    if (live.ready()) Log.i(TAG, "[live] janela recuperada na mesma sessao=$minha")
                     ev(EV_BUFFER, 100)
+                    Log.i(TAG, "[speed] ready parameters=${p.playbackParameters.speed} pcm=${recursosAtuais?.velocidadePcm}; awaiting native clock measurement")
                     relatarAudio(minha, "pronto volume=${p.volume} playWhenReady=${p.playWhenReady} suppression=${p.playbackSuppressionReason}")
                     if (!pronto) {
                         // Antes do EV_PRONTO: o C le o ack ao ver o "pronto".
@@ -1892,9 +2027,27 @@ object NvPlayer {
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
             if (!atual(minha)) return
             val p = player ?: return
+            val manifest = p.currentManifest as? HlsManifest
+            val segmentMs = if (p.isCurrentMediaItemLive && manifest != null)
+                (manifest.mediaPlaylist.targetDurationUs / 1000L).coerceIn(0L, 60_000L).toInt() else 0
+            if (segmentMs != liveSegmentMs) {
+                liveSegmentMs = segmentMs
+                ev(EV_LIVE_SEGMENT, segmentMs, geracaoNative)
+            }
             if (!pronto) { aplicarFracao(p); return }
             val d = duracaoMs(p)
             if (d != duracaoEnviada) { duracaoEnviada = d; ev(EV_PRONTO, d) }   // so a duracao muda
+        }
+
+        override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo,
+                                             newPosition: Player.PositionInfo, reason: Int) {
+            if (!atual(minha)) return
+            val p = player ?: return
+            if (!p.isCurrentMediaItemLive) return
+            // Numeric timing only: never log media IDs, manifest URLs or labels.
+            val linha = "[live] discontinuity sessao=$minha reason=$reason oldMs=${oldPosition.positionMs} newMs=${newPosition.positionMs} offsetMs=${p.currentLiveOffset} state=${p.playbackState} bufferedMs=${p.totalBufferedDuration}"
+            Log.i(TAG, linha)
+            try { nativeAudioLog(linha) } catch (_: UnsatisfiedLinkError) { }
         }
 
         override fun onRenderedFirstFrame() {
@@ -1946,6 +2099,24 @@ object NvPlayer {
             if (!atual(minha)) return
             val exo = error as? ExoPlaybackException
             val p = player
+            val status = generateSequence(error.cause) { it.cause }
+                .filterIsInstance<HttpDataSource.InvalidResponseCodeException>().firstOrNull()?.responseCode
+            if (limitedSession && status in listOf(403, 458, 509)) {
+                live.cancel()
+                ev(EV_ERRO, status ?: 0, C.TRACK_TYPE_UNKNOWN)
+                try { nativeErroTexto("HTTP $status") } catch (_: Throwable) {}
+                return
+            }
+            val recoveryTimeout = LiveWindowRecovery.timeoutForSegment(liveSegmentMs)
+            if (p != null && live.recover(p, error, SystemClock.elapsedRealtime(), recoveryTimeout) {
+                    Log.w(TAG, "[live] recuperacao excedeu $recoveryTimeout ms sessao=$minha; seguindo erro normal")
+                    try { nativeErroTexto("${error.errorCodeName} (${error.errorCode}): recovery timeout") } catch (_: Throwable) {}
+                    ev(EV_ERRO, error.errorCode, C.TRACK_TYPE_UNKNOWN)
+                }) {
+                Log.i(TAG, "[live] janela/playlist invalida code=${error.errorCode}; buscando posicao ao vivo sem trocar URL sessao=$minha")
+                return
+            }
+            live.cancel()
             val timeout = generateSequence(error.cause) { it.cause }
                 .filterIsInstance<androidx.media3.exoplayer.ExoTimeoutException>().firstOrNull()
             if (p != null && RecriaHdr.timeoutRecuperavel(error.errorCode,

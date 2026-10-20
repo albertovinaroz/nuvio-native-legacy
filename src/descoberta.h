@@ -24,6 +24,8 @@ void desc_esquecer_catalogo_perfil(void);
 // Confirmed opening, including the same profile: invalidate detached jobs and
 // clear live results, without removing saved account/profile configuration.
 void desc_abrir_sessao(void);
+// Drawing-thread guard: discovery has been opened for the live generation.
+int desc_sessao_aberta(void);
 // Called after this session's cached addon list/configuration is restored.
 // Starts its pending discovery once, reusing an in-flight worker. Before the
 // first main.c bootstrap start this only marks the sources ready.
@@ -188,6 +190,9 @@ int  desc_busca_item(int i, CatItem *dst);
 // registrados, pulando os que ainda nao responderam ou vieram vazios. Assim o
 // primeiro catalogo a responder ja aparece, em vez de a tela esperar o mais
 // lento de dez.
+// Janela por catalogo de busca, compartilhada com Busca e Spotlight. Uma
+// fileira pode rolar: resultados depois dos primeiros 12 tambem abrem titulos.
+#define DESC_BUSCA_POR_ALVO 24
 int  desc_busca_n_alvos(void);
 const char *desc_busca_alvo_titulo(int alvo);   // "Filmes", "Séries"
 int desc_busca_alvo_nuvio(int alvo);             // 1 = catalogo do Nuvio (#311)
@@ -334,6 +339,15 @@ void desc_loc_apagar(void);
 // caixa nem pontuacao) e completa a lista com o resto do TMDB (#153). Pura;
 // devolve quantos nomes casaram.
 int  desc_tmdb_elenco(const char *json, CatItem *d);
+// Blocking person search: known title first, then most popular exact name.
+// Positive person ID, 0 for no match, -1 for unavailable/invalid response.
+long desc_buscar_pessoa(const char *nome, long titulo, const char *tipo);
+// Elenco/direcao do meta Stremio e app_extras (Nuvio/AIOMetadata), sem rede.
+// Preserva a ordem da raiz e casa fotos/papeis por nome; soVazios completa
+// lacunas sem trocar campos da fonte primaria. Devolve o numero de pessoas.
+int  desc_meta_elenco(const char *json, CatItem *d, int soVazios);
+// 1 quando o elenco tem nomes mas ninguem tem id de pessoa do TMDB ainda.
+int  desc_elenco_precisa_pessoas(const CatItem *c);
 // Tipo(s) em que perguntar o /meta do Cinemeta, na ordem (1 ou 2). Tipo
 // incerto ("anime" etc.) tenta serie e depois filme. Puras.
 int  desc_meta_tipos(const char *tipo, const char *saida[2]);

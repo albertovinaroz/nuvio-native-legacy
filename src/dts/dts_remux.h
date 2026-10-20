@@ -50,6 +50,8 @@ typedef int (*DtsRemuxWrite)(void *opaque, const unsigned char *data, int n);
 int dts_remux_available(void);
 /* Shared packet budget across generators: 192 MiB, 128 MiB on older TVs. */
 void dts_remux_set_queue_budget_mib(int mib);
+/* Device offset, snapshotted by each new source. Positive delays audio only. */
+void dts_remux_set_audio_offset_ms(int ms);
 
 /* Opens the source and reads its keyframe index (one seek: Matroska parses
  * Cues lazily). audio_ordinal: which audio track to convert, counted among the

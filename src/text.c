@@ -68,7 +68,11 @@ static float escalaTxt = 1.0f;
 // chips do resumo, as dicas, o rotulo da pilula) ficava sem texto para
 // sempre. Agora cada fator tem a sua casa (TXT_NCAM - 1 fatores vivos); a
 // casa menos usada so e reaproveitada quando aparece um fator novo.
-#define TXT_NCAM 4
+// 18/10: quatro fatores vivos num quadro so da Biblioteca com a interface em 85%
+// (topo 1,02, grade 0,85, menu 0,78, camadas ESCALA_INI 0,723): com tres casas
+// elas se despejavam a cada quadro e o texto do selo "Assistido" sumia/piscava
+// na C9. Cinco fatores vivos.
+#define TXT_NCAM 6
 static int camada;
 static char arabeBoldCaminho[600];   // face Bold real do Noto Naskh (#335), vazio ate txt_iniciar
 static int arabeCorpo;
@@ -161,6 +165,12 @@ void txt_definir_fonte_interface(TxtFamilia familia) {
 }
 
 TxtFamilia txt_fonte_interface(void) { return fonteInterface; }
+
+// #415: sob aviso de memoria (tex_aliviar/app.c) a grade de linhas rasterizadas
+// inteira sai — sao texturas de texto residentes que o cache de arte nao ve.
+// Cada linha se rasteriza de novo sob demanda; o custo e um quadro a mais de
+// texto depois do susto, nunca tela cinza.
+void txt_aliviar(void) { limparCacheTexto(); }
 
 // Quantas linhas NOVAS podem ser rasterizadas por quadro.
 //
@@ -618,6 +628,8 @@ static Escrita escritaDe(Uint32 cp) {
 static int carregarFamilia(TxtFamilia familia);
 static void abrirEstiloCamada(TxtFamilia familia, int i);
 static void camadaAtualizar(void);
+// Alvo de composicao do contorno da legenda (ver txt_desenhar_borda).
+static GfxMini bordaMini;
 
 // Quantos caracteres da linha `s` a fonte NAO desenha, e o primeiro deles em
 // *primeiro. Conta so o que faz falta: ASCII nunca, os DECORATIVOS que a fonte
@@ -1379,6 +1391,7 @@ int txt_iniciar(const char *dirRecursos, float escala) {
 
 void txt_encerrar(void) {
   arabeBoldFechar();
+  gfx_mini_liberar(&bordaMini);
   limparCacheTexto();
   // ORDEM: a fonte primeiro, o RWops depois, o buffer por ultimo. A face do
   // FreeType ainda referencia o stream, e o stream, os bytes.
@@ -1522,7 +1535,7 @@ static int medirCorridas(TTF_Font *f, TTF_Font *a, TTF_Font *b, const char *s,
     if (len <= 0 || len >= (int)sizeof pedaco) continue;
     memcpy(pedaco, s + c[i].ini, (size_t)len); pedaco[len] = 0;
     { TTF_Font *g = c[i].f; int ex = extra;
-      if (bidi_tem_arabe(pedaco) && (extra & TTF_STYLE_BOLD)) {
+      if (bidi_tem_arabe(pedaco)) {
         TTF_Font *bf = arabeBoldFace(g);
         if (bf) g = bf;
         ex = extra & ~TTF_STYLE_BOLD;
@@ -1549,7 +1562,7 @@ static SDL_Surface *renderCorridas(TTF_Font *f, TTF_Font *a, TTF_Font *b,
     sf[i] = NULL; gf[i] = g;
     if (len <= 0 || len >= (int)sizeof pedaco) continue;
     memcpy(pedaco, s + c[i].ini, (size_t)len); pedaco[len] = 0;
-    if (bidi_tem_arabe(pedaco) && (extra & TTF_STYLE_BOLD)) {
+    if (bidi_tem_arabe(pedaco)) {
       TTF_Font *bf = arabeBoldFace(g);
       if (bf) g = bf;
       ex = extra & ~TTF_STYLE_BOLD;
@@ -1781,7 +1794,7 @@ static SDL_Surface *rasterLinha(TxtEstilo estilo, const char *s, SDL_Color cor,
   // tiraria delas o peso que o app inteiro conta com.
   int estiloAnt, novo = 0;
   arabeCorpo = (int)(corpoAtual(estilo) * ESC_T + 0.5f);
-  if (enfase && bidi_tem_arabe(v) && !txtTemLatim(v) && (enfase & TXT_ENF_NEGRITO)) {   // #335
+  if (bidi_tem_arabe(v) && !txtTemLatim(v)) {   // #335, #205: Naskh Bold em todo peso
     TTF_Font *bf = arabeBoldFace(fonte);
     if (bf) fonte = bf;               // a face Bold de verdade
     enfase &= ~TXT_ENF_NEGRITO;       // nunca o sintetico sobre arabe
@@ -1926,7 +1939,7 @@ static int larguraLinhaMedir(TxtEstilo estilo, const char *s, TxtFamilia familia
   const char *v = visualDe(fonte, s, vis, sizeof vis);
   int estiloAnt, novo = 0;
   arabeCorpo = (int)(corpoAtual(estilo) * ESC_T + 0.5f);
-  if (enfase && bidi_tem_arabe(v) && !txtTemLatim(v) && (enfase & TXT_ENF_NEGRITO)) {   // #335
+  if (bidi_tem_arabe(v) && !txtTemLatim(v)) {   // #335, #205: Naskh Bold em todo peso
     TTF_Font *bf = arabeBoldFace(fonte);
     if (bf) fonte = bf;               // a face Bold de verdade
     enfase &= ~TXT_ENF_NEGRITO;       // nunca o sintetico sobre arabe
@@ -1988,8 +2001,51 @@ void txt_desenhar_alpha(TxtLinha l, float x, float y, float alpha) {
   txt_desenhar_tom(l, x, y, 1, 1, 1, alpha);
 }
 
+// Compose the approved snapped overdraw in one submission of the cached line.
+void txt_desenhar_peso(TxtLinha l, float x, float y, float alpha, float peso) {
+  if (!l.tex || alpha <= 0.0f) return;
+  camadaAtualizar();
+  float x0 = encaixa(x);
+  float d1 = peso > .05f ? encaixa(x + peso * .5f) - x0 : -1;
+  float d2 = peso > .9f ? encaixa(x + peso) - x0 : -1;
+  GfxRect r = {x0, encaixa(y), (float)l.w, (float)l.h};
+  if (camada && l.pw > 0) { r.w = (float)l.pw / ESC_T; r.h = (float)l.ph / ESC_T; }
+  float width = r.w;
+  r.w += d2 >= 0 ? d2 : (d1 >= 0 ? d1 : 0);
+  gfx_rect(r, l.tex, GFX_TEXTO, 0, -width / r.w,
+           d1 >= 0 ? d1 / width : -1, d2 >= 0 ? d2 / width : -1,
+           1, 1, 1, alpha);
+}
+
+// CONTORNO COMPOSTO, nao empilhado. As 8 estampas da borda se cobrem nas
+// bordas retas do glifo (uma coluna de 2 px e vista por 3 delas, um canto
+// por todas): estampar cada uma com o `alpha` do usuario compoe a cobertura
+// sobreposta N vezes — com a legenda a 25% o miolo do anel sai a ~58% e o
+// canto a ~90%, muito mais escuro que o pedido, em qualquer fade. Por isso
+// o contorno e composto OPACO num alvo proprio (um GfxMini 1:1 em pixel de
+// tela) e so entao desenhado UMA vez com `alpha`: a cobertura final e a de
+// um unico desenho. Sem FBO (alvo indisponivel) volta ao empilhado de antes.
+void txt_desenhar_borda(TxtLinha b, float x, float y, int borda, float alpha) {
+  static const int dir[8][2] = { {-1,-1}, {0,-1}, {1,-1}, {-1,0}, {1,0}, {-1,1}, {0,1}, {1,1} };
+  int i;
+  if (borda == 2) { txt_desenhar_alpha(b, x + 4.f, y + 4.f, .82f * alpha); return; }
+  if (!b.tex || alpha <= 0.0f) return;
+  const float m = 4.f;  // margem para a estampa de +-2 e o canto AA
+  float esc = gfx_px_por_unidade();
+  int mw = (int)((b.w + 2.f * m) * esc + 0.5f), mh = (int)((b.h + 2.f * m) * esc + 0.5f);
+  if (esc <= 0.0f || mw < 4 || mh < 4 || !gfx_mini_alvo(&bordaMini, mw, mh)) {
+    for (i = 0; i < 8; i++) txt_desenhar_alpha(b, x + dir[i][0] * 2.f, y + dir[i][1] * 2.f, alpha);
+    return;
+  }
+  gfx_mini_comecar(&bordaMini, x - m, y - m, esc);
+  for (i = 0; i < 8; i++) txt_desenhar_alpha(b, x + dir[i][0] * 2.f, y + dir[i][1] * 2.f, 1.0f);
+  gfx_mini_terminar();
+  gfx_mini_desenhar(&bordaMini, (GfxRect){ x - m, y - m, (float)mw / esc, (float)mh / esc }, 0.0f, alpha);
+}
+
 void txt_desenhar_tom(TxtLinha l, float x, float y, float cr, float cg, float cb, float alpha) {
-  if (!l.tex) return;
+  // Layout probes use alpha zero to measure cached lines without drawing.
+  if (!l.tex || alpha <= 0.0f) return;
   camadaAtualizar();
   GfxRect r = { encaixa(x), encaixa(y), (float)l.w, (float)l.h };
   if (camada && l.pw > 0) { r.w = (float)l.pw / ESC_T; r.h = (float)l.ph / ESC_T; }
@@ -2005,7 +2061,12 @@ float txt_tracking(TxtEstilo estilo, const char *s, int r, int g, int b,
   float larg;
   TxtLinha l;
   if (!s || !*s) return 0.0f;
-  l = linhaCache(estilo, s, r, g, b, 255, fonteInterface, 0, &tracking, &larg);
+  // RTL captions must stay a joined, reordered line; tracking individual
+  // codepoints breaks Arabic shaping and reverses the reading order.
+  if (temRtl(s)) {
+    l = txt_linha(estilo, s, r, g, b, 255);
+    larg = (float)txt_largura(estilo, s);
+  } else l = linhaCache(estilo, s, r, g, b, 255, fonteInterface, 0, &tracking, &larg);
   if (x >= 0.0f) txt_desenhar_alpha(l, x, y, alpha);
   return larg;
 }

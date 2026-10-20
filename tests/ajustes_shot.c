@@ -20,7 +20,10 @@
 #include "catalogo.h"
 #include "dados.h"
 #include "gfx.h"
+#include "gpunivel.h"
 #include "ilha.h"
+#include "ltv.h"
+#include "perfis.h"
 #include "iconeapp.h"
 #include "logoapp.h"
 #include "text.h"
@@ -33,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "menu_frost_probe.h"
 
 static const char *const AJ_IDS[] = {
   "AJ_QUALIDADE", "AJ_DV", "AJ_ATMOS", "AJ_LEG_LINGUA",
@@ -93,22 +97,30 @@ static void captura(const char *nome, SDL_Window *win) {
   rail_shot_aplicar();
   for (i = 0; i < quadrosCaptura; i++) {
     SDL_PumpEvents();
-    if (getenv("NUVIO_SHOT_PERF")) gfx_novo_quadro();   // os contadores do quadro, como app.c
+    if (getenv("NUVIO_SHOT_PERF") || getenv("NUVIO_SHOT_MENU_PROBE")) gfx_novo_quadro();   // os contadores do quadro, como app.c
     txt_novo_quadro();
     gfx_rastro_grandes = getenv("NUVIO_SHOT_RASTRO") && i == quadrosCaptura - 1;
     tex_novo_quadro();
     tex_bombear(6);
     ajustes_atualizar(1.0f / 60.0f, SDL_GetTicks());
+    if (getenv("NUVIO_SHOT_UPSCALE")) gpun_quadro_inicio();   // 720p target, as on the C9
     glClearColor(0.025f, 0.025f, 0.03f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     ajustes_desenhar(SDL_GetTicks());
     rail_shot_desenhar(MENU_AJUSTES);
+    if (getenv("NUVIO_SHOT_UPSCALE")) gpun_quadro_fim();
     // NUVIO_SHOT_MENU=1: the app menu drawn in its own fixed factor (0.9) on
     // top, as app.c does every frame on the TV.
     if (getenv("NUVIO_SHOT_MENU")) {
       menu_definir_destino(MENU_AJUSTES);
       menu_pilula_mostrar(1.0f);
+      if (atoi(getenv("NUVIO_SHOT_MENU")) == 2) {   // 2 = sidebar open over Settings
+        if (!menu_aberto()) menu_abrir();
+        menu_atualizar(1.0f / 60.0f, SDL_GetTicks());
+      }
+      menu_probe_draw();
       menu_desenhar(SDL_GetTicks());
+      if (getenv("NUVIO_SHOT_MENU_OPAQUE")) gfx_cor((GfxRect){330, 175, 81, 605}, 0, .1f, .1f, .1f, 1);
     }
     if (spot_visivel()) {   // "Buscar no guia" (o Spotlight no modo guia)
       spot_atualizar(1.0f / 60.0f, SDL_GetTicks());
@@ -149,6 +161,11 @@ static void captura(const char *nome, SDL_Window *win) {
         memcpy((char *)s->pixels + y * s->pitch, pix + (1079 - y) * 1920 * 4, 1920 * 4);
       assert(strstr(nome, ".png") ? IMG_SavePNG(s, nome) == 0 : SDL_SaveBMP(s, nome) == 0);
       SDL_FreeSurface(s);
+      // NUVIO_SHOT_MENU=2: blur proof, as in detalhe_glass_shot.c (fraction of
+      // pixels with a luma step > 6 in the empty right strip of the sidebar).
+      if (getenv("NUVIO_SHOT_MENU") && atoi(getenv("NUVIO_SHOT_MENU")) == 2) {
+        menu_probe_check(pix);
+      }
       free(pix);
     }
     SDL_GL_SwapWindow(win);
@@ -188,6 +205,13 @@ int main(int argc, char **argv) {
   gfx_icones_dir("deploy/app/art");
   ajustes_recursos("deploy/app/art");
   badges_carregar("deploy/app/art");   // marcas de formato (Dolby Vision, 4K...); no app quem faz e home_iniciar
+
+  // NUVIO_SHOT_URLS=1: duas fontes por URL (M9) para a linha "Listas e guias por URL".
+  if (getenv("NUVIO_SHOT_URLS")) {
+    ltv_urls_carregar(perfis_ativo());
+    ltv_urls_adicionar(LTV_URL_M3U, "iptv.exemplo.com", "https://iptv.exemplo.com/get.php?username=x&password=y&type=m3u");
+    ltv_urls_adicionar(LTV_URL_XMLTV, "epg.exemplo.org", "https://epg.exemplo.org/guia.xml.gz");
+  }
 
   // FILEIRAS DE MENTIRA cobrindo as origens que a folha sabe distinguir: o
   // catalogo de addon (com nome de addon e tipo), o grupo de colecoes, e as
@@ -241,6 +265,27 @@ int main(int argc, char **argv) {
   fileiras_prontas:
 
   ajustes_iniciar();
+  // NUVIO_SHOT_UPSCALE=<algorithm 0..5> (NUVIO_SHOT_NITIDEZ=0..4): every capture
+  // is drawn at 720p and upscaled to 1920x1080 by gpunivel, as on the C9.
+  if (getenv("NUVIO_SHOT_UPSCALE")) {
+    gpun_iniciar(1920, 1080);
+    gpun_forcar_720();
+    gpun_ampliar_app(1);
+    gpun_ampliacao(atoi(getenv("NUVIO_SHOT_UPSCALE")),
+                   getenv("NUVIO_SHOT_NITIDEZ") ? atoi(getenv("NUVIO_SHOT_NITIDEZ")) : 2);
+  }
+  if (getenv("NV_TEXT_SCALE_NAV")) {
+    int op, sec, i, found = 0;
+    const char *key, *label;
+    for (i = 0; ajustes_teste_cena_item(i, &op, &sec, &key, &label); i++) {
+      if (strcmp(key, "escalaTextoLocal")) continue;
+      assert(ajustes_teste_focar_opcao(op));
+      found++;
+    }
+    assert(found == 1);
+    puts("PASS text scale settings navigation");
+    return 0;
+  }
   if (getenv("NUVIO_SHOT_AJUSTES_ESCALA"))
     ajustes_teste_escala(atoi(getenv("NUVIO_SHOT_AJUSTES_ESCALA")));
   ajustes_teste_vidro_env();   // NUVIO_SHOT_VIDRO_OPAC / _FOSCO
@@ -492,9 +537,10 @@ int main(int argc, char **argv) {
     snprintf(nome, sizeof nome, "%s-%s.png", saida, cenarios[i]);
     captura(nome, w);
   }
-  for (i = 21; i <= 22; i++) {
+  for (i = 21; i <= 24; i++) {
+    static const char *const n[] = { "trailers", "trailer-seletor", "ampliacao", "ampliacao-seletor" };
     ajustes_teste_ux_captura(i);
-    snprintf(nome, sizeof nome, "%s-%s.png", saida, i == 21 ? "trailers" : "trailer-seletor");
+    snprintf(nome, sizeof nome, "%s-%s.png", saida, n[i - 21]);
     captura(nome, w);
   }
   if (!getenv("NUVIO_AJUSTES_UX")) {

@@ -373,10 +373,18 @@ static void frost(GfxRect r, float raioPx, float a) {
 }
 static void pintarFrost(void *ctx) {
   (void)ctx;
-  frost((GfxRect){ 0, 0, NV_TELA_W, NV_TELA_H }, 0.0f, 1.0f);
+  GfxRect tela = { 0, 0, NV_TELA_W, NV_TELA_H };
+  float k = fminf(fmaxf(nv_ambiente_forca, 0.0f), 1.0f);
+  frost(tela, 0.0f, 1.0f);
+  // Blend toward the immersive base inside the small bake. Switching at 0.5
+  // replaced the entire background in one frame while corviva was easing.
+  if (k > 0.0f) {
+    gfx_cor(tela, 0, NV_COR_FUNDO_R, NV_COR_FUNDO_G, NV_COR_FUNDO_B, k);
+    gfx_rect(tela, 0, GFX_AMBIENTE, 0, 0, 0, 0, 1, 1, 1, k * k);
+  }
 }
 static void frostTela(GfxRect r, float raioPx, float a) {
-  float k[15];
+  float k[20];
   GLuint t = 0;
   if (!telaCheia(r) || raioPx > 0.0f) { frost(r, raioPx, a); return; }
   // NA IMERSIVA O FROST E A LUZ DE AMBIENTE (dono, 05/10: "queria que o fundo
@@ -384,7 +392,7 @@ static void frostTela(GfxRect r, float raioPx, float a) {
   // o que a pagina do titulo ja pinta sem Frost: o chao do app e a luz das
   // regioes da cena por cima (gfx_ambiente, o assado da Home). As tres manchas
   // do Frost ficavam quase pretas ao lado disso.
-  if (nv_ambiente_forca > 0.5f) {
+  if (nv_ambiente_forca >= 1.0f) {
     gfx_cor(r, 0.0f, NV_COR_FUNDO_R, NV_COR_FUNDO_G, NV_COR_FUNDO_B, a);
     // Opaco (alfa 1): a luz vai pelo caminho SEM mistura do gfx_ambiente, o
     // mesmo do quadro da Home. A 0,998 era uma tela cheia misturada a mais por
@@ -394,7 +402,10 @@ static void frostTela(GfxRect r, float raioPx, float a) {
   }
   frostLuzes(k);
   k[12] = NV_COR_FUNDO_R; k[13] = NV_COR_FUNDO_G; k[14] = NV_COR_FUNDO_B;
-  if (conferido[K_FROST] != 0) t = gfx_luz_canal(CANAL_FROST, k, 15, pintarFrost, NULL);
+  k[15] = nv_ambiente_forca;
+  k[16] = nv_ambiente_forca > 0.0f ? floorf(nv_tempo_viva * 12.0f) : 0.0f;
+  for (int i = 0; i < 3; i++) k[17 + i] = nv_ambiente_forca > 0.0f ? nv_ambiente_viva[3][i] : 0.0f;
+  if (conferido[K_FROST] != 0) t = gfx_luz_canal(CANAL_FROST, k, 20, pintarFrost, NULL);
   // ADIADO (gfx_luz_canal_adiar): a arte de tela cheia que vier por cima (o
   // topo da pagina do titulo) le o Frost pelo uAmb e sai opaca, ou o veu de
   // rolagem vai na mesma passada dele. Nao adia quando a conferencia ou o
@@ -403,8 +414,14 @@ static void frostTela(GfxRect r, float raioPx, float a) {
       gfx_luz_canal_adiar(t, 1))
     return;
   if (t) gfx_luz_canal_desenhar(t, a, NULL, 1);
-  else frost(r, raioPx, a);
-  depoisDoFrost(t, k, a);
+  else {
+    frost(r, raioPx, a);
+    if (nv_ambiente_forca > 0.0f) {
+      gfx_cor(r, 0, NV_COR_FUNDO_R, NV_COR_FUNDO_G, NV_COR_FUNDO_B, nv_ambiente_forca * a);
+      gfx_rect(r, 0, GFX_AMBIENTE, 0, 0, 0, 0, 1, 1, 1, nv_ambiente_forca * nv_ambiente_forca * a);
+    }
+  }
+  if (nv_ambiente_forca <= 0.0f) depoisDoFrost(t, k, a);
 }
 void fundo_desenhar_modo(int modo, GfxRect r, float raioPx, const char *c, float a) {
   if (r.w < 1 || r.h < 1 || a <= 0.003f) return;

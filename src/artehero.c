@@ -6,13 +6,11 @@
 
 // TRES REGRAS, na ordem em que valem a pena.
 //
-// 1. metahub `background`: JA E 1920x1080 e custa 850 KB. Medido em 17/09 com
-//    curl: /background/medium/, /big/, /large/ e /original/ devolvem o MESMO
-//    arquivo, byte a byte. (Medido em 20/09: /background/small/ EXISTE e e
-//    outro arquivo, 480x270 e 12 KB — tex_cache.c usa isso no Tizen para
-//    card.) Quando o
-//    item tem id do IMDb e nao tem fundo melhor, esta url e deterministica e
-//    pode ser montada sem consultar ninguem.
+// 1. metahub `background`: o tamanho varia por titulo. Em tt27165187,
+//    medido em 15/10, medium e 1280x720 e large e 3840x2160, a MESMA foto
+//    do TMDB em w1280/original. Na Alta nativa sobe para large; Padrao e
+//    navegador conservam medium. small (480x270) continua servindo o card.
+//    Com id do IMDb a URL e deterministica, sem consulta de metadados.
 // 2. TMDB `w1280` -> `original`: a escada do TMDB para backdrop e
 //    w300/w780/w1280/original, sem nada entre 1280 e 3840. Para o desenho de
 //    1920 o w1280 amplia 1,5x; `original` e o unico caminho para pixel de
@@ -80,6 +78,27 @@ static int fundoOriginal(void) {
 #else
   return qualidadeImg == 2;
 #endif
+}
+
+// So o endpoint conhecido de FUNDO: nao muda poster, logo, still, URL
+// customizada ou a foto escolhida. O navegador conserva seu limite de decode.
+static int metahubGrande(const char *u, char *saida, size_t tam) {
+  static const char prefixo[] = "https://images.metahub.space/background/";
+  const char *id, *p;
+  int n;
+  if (!fundoOriginal() || !u || strncmp(u, prefixo, sizeof prefixo - 1)) return 0;
+  p = u + sizeof prefixo - 1;
+  if (!strncmp(p, "medium/", 7)) id = p + 7;
+  else if (!strncmp(p, "small/", 6)) id = p + 6;
+  else return 0;
+  if (strncmp(id, "tt", 2)) return 0;
+  p = id + 2;
+  while (*p >= '0' && *p <= '9') p++;
+  if (p == id + 2 || strcmp(p, "/img")) return 0;
+  n = snprintf(saida, tam, "%slarge/%s", prefixo, id);
+  // Promocao e opcional: a foto menor que ja funcionava continua valendo
+  // quando o cache ja sabe que a grande nao existe.
+  return n >= 0 && (size_t)n < tam && !falhou(saida);
 }
 
 // fixar() mora mais abaixo (anel de buffers); declarado aqui para o card.
@@ -171,11 +190,12 @@ const char *artehero_url(const CatItem *item) {
   // titulo (404) o detalhe abria SEM arte enquanto o card mostrava uma. Agora
   // heroi e detalhe sao o arquivo que o card ja baixou, decodificado inteiro
   // (a promocao de tex_cache): zero download novo, zero troca de foto. O
-  // w1280 do TMDB amplia 1,5x na tela cheia; o fundo do metahub (fileiras do
-  // Cinemeta) ja e 1920. Na ALTA o TMDB sobe para `original`, que com o
+  // w1280 do TMDB amplia 1,5x na tela cheia; o Metahub tambem pode ser 1280.
+  // Na ALTA o Metahub sobe para large e o TMDB para `original`, que com o
   // decode escalado (jpegrapido.c) sai em 1920 sem custar os 3840 inteiros.
   if (b[0]) {
     if (fundoOriginal()) {
+      if (metahubGrande(b, buf, sizeof buf)) return fixar(buf, buf);
       const char *p = strstr(b, "/t/p/w1280/");
       if (!p) p = strstr(b, "/t/p/w780/");
       if (p) {
@@ -204,6 +224,8 @@ const char *artehero_url(const CatItem *item) {
     idLimpo(item->imdb, id, sizeof id);
     snprintf(buf, sizeof buf,
              "https://images.metahub.space/background/medium/%s/img", id);
+    { char grande[sizeof buf];
+      if (metahubGrande(buf, grande, sizeof grande)) return fixar(grande, grande); }
     if (!falhou(buf)) return fixar(buf, buf);
   }
   if (item->poster[0]) return item->poster;
@@ -262,7 +284,7 @@ static void codificar(const char *s, char *dst, size_t n) {
 // ANIME: id de addon de anime (kitsu:, mal:, anilist:) ou, para um tt,
 // genero Animacao/Anime E pais Japao. So o genero pegaria Pixar e Disney,
 // e cada um custaria duas buscas (Kitsu e AniList) para nada.
-static int ehAnime(const CatItem *item) {
+int artehero_eh_anime(const CatItem *item) {
   if (!strncmp(item->imdb, "kitsu:", 6) || !strncmp(item->imdb, "mal:", 4) ||
       !strncmp(item->imdb, "anilist:", 8)) return 1;
   if (strncmp(item->imdb, "tt", 2)) return 0;
@@ -329,7 +351,7 @@ static const char *urlDaFonte(const CatItem *item, int fonte, int grande,
       return saida;
     case ARTEHERO_ANIME: {
       char enc[200], aid[40];
-      if (!ehAnime(item)) return NULL;
+      if (!artehero_eh_anime(item)) return NULL;
       if (temTt) snprintf(aid, sizeof aid, "%s", id);
       else {
         // "kitsu:7442" inteiro; um ":<episodio>" depois dele sai.
@@ -349,10 +371,13 @@ static const char *urlDaFonte(const CatItem *item, int fonte, int grande,
         : item->backdrop[0] ? item->backdrop : NULL;
       break;
     case ARTEHERO_METAHUB:
-      // Um tamanho so (medium = 1920, ver regra 1 no topo); o card no Tizen
-      // desce para /small/ dentro do tex_cache.
+      // O card conserva medium; so a tela cheia na Alta nativa sobe.
       if (!temTt) return NULL;
       snprintf(saida, tam, "https://images.metahub.space/background/medium/%s/img", id);
+      if (grande) {
+        char maior[512];
+        if (metahubGrande(saida, maior, sizeof maior)) snprintf(saida, tam, "%s", maior);
+      }
       return saida;
     case ARTEHERO_TMDB:
       b = item->backdropTmdb[0] ? item->backdropTmdb :
@@ -376,6 +401,7 @@ static const char *urlDaFonte(const CatItem *item, int fonte, int grande,
   }
   if (!b || !b[0]) return NULL;
   if (!grande || !fundoOriginal()) return b;
+  if (metahubGrande(b, saida, tam)) return saida;
   // Tela cheia na ALTA: a mesma subida para o original que artehero_url faz.
   { const char *p = strstr(b, "/t/p/w1280/");
     if (!p) p = strstr(b, "/t/p/w780/");
@@ -463,6 +489,7 @@ const char *artehero_url_escolha_grande(const char *u) {
     if (snprintf(buf, sizeof buf, "%.*s/v2%s", (int)(p - u), u, p) < (int)sizeof buf)
       return fixar(buf, buf);
   }
+  if (metahubGrande(u, buf, sizeof buf)) return fixar(buf, buf);
   if ((p = strstr(u, "/t/p/")) != NULL) {
     const char *nome = strchr(p + 5, '/');
     size_t pre = (size_t)(p - u);
@@ -539,6 +566,8 @@ static int mesmaFoto(const char *a, const char *b) {
   // resolveu para a url do card. So se sabe depois do download.
   return mesmaImagem && mesmaImagem(a, b);
 }
+
+int artehero_mesma_foto(const char *a, const char *b) { return mesmaFoto(a, b); }
 
 // "FUNDO DO DESTAQUE DO ADDON" (ajuste local, desligado de fabrica). Ligado,
 // o `background` que o addon mandou no catalogo vence a fonte escolhida e o

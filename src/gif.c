@@ -173,6 +173,20 @@ size_t gif_orcamento_para(double memGB) {
   return GIF_SEM_TETO;
 }
 
+// #589 (Tizen 6.5, 1,7 GB): o "Apple TV+" (241 quadros 500x281 a 20 ms) custa
+// 26,5 MB/s, 1,3x o teto, e ficava parado. Encolher a SAIDA nao baixa o custo
+// (LZW e composicao rodam na tela inteira; so o filtro final usa a saida), mas
+// esticar o relogio baixa: o fio so decodifica o que o relogio consome, e com
+// a volta `k` vezes mais longa o ritmo cai para custo/k. Ate GIF_ESTICA_MAX o
+// GIF anima em camera lenta dentro do mesmo teto; acima disso, parado.
+double gif_estica(size_t custo, size_t orc) {
+  double k;
+  if (orc == GIF_SEM_TETO || custo <= orc) return 1.0;
+  if (!orc) return 0.0;
+  k = (double)custo / (double)orc;
+  return k <= GIF_ESTICA_MAX ? k : 0.0;
+}
+
 #ifdef NV_GIF_ANIMA
 #ifdef __EMSCRIPTEN__
 EM_JS(double, gif_js_memoria_gb, (), {
@@ -954,6 +968,8 @@ static int    contouVolta;
 // O GIF preso passou do orcamento: gif_textura devolve 0 sem reler o arquivo
 // ate o caminho mudar (ou gif_parar/gif_ocioso soltar).
 static int    recusado;
+// Fator de camera lenta (gif_estica) do GIF preso: 1 = no ritmo do arquivo.
+static double estica = 1.0;
 // Ultima vez que alguem pediu gif_textura (ms). E o que gif_ocioso olha.
 static double ultimoUso;
 #ifndef NV_GIF_OCIOSO_MS
@@ -1000,13 +1016,19 @@ static void abrir(const char *caminho, int largAlvo) {
   // foto parada.
   custo = gif_custo(fioQ, telaW, telaH, nominal);
   orc = orcamento();
-  if (orc != GIF_SEM_TETO && custo > orc) {
-    printf("[gif] %d quadros %dx%d em %d ms = %.1f MB/s, acima do orcamento de %u MB/s: fica o primeiro quadro\n",
-           fioQ, telaW, telaH, nominal, custo / (1024.0 * 1024.0), (unsigned)(orc / (1024 * 1024)));
+  estica = gif_estica(custo, orc);
+  if (estica == 0.0) {
+    printf("[gif] %d quadros %dx%d em %d ms = %.1f MB/s, acima de %.0fx o orcamento de %u MB/s: fica o primeiro quadro\n",
+           fioQ, telaW, telaH, nominal, custo / (1024.0 * 1024.0), (double)GIF_ESTICA_MAX, (unsigned)(orc / (1024 * 1024)));
     fflush(stdout);
     soltarFioAtual();
     recusado = 1;
     return;
+  }
+  if (estica > 1.0) {
+    printf("[gif] %d quadros %dx%d em %d ms = %.1f MB/s, acima do orcamento de %u MB/s: anima %.2fx mais lento\n",
+           fioQ, telaW, telaH, nominal, custo / (1024.0 * 1024.0), (unsigned)(orc / (1024 * 1024)), estica);
+    fflush(stdout);
   }
   texW = texH = 0;
   proxTroca = 0.0;
@@ -1072,13 +1094,13 @@ GLuint gif_textura(const char *caminho, int largAlvo) {
     gif_fio_devolver(fio);
     if (!mostrou) {
       mostrou = 1;
-      proxTroca = agora + f.atraso;
+      proxTroca = agora + f.atraso * estica;
       inicioVolta = agora;
       continue;
     }
     // Relogio ancorado no vencimento ANTERIOR, nao em `agora`: chegar 20 ms
     // atrasado num quadro nao empurra todos os seguintes.
-    proxTroca += f.atraso;
+    proxTroca += f.atraso * estica;
     if (f.quadro == 0 && !contouVolta) {
       int nq = 0; double ms = 0.0;
       contouVolta = 1;

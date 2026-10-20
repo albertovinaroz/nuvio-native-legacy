@@ -220,6 +220,26 @@ static void interfacePorToque(void) {
           "Mobile: tocar Confirmar aplica TV pelo mesmo seletor");
   valor[AJ_INTERFACE_MODO] = 1; layout_modo_definir(1); ajustes_dir(dir);
   CONFERE(valor[AJ_INTERFACE_MODO] == 0 && !layout_modo_mobile(), "TV tambem fica salva na nova leitura");
+
+  // Auto is a real third saved choice, not a one-time replacement by TV/Mobile.
+  if (!abrirInterface()) return;
+  uxEvento(SDLK_DOWN); uxEvento(SDLK_DOWN);
+  assert(uxPendente == 2 && valor[AJ_INTERFACE_MODO] == 0);
+  quadroInterface();
+  assert(alvoInterface(NULL, ajToqueCancelar, 0, &x, &y)); clicarInterface(x, y);
+  CONFERE(!uxEditor && valor[AJ_INTERFACE_MODO] == 0 && !layout_modo_mobile(),
+          "TV: Cancelar descarta Automatico pendente");
+  if (!abrirInterface()) return;
+  assert(alvoInterface(ajPontEdValor, NULL, 2, &x, &y)); clicarInterface(x, y);
+  CONFERE(!uxEditor && valor[AJ_INTERFACE_MODO] == 2,
+          "TV: tocar Automatico confirma a terceira escolha");
+  depois = arquivoAjustes();
+  CONFERE(strstr(depois, "\ninterfaceModoLocal 2\n") != NULL,
+          "Automatico fica gravado sem substituir a preferencia pelo modo resolvido");
+  free(depois);
+  valor[AJ_INTERFACE_MODO] = 1; layout_modo_definir(1); ajustes_dir(dir);
+  CONFERE(valor[AJ_INTERFACE_MODO] == 2 && layout_modo_mobile() == ajustes_interface_mobile(),
+          "Automatico sobrevive a nova leitura e reaplica a politica do aparelho");
 }
 #endif
 

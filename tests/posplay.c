@@ -18,6 +18,11 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include "../src/posplay.c"
+
+static Uint32 dedoAgora556 = 50000;
+static Uint32 relogioDedo556(void) { return dedoAgora556; }
+static void entregarDedo556(const SDL_Event *e) { (void)posplay_evento(e); }
 
 static int tecla(int k) {
   SDL_Event e;
@@ -625,6 +630,67 @@ int main(void) {
   }
   puts("ok  cena pos-creditos espera o fim; sem sinal avanca; visto permanece nos creditos");
 
+  // #556: zero e uma temporada real em todos os caminhos de Next.
+  {
+    CatItem u = {0}; CatEp esp[2] = {{0}};
+    strcpy(u.imdb, "tt12409194"); strcpy(u.tipo, "series"); u.episodio = 1;
+    esp[0].episodio = 1; esp[1].episodio = 2;
+    cat_definir(&u, 1); cat_definir_episodios(0, esp, 2);
+    player_abrir(0, NULL); player_definir_episodio(0, 1);
+    extras_teste_progresso(u.imdb, 0, 21, 0, 2);
+    assert(extras_proximo_episodio(&t, &e) && t == 0 && e == 2);
+
+    posplay_fechar(); aquecer(3600, 1);
+    posplay_atualizar(.016f, 1000, 3450, 3600, 1, 0, 1);
+    assert(posplay_visivel() && temProximo());
+    assert(tecla(SDLK_RETURN) == 1);
+    assert(posplay_pediu_episodio(&t, &e) && t == 0 && e == 2);
+    assert(!posplay_pediu_episodio(NULL, NULL));
+
+    posplay_fechar(); aquecer(3600, 1);
+    posplay_atualizar(.016f, 1000, 3597, 3600, 1, 0, 1);
+    posplay_atualizar(.016f, 4100, 3600, 3600, 1, 0, 1);
+    assert(posplay_pediu_episodio(&t, &e) && t == 0 && e == 2);
+    posplay_busca_usuario(); // um Next ja entregue tambem pode ser revogado
+    assert(posplay_visivel());
+
+    posplay_fechar(); aquecer(3600, 1);
+    posplay_atualizar(.016f, 1000, 3597, 3600, 1, 0, 1);
+    posplay_atualizar(.016f, 4100, 3600, 3600, 1, 0, 1);
+    posplay_recuar(); // revoga o pedido ainda nao consumido, mantendo o OK
+    assert(posplay_visivel() && !posplay_pediu_episodio(NULL, NULL));
+    assert(tecla(SDLK_RETURN) == 1);
+    assert(posplay_pediu_episodio(&t, &e) && t == 0 && e == 2);
+
+    u.posCreditos = 1; cat_definir(&u, 1); cat_definir_episodios(0, esp, 2);
+    posplay_fechar(); aquecer(3600, 1);
+    posplay_atualizar(.016f, 1000, 3450, 3600, 1, 0, 1);
+    assert(aguardaCena && temProximo());
+    assert(tecla(SDLK_RIGHT) == 1 && posplay_teste_foco() == 1);
+    assert(tecla(SDLK_RETURN) == 1);
+    assert(posplay_pediu_episodio(&t, &e) && t == 0 && e == 2);
+
+    // O dedo passa pelo roteador real e pelo callback real da cena, sem GL.
+    posplay_fechar(); aquecer(3600, 1);
+    posplay_atualizar(.016f, 1000, 3450, 3600, 1, 0, 1);
+    ponteiro_iniciar(); ponteiro_teste_janela(1920, 1080);
+    ponteiro_teste_relogio(relogioDedo556); ponteiro_teste_toque(1);
+    ponteiro_quadro(dedoAgora556);
+    assert(aguardaCena && temProximo()); // a mesma guarda que registra os dois botoes
+    ponteiro_alvo(100, 100, 100, 80, ponteiroCena, NULL, 0, 0);
+    ponteiro_alvo(300, 100, 100, 80, ponteiroCena, NULL, 1, 0);
+    ponteiro_desenhar();
+    { SDL_Event ev = {0};
+      ev.type = SDL_FINGERDOWN; ev.tfinger.x = 350.0f / 1920; ev.tfinger.y = 140.0f / 1080;
+      ev.tfinger.touchId = 1; ev.tfinger.fingerId = 1;
+      assert(ponteiro_evento(&ev, entregarDedo556));
+      dedoAgora556 += 40; ev.type = SDL_FINGERUP;
+      assert(ponteiro_evento(&ev, entregarDedo556)); }
+    assert(posplay_pediu_episodio(&t, &e) && t == 0 && e == 2);
+    ponteiro_teste_relogio(NULL); ponteiro_teste_toque(0);
+    player_encerrar(); posplay_fechar();
+  }
+  puts("ok  #556: S00 Next por OK, contagem, recuo, cena e toque");
   puts("posplay: tudo ok");
   return 0;
 }

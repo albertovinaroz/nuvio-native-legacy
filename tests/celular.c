@@ -4,6 +4,7 @@
 // metodo, corpo grande, uso unico, expiracao, bloqueio por tentativas.
 // O texto de teste NAO e chave de ninguem.
 #include "celular.h"
+#include "posterprov.h"
 #include "nvtmp.h"
 #include <assert.h>
 #include <stdio.h>
@@ -54,6 +55,10 @@ int main(void) {
   snprintf(a, sizeof a, "'%s'", u);
   assert(curl(a) == 200 && strstr(saida, "<textarea") && strstr(saida, "Chave do Seekr"));
   assert(strstr(saida, "lang='pt-BR'") || strstr(saida, "lang='pt"));
+  // O maxlength da textarea segue o teto do modelo de URL (PP_MODELO_MAX):
+  // modelos longos colados pelo celular nao podem ser cortados pelo navegador.
+  { char ml[40]; snprintf(ml, sizeof ml, "maxlength=%d", PP_MODELO_MAX - 1);
+    assert(strstr(saida, ml)); }
   snprintf(a, sizeof a, "-I '%s'", local);
   assert(curl(a) == 200);
   // Sem CORS: nenhum Access-Control na resposta.

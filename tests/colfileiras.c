@@ -75,6 +75,12 @@ const char *addons_base_por_id(const char *id) {
 void addons_manifesto_lido(int i, const char *corpo) { (void)i; (void)corpo; sondaLeu = 1; }
 
 // ------------------------------------------------------------------ a rede
+char *rede_baixar_st(const char *url, int timeout, const char *const *headers, int *status) {
+  (void)headers;
+  char *body = rede_baixar(url, timeout);
+  *status = body ? 200 : 0;
+  return body;
+}
 static int pedidosDeCatalogo;
 static int snapshotValido, snapshotTem;
 static int preservarFixture;

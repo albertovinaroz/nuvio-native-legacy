@@ -1172,6 +1172,31 @@ int col_definir_json(const char *json) {
   return n;
 }
 
+int col_podar_fontes_addon(int (*ausente)(const char *id, const char *base)) {
+  int removidas = 0, w = 0;
+  if (!ausente) return 0;
+  pthread_mutex_lock(&colTrava);
+  for (int i = 0; i < count; i++) {
+    ColFolder *f = &PASTA(i);
+    if (f->extra) { if (w != i) PASTA(w) = *f; w++; continue; }
+    int n = 0, antes = f->nSources;
+    for (int j = 0; j < antes; j++) {
+      ColSource *s = &f->sources[j];
+      if (!s->prov[0] && ausente(s->addonId, s->base)) { removidas++; continue; }
+      if (n != j) f->sources[n] = *s;
+      n++;
+    }
+    if (n < antes) memset(f->sources + n, 0, sizeof *f->sources * (size_t)(antes - n));
+    f->nSources = n;
+    if (antes > 0 && !n) continue;
+    if (w != i) PASTA(w) = *f;
+    w++;
+  }
+  if (removidas) { count = w; fecharSobras(); revisao++; }
+  pthread_mutex_unlock(&colTrava);
+  return removidas;
+}
+
 void col_arte_conta(int sim) {
   char *j;
   sim = sim ? 1 : 0;

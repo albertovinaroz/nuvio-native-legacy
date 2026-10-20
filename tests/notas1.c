@@ -1,6 +1,7 @@
 // Regressao do mdblist 0/N (#205): a api publica devolve ratings[] com
 // source/value/score; o parser antigo so lia "rating" de POST por provedor.
 #include "../src/extras.h"
+#include "../src/notasfontes.h"
 #include "../src/vistoep.h"
 #include "../src/streams.h"
 #include <assert.h>
@@ -47,6 +48,11 @@ void cat_marcar_pos_creditos(const char *i, int v) { (void)i; (void)v; }
 int  contalib_vistos_do_titulo(const char *i, int *d) { (void)i; *d = 0; return 0; }
 const char *desc_chave_tmdb(void)  { return ""; }
 const char *desc_tmdb_idioma(void) { return "pt-BR"; }
+const char *ajustes_trailer_audio(void) { return ""; }
+uint64_t perfis_sessao_geracao(void) { return 0; }
+int perfis_sessao_atual(uint64_t g) { return g == 0; }
+int perfis_sessao_travar(uint64_t g) { return g == 0; }
+void perfis_sessao_destravar(void) {}
 int  desc_tmdb_pos_creditos(const char *j) { (void)j; return 0; }
 void imdbnota_publicar(const char *i, int r)            { (void)i; (void)r; }
 void imdbnota_alias_tmdb(const char *i, long t, int s)  { (void)i; (void)t; (void)s; }
@@ -65,6 +71,10 @@ void marco(const char *m) { (void)m; }
 int  vistoep_fonte(const char *i, int t, int e, int v, long long q,
                    VistoFonte *c) {
   (void)i; (void)t; (void)e; (void)v; (void)q; (void)c; return 0;
+}
+int vistoep_fonte_se_sessao(const char *i, int t, int e, int v, long long q,
+                            VistoFonte *c, uint64_t sessao) {
+  return sessao == 0 ? vistoep_fonte(i, t, e, v, q, c) : 0;
 }
 void vistoep_fonte_log(const char *i, const char *f, const VistoFonte *c) {
   (void)i; (void)f; (void)c;
@@ -144,6 +154,33 @@ int main(void) {
   assert(extras_nota(EX_METACRITIC) == 820);
   assert(extras_nota(EX_TRAKT) == 880);
   puts("ok mdblist ratings[] publica as fontes");
-  puts("PASS notas1");
+  // Provider JSON -> parser -> published extras -> production display formatter.
+  const char *values[] = { "8.0", "80" };
+  for (int k = 0; k < 2; k++) {
+    char payload[256];
+    extras_pedir("", 0, 0);
+    snprintf(payload, sizeof payload,
+      "{\"ratings\":[{\"source\":\"imdb\",\"value\":%s},"
+      "{\"source\":\"trakt\",\"value\":80},"
+      "{\"source\":\"tomatoes\",\"value\":95}]}", values[k]);
+    fixtureMdblist = payload;
+    extras_pedir("tt0111161", 0, 0);
+    int i;
+    for (i = 0; i < 200 && extras_carregando(); i++) usleep(10000);
+    assert(!extras_carregando());
+    const int sources[] = { EX_IMDB, EX_TRAKT, EX_TOMATOES };
+    const char *expected[] = { "8.0", "80%", "95%" };
+    for (i = 0; i < 3; i++) {
+      char displayed[24];
+      nf_texto(sources[i], extras_nota(sources[i]), 0, 0,
+               displayed, sizeof displayed);
+      if (strcmp(displayed, expected[i])) {
+        fprintf(stderr, "FAIL IMDb payload %s, source %d: displayed '%s', expected '%s'\n",
+                values[k], sources[i], displayed, expected[i]);
+        return 1;
+      }
+    }
+  }
+  puts("PASS notas1: IMDb 8.0 and 80 display 8.0; Trakt 80%; Rotten Tomatoes 95%");
   return 0;
 }

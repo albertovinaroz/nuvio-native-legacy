@@ -444,10 +444,12 @@ int jf_ler_bibliotecas(const char *corpo, size_t nCorpo, JfBiblioteca *out, int 
         txtRaiz(p, f, "Id", id, sizeof id);
         txtRaiz(p, f, "Name", nome, sizeof nome);
         txtRaiz(p, f, "CollectionType", col, sizeof col);
-        if (jfid_hex_limpo(id, limpo, 32) && (!strcmp(col, "movies") || !strcmp(col, "tvshows"))) {
+        // Mixed libraries have no CollectionType; catalog servers use boxsets/mixed.
+        if (jfid_hex_limpo(id, limpo, 32) && (!strcmp(col, "movies") || !strcmp(col, "tvshows") ||
+                                              !strcmp(col, "boxsets") || !strcmp(col, "mixed") || !col[0])) {
           copiar(out[n].id, sizeof out[n].id, limpo);
           copiar(out[n].nome, sizeof out[n].nome, nome);
-          copiar(out[n].tipo, sizeof out[n].tipo, col[0] == 'm' ? "movie" : "series");
+          copiar(out[n].tipo, sizeof out[n].tipo, strcmp(col, "tvshows") ? "movie" : "series");
           n++;
         }
       }
@@ -455,6 +457,11 @@ int jf_ler_bibliotecas(const char *corpo, size_t nCorpo, JfBiblioteca *out, int 
     }
   }
   return n;
+}
+
+int jf_por_fileira(int nBibliotecas) {
+  int p = nBibliotecas > 0 ? JF_ITENS_MAX / nBibliotecas : JF_POR_FILEIRA;
+  return p > JF_POR_FILEIRA ? JF_POR_FILEIRA : p < 1 ? 1 : p;
 }
 
 int jf_bibliotecas(const JfConta *c, RedeJob *job, JfBiblioteca *out, int max) {
@@ -1556,15 +1563,15 @@ static void tarefaBibliotecas(JfInst *I, const Tarefa *t) {
   JfBiblioteca libs[JF_FIL_MAX];
   CatItem *itens;
   CatFileira fils[JF_FIL_MAX];
-  int nl, nf = 0, ni = 0, e = JF_OK, i;
+  int nl, nf = 0, ni = 0, e = JF_OK, i, por;
   if (!j) return;
-  // Limit checked before allocating: JF_FIL_MAX x JF_POR_FILEIRA items.
-  itens = calloc((size_t)JF_FIL_MAX * JF_POR_FILEIRA, sizeof *itens);
+  itens = calloc((size_t)JF_ITENS_MAX, sizeof *itens);
   if (!itens) { fecharTarefa(I, j); return; }
   nl = jf_bibliotecas(&c, j, libs, JF_FIL_MAX);
   if (nl < 0) e = nl;
+  por = jf_por_fileira(nl);
   for (i = 0; i < nl && e == JF_OK; i++) {
-    int total, n = jf_itens(&c, j, libs[i].id, 0, JF_POR_FILEIRA, itens + ni, JF_POR_FILEIRA, &total);
+    int total, n = jf_itens(&c, j, libs[i].id, 0, por, itens + ni, por, &total);
     if (n < 0) { e = n; break; }
     if (!n) continue;
     memset(&fils[nf], 0, sizeof fils[nf]);
@@ -1895,6 +1902,7 @@ static int jfi_ficha(JfInst *I, CatItem *item, CatEp *eps, int maxEps) {
     }
   }
   novo.naLista = item->naLista;
+  novo.listaFontes = item->listaFontes;
   novo.naColecao = item->naColecao;
   novo.retomadoMs = item->retomadoMs;
   *item = novo;

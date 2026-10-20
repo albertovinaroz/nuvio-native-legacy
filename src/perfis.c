@@ -13,6 +13,7 @@ void servidores_perfil_trocou(void);   // servidores.c: cancel in-flight work, l
 void fontepref_definir_perfil(int perfil);
 // Mesma razao: a legenda escolhida a mao (legmemoria.h, 2.0.3) e por perfil.
 void legmem_definir_perfil(int perfil);
+void audiomem_definir_perfil(int perfil);
 // Mesma razao (arteescolha.h nao puxa SDL, mas fica no mesmo molde).
 void arteesc_definir_perfil(int perfil);
 // Mesma razao: ajustes.h puxa SDL. O ajuste "Usar os addons do perfil
@@ -475,6 +476,7 @@ void perfis_carregar_ativo(void) {
   // escolheu, ate a primeira troca.
   fontepref_definir_perfil(ativo);
   legmem_definir_perfil(ativo);
+  audiomem_definir_perfil(ativo);
   arteesc_definir_perfil(ativo);
   lerCache();
 }
@@ -494,6 +496,7 @@ void perfis_definir_ativo(int indice) {
   fil_definir_perfil(indice);
   fontepref_definir_perfil(indice);
   legmem_definir_perfil(indice);
+  audiomem_definir_perfil(indice);
   arteesc_definir_perfil(indice);
   // O estado dos plugins e da conta+perfil: trocar avanca a geracao, corta os
   // scrapers em voo e relê o liga/desliga e os repositorios do perfil novo.

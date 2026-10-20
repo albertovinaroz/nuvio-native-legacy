@@ -15,11 +15,16 @@ static const Item TELA[] = {
   SEC("Reprodução", "Qualidade, som e o que o player faz", "aj_circle-play"),
     ROT("Imagem e som"),
       OPC(AJ_QUALIDADE), OPC(AJ_FONTE_HDR), OPC(AJ_DV), OPC(AJ_ATMOS),
+#ifdef NV_TPK
+      OPC(AJ_AUDIO_OFFSET),
+#endif
     ROT("Escolha da fonte"),
       OPC(AJ_FONTE_MANUAL), OPC(AJ_FONTE_PRIORIDADE), OPC(AJ_FONTE_IDIOMA_AUDIO), OPC(AJ_FONTE_PRAZO),
       OPC(AJ_FONTE_REPOR), OPC(AJ_TAM_MAX),
+      OPC(AJ_FONTE_GRUPO), OPC(AJ_FONTE_GRUPO_SESSOES),
+      OPC(AJ_LINK_REUSAR), OPC(AJ_LINK_PRAZO),
     ROT("Durante e depois"),
-      OPC(AJ_PAUSA_OVERLAY), OPC(AJ_TELA_ABERTURA), OPC(AJ_ABERTURA_ADDON), OPC(AJ_ABERTURA_FUNDO), OPC(AJ_ESTAT_TAMANHO), OPC(AJ_ESTAT_LADO), OPC(AJ_PLR_CLASSIF), OPC(AJ_PULAR_ABERTURA), OPC(AJ_PULAR_RESUMO),
+      OPC(AJ_PAUSA_OVERLAY), OPC(AJ_TELA_ABERTURA), OPC(AJ_ABERTURA_ADDON), OPC(AJ_ABERTURA_FUNDO), OPC(AJ_ABERTURA_ESTILO), OPC(AJ_ESTAT_TAMANHO), OPC(AJ_ESTAT_LADO), OPC(AJ_PLR_CLASSIF), OPC(AJ_PULAR_ABERTURA), OPC(AJ_PULAR_RESUMO),
       OPC(AJ_PULAR_CREDITOS), OPC(AJ_PROXIMO_AUTO), OPC(AJ_PROXIMO_CONTAGEM), OPC(AJ_REACAO_CREDITOS), OPC(AJ_CW_CONCLUIDO), OPC(AJ_CW_MINIMO),
       OPC(AJ_SAIDA_PLAYER), OPC(AJ_PROPORCAO_PADRAO), OPC(AJ_BRILHO_PLAYER), OPC(AJ_HDR_UI),
     ROT("Miniatura ao avançar"),
@@ -31,7 +36,10 @@ static const Item TELA[] = {
       OPC(AJ_FONTE_ESCOPO), OPC(AJ_FONTE_ADDONS_PERM), OPC(AJ_FONTE_PLUGINS_PERM),
       OPC(AJ_FONTE_ORDEM), OPC(AJ_FONTE_ORDEM_USO), OPC(AJ_FONTE_OUTROS),
       OPC(AJ_FONTE_AUTO), OPC(AJ_FONTE_TOCAR_CONFERINDO), OPC(AJ_FONTE_AQUECER),
-      OPC(AJ_FONTE_CONFERIR_VARIAS), OPC(AJ_FONTE_PREPARAR), OPC(AJ_FONTE_PRECARREGAR),
+      OPC(AJ_FONTE_CONFERIR_VARIAS), OPC(AJ_FONTE_PREPARAR),
+#ifdef NV_ANDROID
+      OPC(AJ_FONTE_PRECARREGAR),   // so o Android tem o preload do player
+#endif
       OPC(AJ_TAM_MIN), OPC(AJ_FONTE_TEXTO), OPC(AJ_FONTE_ORDEM_ADDON), OPC(AJ_SELOS_CORES),
       OPC(AJ_SELOS_PACOTE), OPC(AJ_SELOS_PACOTE_ADD), OPC(AJ_SELOS_PACOTE_REM),
     ROT("Som e vídeo desta TV"),
@@ -40,16 +48,18 @@ static const Item TELA[] = {
       OPC(AJ_DV_MKV),
 #endif
       OPC(AJ_CACHE_SEEK), OPC(AJ_MANTER_VIDEO), OPC(AJ_RETOMADA_MORNA), OPC(AJ_MANTER_PRAZO), OPC(AJ_SEEKR_AJUSTE),
+#if defined(NV_ANDROID) || (!defined(NV_TPK) && !defined(__EMSCRIPTEN__))
+      OPC(AJ_BUFFER),   // webOS: DTS/Dolby Vision conversion read-ahead
+#endif
 #ifdef NV_ANDROID
-      OPC(AJ_BUFFER),
+      OPC(AJ_PLAYER_EXTERNO),
+      OPC(AJ_PLAYER_ANIME),
 #endif
 #ifndef __EMSCRIPTEN__
     // .wgt: sem socket TCP/UDP no navegador, sem motor; P2P escondido (a8e7685d).
-    // #205: sem os pontos de montagem USB do motor (Android), a opcao some.
+    // #205: Android tambem lista o pendrive (NuvioActivity.volumesExternos).
     ROT("P2P"), OPC(AJ_P2P_LIGADO), OPC(AJ_P2P_URL), OPC(AJ_P2P_TESTAR), OPC(AJ_P2P_LIMITE),
-#ifndef NV_ANDROID
     OPC(AJ_P2P_DESTINO),
-#endif
 #endif
 
   SEC("Idiomas e legendas", "Idioma da interface, áudio, legenda e metadados", "aj_languages"),
@@ -95,10 +105,21 @@ static const Item TELA[] = {
       OPC(AJ_PX_ENTRAR), OPC(AJ_PX_SERVIDOR), OPC(AJ_PX_SAIR),
 
   SEC("TV ao vivo", "Provedor e solução de problemas ao assistir canais", "aj_tv-minimal-play"),
-    ROT("Provedor"),
+    ROT("Contas de TV ao vivo"),
+      OPC(AJ_IPTV_ORDEM), OPC(AJ_IPTV_CONTA), OPC(AJ_IPTV_NOME), OPC(AJ_IPTV_ATIVA),
+      OPC(AJ_IPTV_LISTA_STALKER), OPC(AJ_IPTV_ADD_STALKER),
+      OPC(AJ_IPTV_LISTA_XTREAM), OPC(AJ_IPTV_ADD_XTREAM),
+      OPC(AJ_IPTV_LISTA_M3U), OPC(AJ_IPTV_ADD_M3U),
+      OPC(AJ_IPTV_REMOVER), OPC(AJ_IPTV_ACOES), OPC(AJ_IPTV_EXCLUIR),
       OPC(AJ_XTREAM_SERVIDOR), OPC(AJ_XTREAM_USUARIO), OPC(AJ_XTREAM_SENHA),
-      OPC(AJ_XTREAM_CONTA), OPC(AJ_XTREAM_LIMPAR), OPC(AJ_STALKER_PORTAL),
-      OPC(AJ_STALKER_MAC), OPC(AJ_STALKER_LIMPAR), OPC(AJ_EPG_PAIS),
+      OPC(AJ_XTREAM_CONTA), OPC(AJ_XTREAM_CONEXOES), OPC(AJ_XTREAM_LIMPAR), OPC(AJ_STALKER_PORTAL),
+      OPC(AJ_STALKER_MAC), OPC(AJ_STALKER_LIMPAR),
+      OPC(AJ_M3U_URL), OPC(AJ_M3U_EPG), OPC(AJ_M3U_LIMPAR),
+      OPC(AJ_IPTV_SALVAR), OPC(AJ_IPTV_CANCELAR),
+    ROT("Guia de TV"),
+      OPC(AJ_GUIA_ORDEM), OPC(AJ_GUIA_FONTE), OPC(AJ_GUIA_RECARREGAR), OPC(AJ_EPG_PAIS), OPC(AJ_EPG_MEMORIA), OPC(AJ_GUIA_CATEGORIAS),
+      OPC(AJ_URL_LISTA), OPC(AJ_URL_M3U_ADD), OPC(AJ_URL_XMLTV_ADD), OPC(AJ_URL_REM),
+      OPC(AJ_LIVETV_SUGERIR),
     ROT("Se o canal não abre"),
       OPC(AJ_LIVETV_DIAG), OPC(AJ_LIVETV_RES), OPC(AJ_LIVETV_ESPERA),
     MAIS(),
@@ -109,6 +130,7 @@ static const Item TELA[] = {
   SEC("Tela inicial", "Estilo, fileiras, barra lateral e Continuar assistindo", "aj_layout-dashboard"),
     ROT("Estilo"),
       OPC(AJ_HOME_LAYOUT), OPC(AJ_LANDSCAPE), OPC(AJ_HERO), OPC(AJ_HERO_CHEIO),
+      OPC(AJ_FUNDO_DIN), OPC(AJ_FUNDO_DIN_COR),
       OPC(AJ_HERO_CATALOGOS), OPC(AJ_HERO_GENERO),
       OPC(AJ_HERO_SINOPSE), OPC(AJ_HERO_NOTAS), OPC(AJ_HERO_ANO), OPC(AJ_HERO_DURACAO),
       OPC(AJ_HERO_SINOPSE_TAM),
@@ -116,7 +138,7 @@ static const Item TELA[] = {
       OPC(AJ_FIL_ORDEM), OPC(AJ_FIL_LIMITE), OPC(AJ_ITENS_FILEIRA),
       OPC(AJ_ESPACO_FILEIRAS), OPC(AJ_ESPACO_TITULOS),
       OPC(AJ_OCULTAR_NLANC), OPC(AJ_NOTAS_HOME), OPC(AJ_SELO_VISTO), OPC(AJ_ABAS_ESTILO),
-      OPC(AJ_OCULTAR_FILMES_VISTOS), OPC(AJ_AMIGOS_ESTILO),
+      OPC(AJ_OCULTAR_FILMES_VISTOS), OPC(AJ_BIB_HOME), OPC(AJ_AMIGOS_ESTILO),
       // A curadoria da fileira Herói (#205): a fonte do cartão único.
       OPC(AJ_CURADORIA_URL),
     ROT("Coleções"), OPC(AJ_COLECAO_EXIBICAO),
@@ -145,17 +167,18 @@ static const Item TELA[] = {
     OPC(AJ_TECLADO_ANDROID),
 #endif
     ROT("Cores e vidro"),
-      OPC(AJ_TEMA), OPC(AJ_FUNDO), OPC(AJ_COR_LOGO), OPC(AJ_VIDRO), OPC(AJ_VIDRO_CONTORNO),
+      OPC(AJ_TEMA), OPC(AJ_ARTE_TOM), OPC(AJ_FUNDO), OPC(AJ_COR_LOGO), OPC(AJ_VIDRO), OPC(AJ_VIDRO_CONTORNO), OPC(AJ_FOCO_ACENTO),
+    ROT("Fileiras"), OPC(AJ_TITULO_FIL), OPC(AJ_PALCO_FUNDO),
     ROT("Logo e abertura"),
       OPC(AJ_LOGO_APP), OPC(AJ_ABERTURA), OPC(AJ_ICONE_APP),
     ROT("Texto e tamanho"),
-      OPC(AJ_FONTE_UI), OPC(AJ_TAMANHO_UI), OPC(AJ_TAMANHO_AJUSTES), OPC(AJ_LAYOUT_AJUSTES),
+      OPC(AJ_FONTE_UI), OPC(AJ_TAMANHO_UI), OPC(AJ_ESCALA_TEXTO), OPC(AJ_DET_ESPACO), OPC(AJ_TAMANHO_AJUSTES), OPC(AJ_LAYOUT_AJUSTES),
     ROT("Movimento e relógio"),
       OPC(AJ_ANIM), OPC(AJ_RELOGIO), OPC(AJ_RELOGIO_12H),
     ROT("Tela de descanso"),
       OPC(AJ_ESMAECER), OPC(AJ_DESCANSO_ESTILO), OPC(AJ_DESCANSO_FONTE),
     MAIS(),
-    ROT("Cores e vidro"), OPC(AJ_VIDRO_OPAC), OPC(AJ_VIDRO_FOSCO),
+    ROT("Cores e vidro"), OPC(AJ_VIDRO_OPAC), OPC(AJ_VIDRO_FOSCO), OPC(AJ_VIDRO_QUALIDADE),
 
   // NOTAS (decisao do dono, 07/10): so as onze "Notas no titulo". Os oito
   // AJ_MDB_* (qual nota o MDBList baixa) sairam da tela e continuam no enum e na
@@ -166,7 +189,7 @@ static const Item TELA[] = {
     ROT("Notas"),
       OPC(AJ_NT_IMDB), OPC(AJ_NT_TOMATES), OPC(AJ_NT_AUDIENCIA), OPC(AJ_NT_META),
       OPC(AJ_NT_METAUSER), OPC(AJ_NT_TRAKT), OPC(AJ_NT_TMDB), OPC(AJ_NT_LETTER),
-      OPC(AJ_NT_MAL), OPC(AJ_NT_EBERT), OPC(AJ_NT_SCORE), OPC(AJ_MDB_CHAVE),
+      OPC(AJ_NT_MAL), OPC(AJ_NT_EBERT), OPC(AJ_NT_SCORE), OPC(AJ_NT_ORDEM), OPC(AJ_NT_EP), OPC(AJ_MDB_CHAVE),
     ROT("Dados do título"),
       OPC(AJ_TMDB_LIGADO),
     MAIS(),
@@ -181,7 +204,7 @@ static const Item TELA[] = {
   // Cartazes e arte + Trailers numa categoria so (mockup v3, tela 01).
   SEC("Cartazes e trailers", "Cartaz em foco, de onde vem a arte e trailers", "aj_clapperboard"),
     ROT("Cartaz em foco"),
-      OPC(AJ_EXPANDIR), OPC(AJ_EXPANDIR_ATRASO), OPC(AJ_BORDA_FOCO),
+      OPC(AJ_EXPANDIR), OPC(AJ_EXPANDIR_ATRASO), OPC(AJ_BORDA_FOCO), OPC(AJ_MENU_CARTAZ),
     ROT("Forma"),
       OPC(AJ_LARGURA_DP), OPC(AJ_RAIO_DP), OPC(AJ_PROF),
     ROT("De onde vem a arte"),
@@ -191,6 +214,9 @@ static const Item TELA[] = {
       OPC(AJ_DET_TRAILER),
     ROT("Som e imagem"),
       OPC(AJ_HERO_TRAILER_SOM), OPC(AJ_TRAILER_FONTE),
+#ifdef __EMSCRIPTEN__
+      OPC(AJ_TRAILER_AUDIO),   // the dubbed trailer is a YouTube id: native players cannot play it
+#endif
 #ifdef NV_TPK
       OPC(AJ_TRAILER_ZOOM_TPK),
 #endif
@@ -217,10 +243,7 @@ static const Item TELA[] = {
     ROT("Notificações"), OPC(AJ_ENQUETES),
 
   SEC("Esta TV", "Resolução, imagens, efeitos e diagnóstico", "aj_monitor-cog"),
-    OPC(AJ_RESOLUCAO), OPC(AJ_QUALIDADE_IMG),
-#if defined(NV_TPK) || defined(NV_ANDROID)
-    OPC(AJ_GPU_EFEITOS),
-#endif
+OPC(AJ_RESOLUCAO), OPC(AJ_GPU_EFEITOS), OPC(AJ_AMPLIAR_UI), OPC(AJ_AMPLIACAO_ALGO), OPC(AJ_AMPLIACAO_NITIDEZ), OPC(AJ_HDR_INTERFACE), OPC(AJ_QUALIDADE_IMG),
     OPC(AJ_NAV_RAPIDA), OPC(AJ_MEDIDOR), OPC(AJ_DIAGNOSTICO), OPC(AJ_VELOCIDADE), OPC(AJ_ESPACO),
     MAIS(),
     ROT("Memória"), OPC(AJ_TEX_MB),

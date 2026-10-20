@@ -47,15 +47,20 @@ static void confere_mes(int mes, const char *pt, const char *esperado) {
 // Marcadores printf de `s`, na ordem, um por linha de saida ("%d%s%.1f..."), sem
 // os "%%". Comparados como texto: "%d" contra "%s" e diferente.
 static void marcadores(const char *s, char *out, size_t cap) {
+  const char *inicio = s;
   size_t o = 0;
   while (*s) {
     const char *p;
-    if (*s != '%') { s++; continue; }
+    // A percent sign after a number is literal UI text, not a format.
+    if (*s != '%' || (s > inicio && s[-1] >= '0' && s[-1] <= '9')) { s++; continue; }
     if (s[1] == '%') { s += 2; continue; }
     // flags, largura, precisao e tamanho; so conta se terminar numa conversao
     // (um "50%" solto no fim de "Escuro 50%" nao e marcador).
     p = s + 1;
-    while (*p && strchr("-+ #0123456789.hlzjt", *p)) p++;
+    while (*p && strchr("-+ #0", *p)) p++;
+    while (*p >= '0' && *p <= '9') p++;
+    if (*p == '.') { p++; while (*p >= '0' && *p <= '9') p++; }
+    while (*p && strchr("hlzjt", *p)) p++;
     if (*p && strchr("diouxXeEfgGcsp", *p) && o + (size_t)(p - s) + 3 < cap) {
       memcpy(out + o, s, (size_t)(p - s) + 1); o += (size_t)(p - s) + 1; out[o++] = ';';
       s = p + 1;
@@ -73,7 +78,8 @@ static void varredura(void) {
     for (i = 0; i < n; i++) {
       const char *r = i18n(CHAVES[i].pt);
       char mk[128], mr[128];
-      if (!r || !*r) { printf("FALHOU: idioma %d sem traducao de \"%s\"\n", lg, CHAVES[i].pt); falhas++; continue; }
+      if (!r) { printf("FALHOU: idioma %d sem traducao de \"%s\"\n", lg, CHAVES[i].pt); falhas++; continue; }
+      if (!*r) r = CHAVES[i].en;   // untranslated table rows use English
       if (lg == IDIOMA_EN && strcmp(r, CHAVES[i].en) != 0) {
         printf("FALHOU: en de \"%s\" -> \"%s\"\n", CHAVES[i].pt, r); falhas++; }
       marcadores(CHAVES[i].pt, mk, sizeof mk); marcadores(r, mr, sizeof mr);

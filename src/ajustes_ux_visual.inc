@@ -7,6 +7,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_LANDSCAPE: return "aj_layout-dashboard";
     case AJ_HERO: return "aj_layout-dashboard";
     case AJ_HERO_CHEIO: return "aj_layout-dashboard";
+    case AJ_FUNDO_DIN: case AJ_FUNDO_DIN_COR: return "aj_layout-dashboard";
     case AJ_HERO_CATALOGOS: return "aj_layout-dashboard";
     case AJ_HERO_GENERO: return "aj_layout-dashboard";
     case AJ_HERO_SINOPSE: return "aj_layout-dashboard";
@@ -29,6 +30,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_LOGO_CARDS: return "aj_rows-3";
     case AJ_SELO_VISTO: return "aj_rows-3";
     case AJ_OCULTAR_FILMES_VISTOS: return "aj_rows-3";
+    case AJ_BIB_HOME: return "aj_rows-3";
     case AJ_CURADORIA_URL: return "aj_rows-3";
     case AJ_CW_LIGADO: return "aj_rotate-ccw-clock";
     case AJ_CW_OK: return "aj_rotate-ccw-clock";
@@ -138,6 +140,18 @@ static const char *ajVisualIcone(int op) {
     case AJ_FONTE_REPOR: return "aj_list-video";
     case AJ_FONTE_PREPARAR: return "aj_download";
     case AJ_FONTE_PRECARREGAR: return "aj_download";
+    case AJ_RETOMADA_MORNA: case AJ_MANTER_PRAZO: return "aj_rotate-ccw-clock";
+    case AJ_BUFFER: return "aj_gauge";
+    case AJ_FONTE_IDIOMA_AUDIO: return "aj_audio-lines";
+    case AJ_FILTROS_FONTES: return "aj_funnel";
+    case AJ_PROVEDORES_ESCOPO: return "aj_key-round";
+    case AJ_AMIGOS_ESTILO: return "aj_users";
+    case AJ_TITULO_FIL: return "aj_type";
+    case AJ_MURAL_TITULOS: return "aj_images";
+    case AJ_FONTE_GRUPO: return "aj_layers";
+    case AJ_FONTE_GRUPO_SESSOES: return "aj_rotate-ccw-clock";
+    case AJ_LINK_REUSAR: return "aj_link";
+    case AJ_LINK_PRAZO: return "aj_clock";
     case AJ_FONTE_CONFERIR_VARIAS: return "aj_layers";
     case AJ_FONTE_AQUECER: return "aj_wifi";
     case AJ_FONTE_TOCAR_CONFERINDO: return "aj_zap";
@@ -154,6 +168,8 @@ static const char *ajVisualIcone(int op) {
     case AJ_SELOS_PACOTE: return "aj_list-video";
     case AJ_SELOS_PACOTE_ADD: return "aj_list-video";
     case AJ_SELOS_PACOTE_REM: return "aj_list-video";
+    case AJ_URL_LISTA: case AJ_URL_M3U_ADD: case AJ_URL_XMLTV_ADD: return "aj_server";
+    case AJ_URL_REM: return "aj_x";
     case AJ_QUALIDADE: return "aj_monitor-play";
     case AJ_DV: return "aj_monitor-play";
     case AJ_DV_MKV: return "aj_monitor-play";
@@ -162,7 +178,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_PLR_CLASSIF: return "aj_shield";
     case AJ_TELA_ABERTURA: return "aj_clapperboard";
     case AJ_ABERTURA_ADDON: return "aj_clapperboard";
-    case AJ_ABERTURA_FUNDO: return "aj_clapperboard";
+    case AJ_ABERTURA_FUNDO: case AJ_ABERTURA_ESTILO: return "aj_clapperboard";
     case AJ_EP_TAMANHO: return "aj_layout-dashboard";
     case AJ_HERO_SINOPSE_TAM: return "aj_layout-dashboard";
     case AJ_ESTAT_TAMANHO: return "aj_gauge";
@@ -171,7 +187,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_CW_CONCLUIDO: return "aj_circle-play";
     case AJ_CW_MINIMO: return "aj_circle-play";
     case AJ_PULAR_ABERTURA: case AJ_PULAR_RESUMO: case AJ_PULAR_CREDITOS: case AJ_PROXIMO_AUTO: case AJ_PROXIMO_CONTAGEM: return "aj_circle-play";
-    case AJ_SAIDA_PLAYER: return "aj_circle-play";
+    case AJ_SAIDA_PLAYER: case AJ_PLAYER_EXTERNO: case AJ_PLAYER_ANIME: return "aj_circle-play";
     case AJ_SEEKR_LIGADO: return "aj_film";
     case AJ_SEEKR_CHAVE: return "aj_film";
     case AJ_SEEKR_TESTAR: return "aj_film";
@@ -213,17 +229,25 @@ static const char *ajVisualIcone(int op) {
     case AJ_BRILHO_PLAYER: case AJ_HDR_UI: return "aj_sun-dim";
     case AJ_MANTER_VIDEO: return "aj_memory-stick";
     case AJ_RELOGIO: case AJ_RELOGIO_12H: return "aj_clock";
-    case AJ_VIDRO_CONTORNO: return "aj_layers";
+    case AJ_VIDRO_CONTORNO: case AJ_FOCO_ACENTO: return "aj_layers";
     case AJ_VIDRO_OPAC: return "aj_layers";
-    case AJ_VIDRO_FOSCO: return "aj_layers";
+    case AJ_VIDRO_FOSCO: case AJ_VIDRO_QUALIDADE: return "aj_layers";
     case AJ_XTREAM_SERVIDOR: return "aj_server";
     case AJ_XTREAM_USUARIO: return "aj_server";
     case AJ_XTREAM_SENHA: return "aj_server";
-    case AJ_XTREAM_CONTA: return "aj_server";
+    case AJ_XTREAM_CONTA: case AJ_XTREAM_CONEXOES: return "aj_server";
     case AJ_XTREAM_LIMPAR: return "aj_server";
     case AJ_STALKER_PORTAL: return "aj_server";
     case AJ_STALKER_MAC: return "aj_server";
     case AJ_STALKER_LIMPAR: return "aj_server";
+    case AJ_GUIA_FONTE: case AJ_GUIA_RECARREGAR: case AJ_M3U_URL: case AJ_M3U_EPG: case AJ_M3U_LIMPAR:
+    case AJ_IPTV_CONTA: case AJ_IPTV_ADD_XTREAM: case AJ_IPTV_ADD_M3U: case AJ_IPTV_ADD_STALKER:
+    case AJ_IPTV_NOME: case AJ_IPTV_ATIVA: case AJ_IPTV_REMOVER:
+    case AJ_IPTV_LISTA_XTREAM: case AJ_IPTV_LISTA_M3U: case AJ_IPTV_LISTA_STALKER:
+    case AJ_IPTV_ACOES: case AJ_IPTV_EXCLUIR: case AJ_IPTV_SALVAR: case AJ_IPTV_CANCELAR:
+    case AJ_GUIA_ORDEM: case AJ_IPTV_ORDEM: case AJ_EPG_MEMORIA: case AJ_GUIA_CATEGORIAS:
+    case AJ_ESCALA_TEXTO: case AJ_DET_ESPACO: case AJ_NT_ORDEM: case AJ_ARTE_TOM: case AJ_PALCO_FUNDO:
+    case AJ_NT_EP: case AJ_AUDIO_OFFSET:
     case AJ_EPG_PAIS: return "aj_server";
     case AJ_LIVETV_DIAG: return "aj_stethoscope";
     case AJ_LIVETV_RES: return "aj_stethoscope";
@@ -231,6 +255,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_LIVETV_FORMATO: return "aj_stethoscope";
     case AJ_LIVETV_MODO: return "aj_stethoscope";
     case AJ_LIVETV_PROXY: return "aj_stethoscope";
+    case AJ_LIVETV_SUGERIR: return "aj_layers";
     case AJ_PERFIL_ATIVO: return "aj_user-round";
     case AJ_SYNC: return "aj_cloud";
     case AJ_ADDONS: return "aj_user-round";
@@ -266,7 +291,8 @@ static const char *ajVisualIcone(int op) {
     case AJ_EM_SERVIDOR: case AJ_PX_SERVIDOR: return "aj_server";
     case AJ_EM_ENTRAR: case AJ_PX_ENTRAR: return "aj_log-in";
     case AJ_EM_SAIR: case AJ_PX_SAIR: return "aj_log-out";
-    case AJ_RESOLUCAO: return "aj_monitor-play";
+    case AJ_AMPLIACAO_ALGO: case AJ_AMPLIACAO_NITIDEZ: case AJ_HDR_INTERFACE:
+    case AJ_AMPLIAR_UI: case AJ_RESOLUCAO: return "aj_monitor-play";
     case AJ_QUALIDADE_IMG: return "aj_images";
     case AJ_NAV_RAPIDA: return "aj_zap";
     case AJ_MEDIDOR: return "aj_activity";
@@ -285,9 +311,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_ENVIAR_LOG: return "aj_send";
     case AJ_ENVIO_AUTO: return "aj_scroll-text";
     case AJ_LOG_DESTINO: return "aj_send";
-#if defined(NV_TPK) || defined(NV_ANDROID)
     case AJ_GPU_EFEITOS: return "aj_zap";
-#endif
     default: return "aj_settings-2";
   }
 }
@@ -317,7 +341,7 @@ static TxtEstilo ajEstiloPxS(float px, int forte) { return ajEstiloPx(px < 6.0f 
 // ajArte). Linha = categoria (AJS_*), coluna = o bloco (ROT) na ordem de
 // ajustes_ux_tela.inc; a coluna 0 e a imagem da categoria, e vale tambem para
 // o primeiro bloco (entrar na categoria nao troca a imagem). Nenhum indice se
-// repete: sao 39 das 40 amostras de deploy/app/art (sobra a 36).
+// repete: sao as 40 amostras de deploy/app/art.
 // -1 = a categoria nao tem esse bloco.
 #define AJ_ARTE_BLOCOS 10
 // Os blocos de "Mais opcoes" (depois do MAIS() da categoria) repetem a arte do
@@ -326,9 +350,9 @@ static const signed char AJ_ARTE_SEC[AJS_N + 1][AJ_ARTE_BLOCOS] = {
   { 18,  7, 22, 32,  7, 18, 19, -1, -1, -1 },   // Reproducao: Imagem e som, Escolha da fonte, Durante e depois, Miniatura; Mais: fonte, som e video, P2P
   { 21, 34, 24, 21, -1, -1, -1, -1, -1, -1 },   // Idiomas e legendas: Idiomas, Legenda principal, Segunda legenda; Mais: idiomas
   {  5, 28, 37, 10, -1, -1, -1, -1, -1, -1 },   // Fontes e addons: Addons, Falha na reproducao, Debrid, Servidores
-  {  2, 14, 14, -1, -1, -1, -1, -1, -1, -1 },   // TV ao vivo: Provedor, Se o canal nao abre; Mais
+  {  2, 19, 14, 14, -1, -1, -1, -1, -1, -1 },   // TV ao vivo: Contas, Guia de TV, Se o canal nao abre; Mais
   { 12,  0, 29, 20,  1, 31, 12,  0, 20,  1 },   // Tela inicial: Estilo, Fileiras, Colecoes, Continuar, Barra lateral, Escolha de perfil; Mais
-  {  9, 39, 38,  6, 11,  9, -1, -1, -1, -1 },   // Aparencia: Cores e vidro, Logo e abertura, Texto e tamanho, Movimento e relogio, Tela de descanso; Mais
+  {  9, 36, 39, 38,  6, 11,  9, -1, -1, -1 },   // Aparencia: Cores e vidro, Fileiras, Logo e abertura, Texto e tamanho, Movimento e relogio, Tela de descanso; Mais
   {  3,  4, 17,  4, 17, -1, -1, -1, -1, -1 },   // Pagina do titulo: O que aparece, Notas, Dados do titulo; Mais: notas, dados
   { 13, 35, 27, 15, 16, 13, 35, 27, 15, -1 },   // Cartazes e trailers: Cartaz em foco, Forma, Arte, Trailers, Som e imagem; Mais
   { 23, 33,  8, -1, -1, -1, -1, -1, -1, -1 },   // Conta e servicos: Perfil, Trakt e Simkl, Notificacoes

@@ -161,7 +161,7 @@ enum {
   AJC_TIT_APARECE, AJC_TIT_NOTAS, AJC_TIT_DADOS, AJC_TIT_BUSCA,
   AJC_CAR_FOCO, AJC_CAR_FORMA, AJC_CAR_ORIGEM,
   AJC_TRL_ONDE, AJC_TRL_SOM,
-  AJC_APA_VIDRO, AJC_APA_MOVIMENTO,
+  AJC_APA_VIDRO, AJC_APA_MOVIMENTO, AJC_APA_FILEIRAS,
   AJC_REP_FONTE, AJC_REP_IMAGEM, AJC_REP_DURANTE, AJC_REP_SEEKR,
   AJC_IDI_INTERFACE, AJC_IDI_FAIXAS, AJC_IDI_LEGENDA2,
   AJC_TV_PROVEDOR, AJC_TV_PROBLEMAS,
@@ -175,15 +175,17 @@ static int ajCenaSecao(int op) {
   if (ajLegendaPrincipal(op) || op == AJ_LEG1_RESTAURAR) return AJC_IDI_FAIXAS;
   if (ajLegendaSecundaria(op)) return AJC_IDI_LEGENDA2;
   switch (op) {
-    case AJ_LANDSCAPE: case AJ_HERO: case AJ_HERO_CHEIO: case AJ_HERO_CATALOGOS: case AJ_HERO_TRANSICAO: case AJ_HERO_GENERO:
+    case AJ_LANDSCAPE: case AJ_HERO: case AJ_HERO_CHEIO: case AJ_FUNDO_DIN: case AJ_FUNDO_DIN_COR: case AJ_HERO_CATALOGOS: case AJ_HERO_TRANSICAO: case AJ_HERO_GENERO:
     case AJ_HERO_SINOPSE: case AJ_HERO_NOTAS: case AJ_HERO_ANO: case AJ_HERO_DURACAO:
     case AJ_HERO_SINOPSE_TAM:
       return AJC_HOME_ESTILO;
     case AJ_FIL_ORDEM: case AJ_FIL_LIMITE: case AJ_ITENS_FILEIRA: case AJ_ESPACO_FILEIRAS: case AJ_ESPACO_TITULOS: case AJ_OCULTAR_NLANC: case AJ_NOTAS_HOME:
     case AJ_ROTULOS: case AJ_NOME_ADDON: case AJ_SUFIXO_TIPO: case AJ_SELO_VISTO: case AJ_ABAS_ESTILO:
-    case AJ_OCULTAR_FILMES_VISTOS: case AJ_AMIGOS_ESTILO:
+    case AJ_OCULTAR_FILMES_VISTOS: case AJ_BIB_HOME: case AJ_AMIGOS_ESTILO:
     case AJ_SUFIXO_ESTILO: case AJ_ROTULO_POS: case AJ_LOGO_CARDS:
       return AJC_HOME_FILEIRAS;
+    case AJ_TITULO_FIL: case AJ_PALCO_FUNDO:
+      return AJC_APA_FILEIRAS;
     case AJ_MENU_TOPO: case AJ_RAIL_MODERNA: case AJ_RAIL: case AJ_MENU_EXPLORAR: case AJ_MENU_GUIA: case AJ_MENU_AGENDA:
     case AJ_MENU_PERFIL: case AJ_RAIL_BLUR: case AJ_DESCOBRIR: case AJ_MIC_BUSCA:
       return AJC_HOME_BARRA;
@@ -200,7 +202,7 @@ static int ajCenaSecao(int op) {
     case AJ_TMDB_MAIS: case AJ_TMDB_COL: case AJ_TMDB_CW: case AJ_DET_META_EXT: case AJ_DET_SO_CINEMETA:
       return AJC_TIT_DADOS;
     case AJ_BUSCA_CINEMETA: case AJ_BUSCA_NUVIO: case AJ_BUSCA_ORIGEM: return AJC_TIT_BUSCA;
-    case AJ_EXPANDIR: case AJ_EXPANDIR_ATRASO: case AJ_BORDA_FOCO: case AJ_GRAD_CLASSICO: return AJC_CAR_FOCO;
+    case AJ_EXPANDIR: case AJ_EXPANDIR_ATRASO: case AJ_BORDA_FOCO: case AJ_GRAD_CLASSICO: case AJ_MENU_CARTAZ: return AJC_CAR_FOCO;
     case AJ_PROF: case AJ_PROF_BORDA: case AJ_PROF_BRILHO: case AJ_PROF_COBERTURA: case AJ_PROF_POSTERS:
     case AJ_PROF_CW: case AJ_PROF_EPS: case AJ_PROF_ELENCO: case AJ_PROF_TRAILERS:
       return AJC_CAR_FORMA;
@@ -211,11 +213,13 @@ static int ajCenaSecao(int op) {
       return AJC_CAR_ORIGEM;
     case AJ_HERO_TRAILER: case AJ_FOCO_TRAILER: case AJ_DET_TRAILER_AUTO: case AJ_DET_TRAILER: return AJC_TRL_ONDE;
     case AJ_HERO_TRAILER_SOM: case AJ_DET_TRAILER_SOM: case AJ_TRAILER_FONTE: case AJ_HERO_TRAILER_ESPERA:
-    case AJ_TRAILER_QUAL: case AJ_TRAILER_ASPECTO: case AJ_TRAILER_ZOOM_TPK: case AJ_LOGO_TRAILER:
+    case AJ_TRAILER_QUAL: case AJ_TRAILER_ASPECTO: case AJ_TRAILER_ZOOM_TPK: case AJ_LOGO_TRAILER:  case AJ_TRAILER_AUDIO:
       return AJC_TRL_SOM;
-    case AJ_VIDRO: case AJ_VIDRO_CONTORNO: case AJ_VIDRO_OPAC: case AJ_VIDRO_FOSCO: return AJC_APA_VIDRO;
+    case AJ_VIDRO: case AJ_VIDRO_CONTORNO: case AJ_FOCO_ACENTO: case AJ_VIDRO_OPAC: case AJ_VIDRO_FOSCO: case AJ_VIDRO_QUALIDADE: return AJC_APA_VIDRO;
     case AJ_ANIM: case AJ_RELOGIO: case AJ_RELOGIO_12H: return AJC_APA_MOVIMENTO;
     case AJ_FONTE_MANUAL: case AJ_FONTE_AUTO: case AJ_FONTE_REPOR: case AJ_FONTE_PRIORIDADE: case AJ_FONTE_TOCAR_CONFERINDO: case AJ_FONTE_AQUECER: case AJ_FONTE_CONFERIR_VARIAS: case AJ_FONTE_PREPARAR: case AJ_FONTE_PRECARREGAR:
+    case AJ_FONTE_GRUPO: case AJ_FONTE_GRUPO_SESSOES:
+    case AJ_LINK_REUSAR: case AJ_LINK_PRAZO:
     case AJ_FONTE_PRAZO: case AJ_FONTE_TEXTO: case AJ_FONTE_ORDEM_ADDON: case AJ_TAM_MAX: case AJ_TAM_MIN: case AJ_SELOS_CORES: case AJ_SELOS_PACOTE: case AJ_SELOS_PACOTE_ADD:
     case AJ_FONTE_ESCOPO: case AJ_FONTE_ADDONS_PERM: case AJ_FONTE_PLUGINS_PERM: case AJ_FONTE_OUTROS:
     case AJ_FONTE_REGEX: case AJ_FONTE_REGEX_PADRAO: case AJ_FONTE_REGEX_MODELO:
@@ -224,8 +228,8 @@ static int ajCenaSecao(int op) {
       return AJC_REP_FONTE;
     // 2.0.3: HDR e Dolby Vision mora em Imagem e som.
     case AJ_FONTE_HDR:
-    case AJ_QUALIDADE: case AJ_DV: case AJ_DV_MKV: case AJ_ATMOS: case AJ_DTS_AC3: case AJ_CACHE_SEEK: case AJ_BUFFER: return AJC_REP_IMAGEM;
-    case AJ_PAUSA_OVERLAY: case AJ_PLR_CLASSIF: case AJ_TELA_ABERTURA: case AJ_ABERTURA_ADDON: case AJ_ABERTURA_FUNDO: case AJ_ESTAT_TAMANHO: case AJ_ESTAT_LADO: case AJ_PULAR_ABERTURA: case AJ_PULAR_RESUMO: case AJ_PULAR_CREDITOS: case AJ_PROXIMO_AUTO: case AJ_PROXIMO_CONTAGEM: case AJ_REACAO_CREDITOS: case AJ_SAIDA_PLAYER: case AJ_MANTER_VIDEO: case AJ_RETOMADA_MORNA: case AJ_MANTER_PRAZO: case AJ_PROPORCAO_PADRAO: return AJC_REP_DURANTE;
+    case AJ_AUDIO_OFFSET: case AJ_QUALIDADE: case AJ_DV: case AJ_DV_MKV: case AJ_ATMOS: case AJ_DTS_AC3: case AJ_CACHE_SEEK: case AJ_BUFFER: case AJ_PLAYER_EXTERNO: case AJ_PLAYER_ANIME: return AJC_REP_IMAGEM;
+    case AJ_PAUSA_OVERLAY: case AJ_PLR_CLASSIF: case AJ_TELA_ABERTURA: case AJ_ABERTURA_ADDON: case AJ_ABERTURA_FUNDO: case AJ_ABERTURA_ESTILO: case AJ_ESTAT_TAMANHO: case AJ_ESTAT_LADO: case AJ_PULAR_ABERTURA: case AJ_PULAR_RESUMO: case AJ_PULAR_CREDITOS: case AJ_PROXIMO_AUTO: case AJ_PROXIMO_CONTAGEM: case AJ_REACAO_CREDITOS: case AJ_SAIDA_PLAYER: case AJ_MANTER_VIDEO: case AJ_RETOMADA_MORNA: case AJ_MANTER_PRAZO: case AJ_PROPORCAO_PADRAO: return AJC_REP_DURANTE;
     case AJ_SEEKR_LIGADO: case AJ_SEEKR_CHAVE: case AJ_SEEKR_TESTAR: case AJ_SEEKR_FITA: case AJ_SEEKR_AJUSTE:
       return AJC_REP_SEEKR;
     case AJ_IDIOMA: case AJ_TMDB_IDIOMA: return AJC_IDI_INTERFACE;
@@ -234,11 +238,15 @@ static int ajCenaSecao(int op) {
     case AJ_LEG_CONTORNO_COR:
       return AJC_IDI_LEGENDA2;
     case AJ_XTREAM_SERVIDOR: case AJ_XTREAM_USUARIO: case AJ_XTREAM_SENHA: case AJ_XTREAM_CONTA:
-    case AJ_XTREAM_LIMPAR: case AJ_STALKER_PORTAL: case AJ_STALKER_MAC: case AJ_STALKER_LIMPAR: case AJ_EPG_PAIS:
+    case AJ_GUIA_FONTE: case AJ_GUIA_RECARREGAR: case AJ_M3U_URL: case AJ_M3U_EPG: case AJ_M3U_LIMPAR:
+    case AJ_XTREAM_CONEXOES: case AJ_XTREAM_LIMPAR: case AJ_STALKER_PORTAL: case AJ_STALKER_MAC: case AJ_STALKER_LIMPAR: case AJ_EPG_PAIS:
+    case AJ_URL_LISTA: case AJ_URL_M3U_ADD: case AJ_URL_XMLTV_ADD: case AJ_URL_REM:
       return AJC_TV_PROVEDOR;
     case AJ_LIVETV_DIAG: case AJ_LIVETV_RES: case AJ_LIVETV_ESPERA: case AJ_LIVETV_FORMATO: case AJ_LIVETV_MODO:
     case AJ_LIVETV_PROXY:
       return AJC_TV_PROBLEMAS;
+    case AJ_LIVETV_SUGERIR:
+      return AJC_TV_PROVEDOR;
     case AJ_PERFIL_ATIVO: case AJ_SYNC:
     case AJ_PERFIL_PESQ: case AJ_PERFIL_EDITAR: case AJ_SAIR:
       return AJC_CON_PERFIS;
@@ -252,7 +260,7 @@ static int ajCenaSecao(int op) {
     case AJ_JF_LIGADO: case AJ_JF_SERVIDOR: case AJ_JF_ENTRAR: case AJ_JF_SAIR: case AJ_EM_SERVIDOR:
     case AJ_EM_ENTRAR: case AJ_EM_SAIR: case AJ_PX_ENTRAR: case AJ_PX_SERVIDOR: case AJ_PX_SAIR:
       return AJC_CON_SERVIDORES;
-    case AJ_RESOLUCAO: case AJ_QUALIDADE_IMG: case AJ_GPU_EFEITOS: case AJ_NAV_RAPIDA: return AJC_DES_TELA;
+case AJ_AMPLIAR_UI: case AJ_AMPLIACAO_ALGO: case AJ_AMPLIACAO_NITIDEZ: case AJ_HDR_INTERFACE: case AJ_RESOLUCAO: case AJ_QUALIDADE_IMG: case AJ_GPU_EFEITOS: case AJ_NAV_RAPIDA: return AJC_DES_TELA;
     case AJ_MEDIDOR: case AJ_DIAGNOSTICO: case AJ_VELOCIDADE: return AJC_DES_DIAG;
     case AJ_GUIA: return AJC_SOB_GUIA;
     case AJ_VERSAO_I: case AJ_ATUALIZAR: return AJC_SOB_APP;
@@ -787,7 +795,7 @@ static void ajcRepFonte(int A) {
   static const char *const ADD[4] = { "Torrentio", "AIOStreams", "Comet", "MediaFusion" };
   static const char *const SEL[4][4] = { { "r-4k", "v-dv", "a-atmos", "q-remux" }, { "r-4k", "v-hdr10", "a-ddp", "q-webdl" },
                                          { "r-1080", "v-sdr", "a-dd", "q-bluray" }, { "r-720", "a-dd", NULL, NULL } };
-  int i, k, cores = lig(AJ_SELOS_CORES), auto_ = valor[AJ_FONTE_AUTO] == 0;
+  int i, k, cores = lig(AJ_SELOS_CORES), auto_ = !ajustes_fonte_primeira();
   ajCenaArte(ajArte(AJA_FUNDO, A), (GfxRect){ ajc.x, ajc.y, 640 * ajc.s, ajc.h }, 22, 0.3f);
   gfx_veu_css((GfxRect){ ajc.x, ajc.y, 640 * 0.5f * ajc.s, ajc.h }, 2, 0, 1.0f, 0.8f);
   if (ajLogo(ajArte(AJA_LOGO, A), CX(28), CY(40), 170 * ajc.s, 54 * ajc.s, 1) <= 0) ajcTxt(ajTituloN(A), 18, 1, 28, 54, 180, 1);
@@ -1317,7 +1325,7 @@ static float ajSecaoDesenhar(int cena, int op, float x, float y, float w) {
   gfx_recorte(x, y, w, ajc.h);
   switch (cena) {
     case AJC_HOME_ESTILO: ajcHomeEstilo(A); break;
-    case AJC_HOME_FILEIRAS: ajcHomeFileiras(A); break;
+    case AJC_HOME_FILEIRAS: case AJC_APA_FILEIRAS: ajcHomeFileiras(A); break;
     case AJC_HOME_BARRA: ajcHomeBarra(A); break;
     case AJC_HOME_PERFIL: ajcHomePerfil(A); break;
     case AJC_TIT_APARECE: ajcTitAparece(A); break;

@@ -1,6 +1,7 @@
 // Ciclo real do job manual: baixar -> resolver -> primeiro quadro -> limpar.
 #define SDL_MAIN_HANDLED
 #include "../src/app.c"
+#include "stub_m3u.h"
 #include "fontesmortas.h"
 #include <assert.h>
 

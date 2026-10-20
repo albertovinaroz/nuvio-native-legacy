@@ -14,6 +14,7 @@ void biblioteca_evento(const SDL_Event *e);
 void biblioteca_atualizar(float dt, Uint32 agora);
 void biblioteca_desenhar(Uint32 agora);
 int  biblioteca_quer_sair(void);   // 1 quando o Back deve fechar a tela
+int  biblioteca_pediu_relogio(void);
 void biblioteca_encerrar(void);
 
 // OK pressionado sobre um poster: consome o pedido e devolve 1, escrevendo em

@@ -54,9 +54,11 @@ static char token[300], refresh[300];
 // 1 quando o carregar achou o access token vencido no papel mas com refresh
 // valido: a renovacao sai no primeiro passo, sem esperar o primeiro 401 e sem
 // gastar as chamadas do ciclo de descoberta com uma credencial morta.
-static int renovacaoPend;
+static int renovacaoPend, desconectado;
 static unsigned pollMs = TRA_POLL_PADRAO;
 static unsigned proximoPoll, comecouMs, limiteMs;
+static unsigned esperaMs, retomarEm, recuoMs = TRA_POLL_PADRAO;
+static int esperaArmada;
 // Prazo em RELOGIO DE PAREDE, nao em ticks: o pedido tem de sobreviver a um
 // reinicio do app, e SDL_GetTicks zera junto com o processo.
 static long expiraEm;
@@ -107,14 +109,23 @@ static int mesmaConta(const char *usuario) {
   return !strcmp(usuario, atual);
 }
 
-static char *postar(const char *caminho, const char *corpo, int *status) {
+// The worker records a delay; the frame loop starts it after the response.
+static void esperar429(int segundos) {
+  unsigned ms = segundos > 0 ? (unsigned)(segundos > 2147483 ? 2147483 : segundos) * 1000u : 0;
+  if (recuoMs < pollMs) recuoMs = pollMs;
+  if (recuoMs < 60000u) recuoMs *= 2;
+  if (recuoMs > 60000u) recuoMs = 60000u;
+  esperaMs = ms > recuoMs ? ms : recuoMs;
+}
+
+static char *postar(const char *caminho, const char *corpo, int *status, int *retry) {
   char completo[300];
   const char *cab[2];
   snprintf(completo, sizeof completo, "%s%s", TRA_BASE, caminho);
   // O Trakt exige o cabecalho de versao da API; sem ele responde 412.
   cab[0] = "trakt-api-version: 2";
   cab[1] = NULL;
-  return rede_postar_st(completo, 20, cab, corpo, status);
+  return rede_postar_st_retry(completo, 20, cab, corpo, status, retry);
 }
 
 // ---------------------------------------------------------------- disco
@@ -202,10 +213,12 @@ static void zerarEstado(void) {
   expiraEm = 0;
   criadoEm = expiraSeg = 0;
   pushPendente = 0;
-  renovacaoPend = 0;
+  renovacaoPend = desconectado = 0;
   tokenNovo = 0;
   comecouMs = 0;
-  pollMs = TRA_POLL_PADRAO;
+  pollMs = recuoMs = TRA_POLL_PADRAO;
+  esperaMs = retomarEm = proximoPoll = 0;
+  esperaArmada = 0;
   estado = TRA_PARADO;
 }
 
@@ -216,6 +229,7 @@ int traktauth_carregar(void) {
   migrarLegado();
   b = dados_ler(arqToken(perfil).s);
   if (!b) goto fluxo;
+  if (!strcmp(b, "!")) { desconectado = 1; free(b); return 0; }
   { char *fim = b + strlen(b);
     while (fim > b && (fim[-1] == '\n' || fim[-1] == '\r')) *--fim = 0; }
   { int i; col[0] = b;
@@ -304,6 +318,20 @@ int traktauth_trocar_perfil(int p) {
 
 int traktauth_perfil(void) { return perfil; }
 
+int traktauth_desconectado(void) { return desconectado; }
+
+void traktauth_desconectar(void) {
+  pthread_mutex_lock(&trava);
+  geracao++;
+  pushGeracaoAtual++;
+  zerarEstado();
+  desconectado = 1;
+  dados_gravar(arqToken(perfil).s, "!"); // Persist local opt-out from account sync.
+  dados_apagar(arqFluxo(perfil).s);
+  pthread_mutex_unlock(&trava);
+  trakt_esquecer();
+}
+
 void traktauth_esquecer(void) {
   int p;
   pthread_mutex_lock(&trava);
@@ -324,13 +352,19 @@ void traktauth_esquecer(void) {
 
 // 1 quando o fio ainda fala pelo perfil em vigor. Chamar com a trava.
 static int fioAtual(void) { return gerFio == geracao; }
+static int fioDesconectado(void) {
+  char *b = dados_ler(arqToken(perfilFio).s);
+  int saiu = !fioAtual() && b && !strcmp(b, "!");
+  free(b);
+  return saiu;
+}
 
 // ---------------------------------------------------------------- fluxo
 
 static void *fioPedir(void *u) {
   Jsw w;
   char *r;
-  int st = 0;
+  int st = 0, retry = 0;
   char dc[128] = "", uc[32] = "", vu[160] = "";
   unsigned novoPoll = 0, novoLimite = 600000u;
   (void)u;
@@ -352,7 +386,7 @@ static void *fioPedir(void *u) {
   jsw_obj_ini(&w);
   jsw_cs(&w, "client_id", nuvem_trakt_cliente());
   jsw_obj_fim(&w);
-  r = postar("/oauth/device/code", jsw_texto_final(&w), &st);
+  r = postar("/oauth/device/code", jsw_texto_final(&w), &st, &retry);
   jsw_livre(&w);
 
   if (r && st >= 200 && st < 300) {
@@ -382,9 +416,11 @@ static void *fioPedir(void *u) {
   if (novoPoll) pollMs = novoPoll;
   limiteMs = novoLimite;
   if (!deviceCode[0] || !userCode[0]) {
-    if (st == 429) snprintf(erro, sizeof erro, "o Trakt pediu para esperar; tente daqui a pouco");
-    else snprintf(erro, sizeof erro, i18n("nao consegui pedir o codigo ao Trakt (HTTP %d)"), st);
-    estado = TRA_ERRO;
+    if (st == 429) { esperar429(retry); estado = TRA_PEDINDO; }
+    else {
+      snprintf(erro, sizeof erro, i18n("nao consegui pedir o codigo ao Trakt (HTTP %d)"), st);
+      estado = TRA_ERRO;
+    }
   } else {
     if (!url[0]) snprintf(url, sizeof url, "https://trakt.tv/activate");
     expiraEm = (long)time(NULL) + (long)(limiteMs / 1000u);
@@ -400,7 +436,7 @@ static void *fioPedir(void *u) {
 static void *fioPoll(void *u) {
   Jsw w;
   char *r;
-  int st = 0;
+  int st = 0, retry = 0;
   (void)u;
 
   jsw_iniciar(&w);
@@ -409,7 +445,7 @@ static void *fioPoll(void *u) {
   jsw_cs(&w, "client_id", nuvem_trakt_cliente());
   jsw_cs(&w, "client_secret", nuvem_trakt_segredo());
   jsw_obj_fim(&w);
-  r = postar("/oauth/device/token", jsw_texto_final(&w), &st);
+  r = postar("/oauth/device/token", jsw_texto_final(&w), &st, &retry);
   jsw_livre(&w);
 
   pthread_mutex_lock(&trava);
@@ -418,6 +454,9 @@ static void *fioPoll(void *u) {
     free(r);
     fioPronto = 1;
     return NULL;
+  }
+  if (fioDesconectado()) {
+    pthread_mutex_unlock(&trava); free(r); fioPronto = 1; return NULL;
   }
   if (!fioAtual()) {
     // O perfil mudou com o poll no ar. Autorizado: o vinculo e do perfil que
@@ -460,11 +499,10 @@ static void *fioPoll(void *u) {
       estado = TRA_ERRO;
     }
   } else if (st == 400) {
+    recuoMs = TRA_POLL_PADRAO;
     /* ainda nao autorizado: seguir perguntando */
   } else if (st == 429) {
-    // O Trakt mandou ir mais devagar. Subir o intervalo, com teto.
-    pollMs += 5000u;
-    if (pollMs > 60000u) pollMs = 60000u;
+    esperar429(retry);
   } else if (st == 409) {
     snprintf(erro, sizeof erro, "este código já foi usado");
     esquecerFluxo();
@@ -517,7 +555,7 @@ static void empurrarParaConta(void) {
 static void *fioRenovar(void *u) {
   Jsw w;
   char *r;
-  int st = 0;
+  int st = 0, retry = 0;
   (void)u;
   jsw_iniciar(&w);
   jsw_obj_ini(&w);
@@ -527,7 +565,7 @@ static void *fioRenovar(void *u) {
   jsw_cs(&w, "redirect_uri", "urn:ietf:wg:oauth:2.0:oob");
   jsw_cs(&w, "grant_type", "refresh_token");
   jsw_obj_fim(&w);
-  r = postar("/oauth/token", jsw_texto_final(&w), &st);
+  r = postar("/oauth/token", jsw_texto_final(&w), &st, &retry);
   jsw_livre(&w);
 
   pthread_mutex_lock(&trava);
@@ -536,6 +574,9 @@ static void *fioRenovar(void *u) {
     free(r);
     fioPronto = 1;
     return NULL;
+  }
+  if (fioDesconectado()) {
+    pthread_mutex_unlock(&trava); free(r); fioPronto = 1; return NULL;
   }
   if (!fioAtual()) {
     // Renovacao do perfil ANTERIOR. O refresh velho morreu nesta resposta, entao
@@ -573,6 +614,8 @@ static void *fioRenovar(void *u) {
       snprintf(erro, sizeof erro, "a renovacao veio sem token");
       estado = TRA_INVALIDO; trakt_sessao_morta();
     }
+  } else if (st == 429) {
+    esperar429(retry);
   } else if (st == 400 || st == 401 || st == 403 || st == 404) {
     // invalid_grant: o refresh tambem morreu — so re-pareando.
     snprintf(erro, sizeof erro, "%s",
@@ -607,7 +650,7 @@ void traktauth_comecar(void) {
   comecouMs = 0;
   pollMs = TRA_POLL_PADRAO;
   estado = TRA_PEDINDO;
-  soltar(fioPedir);
+  if (!esperaMs && !esperaArmada) soltar(fioPedir);
 }
 
 void traktauth_passo(unsigned agoraMs) {
@@ -623,6 +666,14 @@ void traktauth_passo(unsigned agoraMs) {
     } }
   if (fioVivo && fioPronto) { fioVivo = 0; fioPronto = 0; }
   if (fioVivo) return;
+  if (esperaMs) {
+    retomarEm = agoraMs + esperaMs;
+    esperaMs = 0; esperaArmada = 1;
+  }
+  if (esperaArmada) {
+    if ((int)(agoraMs - retomarEm) < 0) return;
+    esperaArmada = 0;
+  }
   // PEDINDO sem fio no ar: o pedido foi feito enquanto um fio do perfil
   // anterior ainda respondia, e soltar() recusou. Sai agora.
   if (estado == TRA_PEDINDO) { soltar(fioPedir); return; }
@@ -664,6 +715,7 @@ void traktauth_passo(unsigned agoraMs) {
   // Aplicar o token no LACO PRINCIPAL, nunca no fio: trakt.c e lido pela UI.
   if (tokenNovo) {
     tokenNovo = 0;
+    desconectado = 0;
     renovacaoPend = 0;
     trakt_definir(token, nuvem_trakt_cliente());
     pushPendente = 1;
@@ -700,4 +752,5 @@ void traktauth_cancelar(void) {
 TraEstado   traktauth_estado(void) { return estado; }
 const char *traktauth_codigo(void) { return userCode; }
 const char *traktauth_url(void)    { return url; }
-const char *traktauth_erro(void)   { return erro; }
+int traktauth_aguardando(void) { return esperaMs || esperaArmada; }
+const char *traktauth_erro(void)   { return traktauth_aguardando() ? i18n("Não foi possível agora. Tente novamente.") : erro; }

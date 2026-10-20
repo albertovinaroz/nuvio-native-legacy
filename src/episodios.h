@@ -64,6 +64,8 @@ int  episodios_menu_painel(void);
 int   episodios_menu_caixa(GfxRect *r);
 float episodios_menu_anim(void);
 int   episodios_menu_foco(void);
+int episodios_menu_trocou(int *temporada,int *episodio);
+float episodios_menu_transicao(int *direcao);
 // 1 com o menu aberto no modo temporada (para teste).
 int  episodios_menu_modo_temporada(void);
 // O lote que "temporada inteira" aplica: catalogo + mapa, sem o que nao foi ao

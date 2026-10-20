@@ -50,6 +50,9 @@ static void fluxo_anel(GfxRect r, float raio, float esp, float cr, float cg, flo
 #define desc_vertudo_erro shot_error
 #define desc_vertudo_mais shot_more
 #define desc_vertudo_filtro_desde shot_filter_from
+#define desc_vertudo_fonte_desde shot_provider_from
+#define desc_chave_tmdb shot_tmdb_key
+#define nuvem_trakt_cliente shot_trakt_client
 #define desc_vertudo_pagina shot_page
 #define desc_colecao_inicial shot_collection
 #define fundo_desenhar_modo shot_background
@@ -65,6 +68,7 @@ static void fluxo_anel(GfxRect r, float raio, float esp, float cr, float cg, flo
 #undef desc_vertudo_n_bruto
 #undef desc_vertudo_item_bruto
 #include <assert.h>
+#include "perfis.h"
 
 void shot_background(int mode, GfxRect area, float radius, const char *url, float a) {
   (void)mode; (void)area; (void)radius; (void)url; (void)a;
@@ -78,13 +82,24 @@ int shot_loading(void) { return loading; }
 int shot_end(void) { return exhausted; }
 int shot_error(void) { return 0; }
 void shot_more(void) { moreCalls++; pedidosPagina++; loading = 1; }
-static int openedSources, resumedPage;
+static int openedSources, resumedPage, openedProviderSources;
+static char openedBase[NV_ADDON_URL_MAX], openedType[8], openedId[96], openedGenre[96];
+static ColSource openedProvider;
 int shot_page(void) { return 300; }
 void shot_filter_from(const char *base, const char *type, const char *id,
                       const char *genre, int page) {
-  (void)base; (void)type; (void)id; (void)genre;
+  snprintf(openedBase, sizeof openedBase, "%s", base);
+  snprintf(openedType, sizeof openedType, "%s", type);
+  snprintf(openedId, sizeof openedId, "%s", id);
+  snprintf(openedGenre, sizeof openedGenre, "%s", genre);
   openedSources++; resumedPage = page; loading = 1;
 }
+void shot_provider_from(const ColSource *s, int page) {
+  assert(s);
+  openedProvider = *s; openedProviderSources++; resumedPage = page; loading = 1;
+}
+const char *shot_tmdb_key(void) { return "collection-test-key"; }
+const char *shot_trakt_client(void) { return "collection-test-client"; }
 #undef txt_linha_corta
 TxtLinha shot_text(TxtEstilo style, const char *s, int r, int g, int b, int a, float width) {
   if (!strcmp(s, i18n("Nenhum título nesta lista."))) emptyTexts++;
@@ -190,6 +205,161 @@ static int sobrepoe(int a, int b) {
 static ColFolder pasta;
 static ColSource fontes[2];
 
+// #549: a ultima coluna e uma acao, fora dos buffers e indices dos titulos.
+static void verTudoPreparar(int limite, int provedor) {
+  vitCancelar();
+  free(vitBuf);
+  vitBuf = calloc((size_t)VIT_LIN_MAX * VIT_ITENS, sizeof *vitBuf);
+  assert(vitBuf);
+  vitCap = limite;
+  memset(&pasta, 0, sizeof pasta); memset(fontes, 0, sizeof fontes);
+  snprintf(pasta.id, sizeof pasta.id, "showcase549");
+  snprintf(pasta.title, sizeof pasta.title, "Showcase");
+  snprintf(pasta.group, sizeof pasta.group, "Film Collections");
+  pasta.sources = fontes; pasta.nSources = 2;
+  for (int r = 0; r < 2; r++) {
+    snprintf(fontes[r].title, sizeof fontes[r].title, "Popular");
+    snprintf(fontes[r].base, sizeof fontes[r].base, "https://source.invalid/%d", r);
+    snprintf(fontes[r].addonId, sizeof fontes[r].addonId, "addon%d", r);
+    snprintf(fontes[r].type, sizeof fontes[r].type, "movie");
+    snprintf(fontes[r].catId, sizeof fontes[r].catId, "source%d", r);
+    snprintf(fontes[r].genre, sizeof fontes[r].genre, "Science Fiction");
+  }
+  if (provedor) {
+    fontes[1].base[0] = 0;
+    snprintf(fontes[1].prov, sizeof fontes[1].prov, "tmdb");
+    snprintf(fontes[1].tmdbTipo, sizeof fontes[1].tmdbTipo, "COMPANY");
+    fontes[1].tmdbId = 42; fontes[1].traktLista = 1234;
+    snprintf(fontes[1].midia, sizeof fontes[1].midia, "MOVIE");
+    snprintf(fontes[1].ordenar, sizeof fontes[1].ordenar, "popularity.desc");
+    snprintf(fontes[1].ordem, sizeof fontes[1].ordem, "desc");
+    snprintf(fontes[1].filtros, sizeof fontes[1].filtros, "{\"language\":\"en\",\"year\":2025}");
+  }
+  collection = &pasta; source = 0; aberta = 1; tabFocus = 0;
+  lay = layEscolha = VT_LAY_VITRINE; semVitrineAuto = 0;
+  hideWatched = allWatched = watchedOlder = semFonte = loading = 0;
+  exhausted = 1; ddAberto = exibAberta = 0; pedAbrir = -1;
+  vitIniciar();
+  assert(!strcmp(vitLin[0].nome, vitLin[1].nome));   // voltar usa a identidade, nao este rotulo repetido
+  for (int r = 0; r < 2; r++) {
+    vitLin[r].n = vitLin[r].brutoN = limite; vitLin[r].estado = VIT_PRONTA;
+    vitLin[r].mais = 1;
+    for (int c = 0; c < limite; c++) {
+      CatItem *it = &vitBuf[r * vitCap + c];
+      memset(it, 0, sizeof *it);
+      snprintf(it->imdb, sizeof it->imdb, "tt549%d%02d", r, c);
+      snprintf(it->tipo, sizeof it->tipo, "movie");
+      snprintf(it->titulo, sizeof it->titulo, "Title %d/%d", r, c);
+      vitVis[r][c] = (short)c;
+    }
+  }
+  vitCarga = vitN; vitOcultar = hideWatched; vitProjetoSujo = 0;
+}
+
+static void vitrineVerTudo(void) {
+  for (int fraca = 0; fraca < 2; fraca++) {
+    int limite = fraca ? VIT_ITENS_FRACA : VIT_ITENS;
+    verTudoPreparar(limite, 0);
+    gravarEscolha(&pasta, VT_LAY_VITRINE);
+    char *antes = dados_ler(arquivoEscolha()); assert(antes);
+    assert(vitTemVerTudo(1) && vitColunas(1) == limite + 1);
+    assert(vitItem(1, limite) == NULL);   // a acao nao e um titulo no buffer
+    vitFR = 1; vitFC = limite - 1; tabFocus = 0;
+    tecla(SDLK_RIGHT); assert(vitFC == limite);
+    tecla(SDLK_RIGHT); assert(vitFC == limite);   // sem atravessar a borda
+    int pedidos = openedSources;
+    tecla(SDLK_RETURN);
+    assert(lay == VT_LAY_GRADE && source == 0 && pedAbrir == -1);
+    assert(collection->nSources == 1 && !memcmp(collection->sources, &fontes[1], sizeof fontes[1]));
+    SDL_Event repetiu = {0}; repetiu.type = SDL_KEYDOWN; repetiu.key.keysym.sym = SDLK_RETURN;
+    repetiu.key.repeat = 1; vertudo_evento(&repetiu);
+    repetiu.key.repeat = 0; vertudo_evento(&repetiu);
+    assert(pedAbrir == -1 && lay == VT_LAY_GRADE);   // segurar OK nao abre o primeiro titulo
+    repetiu.type = SDL_KEYUP; vertudo_evento(&repetiu);
+    assert(openedSources == pedidos + 1 && !strcmp(openedBase, fontes[1].base));
+    assert(!strcmp(openedType, fontes[1].type) && !strcmp(openedId, fontes[1].catId));
+    assert(!strcmp(openedGenre, fontes[1].genre));
+    assert(escolhaGravada(&pasta) == VT_LAY_VITRINE);
+    tecla(SDLK_ESCAPE);
+    assert(aberta && lay == VT_LAY_VITRINE && vitFR == 1 && vitFC == limite);
+    assert(openedSources == pedidos + 1);   // voltar conserva a previa recebida
+    char *depois = dados_ler(arquivoEscolha()); assert(depois && !strcmp(antes, depois));
+    free(antes); free(depois);
+
+    // O endereco da fonte completa inclui o provedor e todos os seus filtros.
+    verTudoPreparar(limite, 1);
+    ColSource esperada = fontes[1]; int pedidosProv = openedProviderSources;
+    vitAbrirTudo(1);
+    assert(lay == VT_LAY_GRADE && source == 0 && pedAbrir == -1);
+    assert(openedProviderSources == pedidosProv + 1 && !memcmp(&openedProvider, &esperada, sizeof esperada));
+    escolherExibicao(VT_LAY_MURAL);
+    assert(lay == VT_LAY_MURAL && escolhaGravada(&pasta) == VT_LAY_VITRINE);
+    escolherExibicao(VT_LAY_VITRINE);   // volta ao pai, nao abre outra Vitrine dentro dele
+    assert(lay == VT_LAY_VITRINE && aberta);
+  }
+
+  // Uma fonte: a fileira e um grupo, nao o indice de uma fonte inexistente.
+  for (int tipos = 0; tipos < 2; tipos++) {
+    verTudoPreparar(VIT_ITENS, 0);
+    pasta.nSources = 1; vitIniciar(); loading = 0;
+    nSemente = 80;
+    for (int i = 0; i < nSemente; i++) {
+      memset(&semente[i], 0, sizeof semente[i]);
+      snprintf(semente[i].imdb, sizeof semente[i].imdb, "tt549-group-%d", i);
+      snprintf(semente[i].tipo, sizeof semente[i].tipo, "%s", tipos && (i & 1) ? "series" : "movie");
+      snprintf(semente[i].meta, sizeof semente[i].meta, "%d", i & 1 ? 2024 : 2015);
+    }
+    vitAgrupar(nSemente); vitProjetar();
+    assert(vitN == 2 && vitLin[1].n == VIT_ITENS && vitTemVerTudo(1));
+    vitFR = 1; vitFC = vitLin[1].n; tabFocus = 0;
+    vitAbrirTudo(1);
+    assert(lay == VT_LAY_GRADE && source == 0 && nItens() == 40 && pedAbrir == -1);
+    for (int i = 0; i < 40; i++) {
+      CatItem it;
+      assert(viewItem(i, &it));
+      // Decada 2010 = indices pares; Series = impares. A ordem da fonte
+      // continua intacta, inclusive para os titulos alem da previa de 20.
+      assert(!strcmp(it.imdb, semente[i * 2 + tipos].imdb));
+    }
+    tecla(SDLK_ESCAPE);
+    assert(aberta && lay == VT_LAY_VITRINE && vitFR == 1 && vitFC == VIT_ITENS);
+  }
+  verTudoPreparar(VIT_ITENS, 0);
+  int pedidos = openedSources;
+  snprintf(fontes[1].genre, sizeof fontes[1].genre, "Changed after rendering");
+  assert(!vitAbrirTudo(1) && openedSources == pedidos && lay == VT_LAY_VITRINE);
+
+  // The real collection store replaces/frees its source block while grid is open.
+  verTudoPreparar(VIT_ITENS, 0);
+  assert(col_extra_definir(&pasta, 1) == 1);
+  collection = col_folder(col_n() - 1); assert(collection);
+  vitColecoesRev = col_revisao();
+  assert(vitAbrirTudo(1));
+  ColFolder changed = pasta; changed.nSources = 1;
+  snprintf(changed.title, sizeof changed.title, "Updated Showcase");
+  assert(col_extra_definir(&changed, 1) == 1);
+  assert(collection == &vitTudoPasta && !strcmp(collection->sources[0].catId, "source1"));
+  tecla(SDLK_ESCAPE);
+  assert(aberta && !vitTudo && collection->nSources == 1);
+  assert(!strcmp(titulo, "Updated Showcase") && source == 0);
+  assert(vitN == 0 && vitLin[1].n == 0); // replaced sources cannot retain old rows
+
+  verTudoPreparar(VIT_ITENS, 0);
+  assert(col_extra_definir(&pasta, 1) == 1);
+  collection = col_folder(col_n() - 1); vitColecoesRev = col_revisao();
+  assert(vitAbrirTudo(1));
+  assert(col_extra_definir(NULL, 0) == 0);
+  tecla(SDLK_ESCAPE);
+  assert(!aberta && !vitTudo);
+
+  verTudoPreparar(VIT_ITENS, 0);
+  assert(vitAbrirTudo(1));
+  perfis_definir_ativo(perfis_ativo() == 1 ? 2 : 1);
+  vertudo_atualizar(1.0f / 60.0f, 30000);
+  assert(!aberta && !vitTudo);
+  puts("See all: Back, collection replacement/removal and profile switch pass");
+}
+
 int main(int argc, char **argv) {
   int L, i, j;
   char dir[600];
@@ -236,7 +406,8 @@ int main(int argc, char **argv) {
     assert(celN == nSemente);
     for (i = 0; i < nSemente; i++) {
       assert(celX[i] >= 0.0f && celY[i] >= 0.0f);
-      assert(celX[i] + celW[i] <= VT_CW + 30.0f);   // ranking passa 16 px no maximo
+      float width = L == VT_LAY_MURAL || L == VT_LAY_LINHA ? vtFim() - vtInicio() : VT_CW;
+      assert(celX[i] + celW[i] <= width + 30.0f);   // ranking passes by at most 16 px
       if (i) assert(celLin[i] >= celLin[i - 1] && celLin[i] <= celLin[i - 1] + 1);
       for (j = 0; j < i; j++) if (sobrepoe(i, j)) {
         fprintf(stderr, "exibicao %d: celulas %d e %d se sobrepoem\n", L, i, j);
@@ -331,12 +502,12 @@ int main(int argc, char **argv) {
   for (i = 0; i < 5; i++) { vitBuf[i] = semente[i]; vitVis[0][i] = (short)i; }
   vitCarga = vitN;
   // A fileira vazia e pulada; cima na primeira vai ao botao; esquerda na
-  // primeira coluna pede a barra; direita anda e para na ultima.
+  // primeira coluna pede a barra; direita alcanca a acao depois do ultimo titulo.
   vitFR = 0; vitFC = 0; vitMexeu = 1;
   tecla(SDLK_RIGHT); tecla(SDLK_RIGHT); assert(vitFC == 2);
   for (i = 0; i < 6; i++) tecla(SDLK_RIGHT);
-  assert(vitFC == 4);
-  tecla(SDLK_DOWN); assert(vitFR == 0 && vitFC == 4);
+  assert(vitFC == 5 && vitItem(0, vitFC) == NULL);
+  tecla(SDLK_DOWN); assert(vitFR == 0 && vitFC == 5);
   pedMenu = 0; vitFC = 0; tecla(SDLK_LEFT); assert(pedMenu == 1);
   tecla(SDLK_UP); assert(tabFocus == 1 && tabCursor == nAbas());
   tecla(SDLK_DOWN); assert(tabFocus == 0);
@@ -757,6 +928,7 @@ int main(int argc, char **argv) {
     assert(ajustes_abas_estilo() == 0);
   }
 
+  vitrineVerTudo();
   printf("colecao_exibicao: ok\n");
   return 0;
 }

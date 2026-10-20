@@ -79,6 +79,20 @@ static void parcial(void) {
   p.pontos = pt; p.acimaTeto = ac; p.excluida = ex; p.boa = bo; p.addon = ad;
   p.pendenteAntes = faltaAntes;
   CONFERE(fonteauto_pode_decidir(&p), "melhor: a 4K boa ja presente nao decide");
+  // "Todos os add-ons" (PR #567): a boa ja presente nao decide enquanto um
+  // add-on permitido falta; decide quando todos responderam.
+  p.esperaTodos = 1;
+  CONFERE(!fonteauto_pode_decidir(&p), "todos os add-ons: decidiu com add-on pendente");
+  p.algumPendente = 0;
+  CONFERE(fonteauto_pode_decidir(&p), "todos os add-ons: todos responderam e nao decidiu");
+  p.preferida = 2; p.algumPendente = 1;
+  CONFERE(!fonteauto_pode_decidir(&p), "wait-all: preferred source bypassed pending add-on");
+  p.prazoPassou = 1;
+  CONFERE(!fonteauto_pode_decidir(&p), "wait-all: deadline bypassed pending add-on with preferred source");
+  p.algumPendente = 0;
+  CONFERE(fonteauto_pode_decidir(&p), "wait-all: preferred source blocked after all add-ons completed");
+  p.algumPendente = 1; p.prazoPassou = 0;
+  p.preferida = -1; p.esperaTodos = 0;
   bo[1] = 0;
   CONFERE(!fonteauto_pode_decidir(&p), "melhor: sem boa decidiu antes do prazo");
   p.prazoPassou = 1;

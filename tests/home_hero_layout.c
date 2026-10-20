@@ -4,6 +4,8 @@
 #include "heroidentidade_home.c"
 #undef main
 
+float gfx_escala_tela_txt(void) { return 1.0f; }
+
 static void ordered(HeroCopyLayout p, float btnH, float btnGap,
                     float captionH, float sinH, float base) {
   // Logo, information, then the action at the bottom (owner 06/10).

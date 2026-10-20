@@ -34,6 +34,10 @@ static void interfaceBool(const char *nome, int ativa) {
 }
 
 void android_interface_modo(int mobile) { interfaceBool("interfaceModo", mobile); }
+int android_interface_mobile_auto(void) {
+  const char *modo = getenv("NUVIO_INTERFACE_AUTO");
+  return modo && !strcmp(modo, "1");
+}
 
 void android_baixar_registro(const char *arquivo, const char *sucesso, const char *falha) {
   JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
@@ -219,6 +223,19 @@ void android_iniciar(void) {
 // composta pelo SurfaceFlinger no espaco FISICO; se o plano de graficos da TV
 // aceitar, a UI sai em 4K de verdade. O que a TV concedeu aparece na linha
 // `janela=... drawable=...` do main.c.
+int android_hdr_interface(int ativa) {
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act = (jobject)SDL_AndroidGetActivity();
+  if (!env || !act) return 0;
+  jclass cls = (*env)->GetObjectClass(env, act);
+  jmethodID m = cls ? (*env)->GetMethodID(env, cls, "pedirHdrInterface", "(Z)Z") : NULL;
+  int ok = m && (*env)->CallBooleanMethod(env, act, m, ativa ? JNI_TRUE : JNI_FALSE);
+  if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); ok = 0; }
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
+  return ok;
+}
+
 int android_pedir_superficie(int w, int h) {
   JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
   jobject act = (jobject)SDL_AndroidGetActivity();
@@ -317,6 +334,29 @@ int android_st_evento(char *dst, size_t n) {
   return r;
 }
 
+int android_volumes_externos(char *dst, size_t n) {
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act = (jobject)SDL_AndroidGetActivity();
+  jclass cls;
+  jmethodID m;
+  jstring js = NULL;
+  int r = 0;
+  if (n) dst[0] = 0;
+  if (!env || !act) return 0;
+  cls = (*env)->GetObjectClass(env, act);
+  m = cls ? (*env)->GetMethodID(env, cls, "volumesExternos", "()Ljava/lang/String;") : NULL;
+  if (m) js = (jstring)(*env)->CallObjectMethod(env, act, m);
+  if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); js = NULL; }
+  if (js) {
+    const char *c = (*env)->GetStringUTFChars(env, js, NULL);
+    if (c) { snprintf(dst, n, "%s", c); r = 1; (*env)->ReleaseStringUTFChars(env, js, c); }
+    (*env)->DeleteLocalRef(env, js);
+  }
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
+  return r;
+}
+
 // Metodo da Activity com ate dois textos; devolve o jobject/valor pelo tipo.
 static jmethodID metodo(JNIEnv *env, jobject act, jclass *cls, const char *nome, const char *assin) {
   *cls = (*env)->GetObjectClass(env, act);
@@ -371,14 +411,57 @@ static int chamarBool(const char *nome, const char *assin, const char *a, const 
 int android_abrir_app(const char *pacote) {
   return chamarBool("abrirApp", "(Ljava/lang/String;)Z", pacote, NULL);
 }
+int android_abrir_externo(const char *url, const char *titulo, const char *pacote) {
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act = (jobject)SDL_AndroidGetActivity();
+  jclass cls = NULL;
+  jmethodID m;
+  jstring js[3] = { NULL, NULL, NULL };
+  int ok = 0, i;
+  const char *a[3] = { url, titulo ? titulo : "", pacote ? pacote : "" };
+  if (!env || !act) return 0;
+  m = metodo(env, act, &cls, "abrirExterno", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z");
+  if (m && !(*env)->ExceptionCheck(env)) {
+    for (i = 0; i < 3; i++) js[i] = (*env)->NewStringUTF(env, a[i]);
+    if (js[0] && js[1] && js[2] && !(*env)->ExceptionCheck(env))
+      ok = (*env)->CallBooleanMethod(env, act, m, js[0], js[1], js[2]) ? 1 : 0;
+  }
+  if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); ok = 0; }
+  for (i = 0; i < 3; i++) if (js[i]) (*env)->DeleteLocalRef(env, js[i]);
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
+  return ok;
+}
+// Players de video instalados: "pacote\tnome" por linha (NuvioActivity.listarPlayers).
+char *android_listar_players(void) {
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act = (jobject)SDL_AndroidGetActivity();
+  jclass cls = NULL;
+  jmethodID m;
+  char *r = NULL;
+  if (!env || !act) return NULL;
+  m = metodo(env, act, &cls, "listarPlayers", "()Ljava/lang/String;");
+  if (m) {
+    jstring js = (jstring)(*env)->CallObjectMethod(env, act, m);
+    if (!(*env)->ExceptionCheck(env) && js) {
+      const char *c = (*env)->GetStringUTFChars(env, js, NULL);
+      if (c) { r = strdup(c); (*env)->ReleaseStringUTFChars(env, js, c); }
+    }
+    if (js) (*env)->DeleteLocalRef(env, js);
+  }
+  if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
+  return r;
+}
 int android_abrir_loja(const char *pacote, const char *nome) {
   return chamarBool("abrirLoja", "(Ljava/lang/String;Ljava/lang/String;)Z", pacote, nome ? nome : "");
 }
 
 // Ver android.h. A resposta vem como byte[]: 4 bytes de status (big-endian) e
-// o corpo; status 0 = falha de transporte, e o corpo e o motivo.
+// 4 bytes de Retry-After em segundos e o corpo; status 0 = falha de transporte.
 char *android_http(const char *verbo, const char *url, const char *cabs,
-                   const char *corpo, int prazoMs, int *status, long *n,
+                   const char *corpo, int prazoMs, int *status, int *retryAfter, long *n,
                    char *erro, size_t nErro) {
   JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
   jobject act = env ? (jobject)SDL_AndroidGetActivity() : NULL;
@@ -389,6 +472,7 @@ char *android_http(const char *verbo, const char *url, const char *cabs,
   char *r = NULL;
   if (status) *status = 0;
   if (n) *n = 0;
+  if (retryAfter) *retryAfter = 0;
   if (erro && nErro) snprintf(erro, nErro, "jni indisponivel");
   if (!env || !act) return NULL;
   m = metodo(env, act, &cls, "httpPedir", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;[BI)[B");
@@ -407,21 +491,22 @@ char *android_http(const char *verbo, const char *url, const char *cabs,
   if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); jr = NULL; }
   if (jr) {
     jsize k = (*env)->GetArrayLength(env, jr);
-    if (k >= 4) {
-      unsigned char s4[4];
+    if (k >= 8) {
+      unsigned char s4[8];
       int st;
-      (*env)->GetByteArrayRegion(env, jr, 0, 4, (jbyte *)s4);
+      (*env)->GetByteArrayRegion(env, jr, 0, 8, (jbyte *)s4);
       st = (s4[0] << 24) | (s4[1] << 16) | (s4[2] << 8) | s4[3];
-      r = (char *)malloc((size_t)(k - 4) + 1);
+      r = (char *)malloc((size_t)(k - 8) + 1);
       if (r) {
-        (*env)->GetByteArrayRegion(env, jr, 4, k - 4, (jbyte *)r);
-        r[k - 4] = 0;
+        (*env)->GetByteArrayRegion(env, jr, 8, k - 8, (jbyte *)r);
+        r[k - 8] = 0;
         if (st <= 0) {   // falha: o corpo e o motivo
           if (erro && nErro) snprintf(erro, nErro, "%s", r);
           free(r); r = NULL;
         } else {
           if (status) *status = st;
-          if (n) *n = (long)(k - 4);
+          if (retryAfter) *retryAfter = (s4[4] << 24) | (s4[5] << 16) | (s4[6] << 8) | s4[7];
+          if (n) *n = (long)(k - 8);
         }
       }
     }

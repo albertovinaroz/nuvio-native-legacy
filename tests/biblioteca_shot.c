@@ -313,9 +313,21 @@ int main(int argc, char **argv) {
       fa = fopen(cam, "a");
       if (fa) { fprintf(fa, "bordaFocoCartaz 1\n"); fclose(fa); }
     } }
+  // NUVIO_SHOT_SELO=2: selo de assistido "Escrito" (pilula com a palavra).
+  { const char *sv = getenv("NUVIO_SHOT_SELO");
+    if (sv && *sv) {
+      char cam[700];
+      FILE *fa;
+      snprintf(cam, sizeof cam, "%s/ajustes.txt", dados_dir());
+      fa = fopen(cam, "a");
+      if (fa) { fprintf(fa, "seloVistoLocal %s\n", sv); fclose(fa); }
+    } }
   ajustes_iniciar();
-  { const char *bv = getenv("NUVIO_SHOT_BORDA");
-    if (bv && *bv == '0') ajustes_dir(dados_dir()); }
+  { const char *bv = getenv("NUVIO_SHOT_BORDA"), *sv = getenv("NUVIO_SHOT_SELO");
+    if ((bv && *bv == '0') || (sv && *sv)) ajustes_dir(dados_dir()); }
+  // NUVIO_SHOT_ESCALA_TEXTO=0.85..1.3: text scale of the capture (default: settings).
+  { const char *et = getenv("NUVIO_SHOT_ESCALA_TEXTO");
+    if (et && *et) gfx_escala_txt_definir((float)atof(et)); }
   // NUVIO_SHOT_VIDRO=0: o material solido (Interface de vidro desligada).
   { const char *v = getenv("NUVIO_SHOT_VIDRO");
     ajustes_definir_vidro(!(v && *v == '0')); }

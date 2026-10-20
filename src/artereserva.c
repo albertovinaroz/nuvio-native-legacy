@@ -5,6 +5,7 @@
 #include "js.h"
 #include "trakt.h"
 #include "artefontes.h"
+#include "artetamanho.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -128,7 +129,7 @@ int arte_reserva_episodios(const char *imdb, const char *corpo) {
   int n = 0, i, alvo = 0;
   unsigned long menor = (unsigned long)-1;
   char id[16];
-  if (!imdb || strncmp(imdb, "tt", 2) || !corpo) return 0;
+  if (!imdb || strncmp(imdb, "tt", 2) || !corpo || js_videos_temporadas_falsas(corpo)) return 0;
   snprintf(id, sizeof id, "%.*s", (int)strcspn(imdb, ":"), imdb);
   tmp = malloc(sizeof(AepItem) * AEP_MAX);
   if (!tmp) return 0;
@@ -535,9 +536,11 @@ int arte_reserva_url(const char *url, char *saida, size_t tam) {
                   caminho, sizeof caminho);
   free(resp);
   if (caminho[0] != '/') return 0;
-  // w342 e o que a fileira desenha (o card de 288 promove ate 2x sem perder);
-  // w1280 cobre o heroi e o detalhe pelo mesmo decode escalado do card.
-  snprintf(saida, tam, "https://image.tmdb.org/t/p/%s%s", poster ? "w342" : "w1280", caminho);
+  // w342 e o que a fileira desenha (o card de 288 promove ate 2x sem perder),
+  // w780 na qualidade Alta; w1280 cobre o heroi e o detalhe pelo mesmo decode
+  // escalado do card.
+  snprintf(saida, tam, "https://image.tmdb.org/t/p/w%d%s",
+           poster ? arte_tamanho_poster_w() : 1280, caminho);
   printf("[tex] reserva do TMDB para %s de %s\n", tipo, id);
   fflush(stdout);
   return 1;

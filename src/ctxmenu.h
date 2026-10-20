@@ -77,6 +77,7 @@ int  ctx_pediu_extra(void);
 // ctx_inline_pedir(1) ANTES de ctx_abrir_salvo liga o modo (so a lista em linhas).
 void  ctx_inline_pedir(int on);
 float ctx_inline_t(void);
+float ctx_estilo_t(void);   // 0..1: abertura da pagina de estilos
 float ctx_inline_altura(float w, float faixaH);
 void  ctx_inline_desenhar(float x, float y, float w, float faixaH, float a);
 #ifdef NV_TOUCH_UI

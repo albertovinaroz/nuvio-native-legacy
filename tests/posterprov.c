@@ -123,10 +123,11 @@ int main(void) {
     c = spatial("https://p.exemplo.com", grande);       // instancia curta: cabe
     assert(posterprov_montar_url(&c, "tt0111161", 0, "series", u, sizeof u));
     assert(strlen(u) < PP_URL_MAX);
-    // instancia longa + token no limite + extras: NAO cabe em 512 -> recusa
+    // Long instance, maximum token and extras exceed the old 512-byte limit.
     snprintf(c.instancia, sizeof c.instancia, "https://uma-instancia-com-nome-bem-comprido.exemplo.com.br");
     memset(c.extra, 'e', PP_EXTRA_MAX); c.extra[0] = 'x'; c.extra[1] = '=';
-    assert(!posterprov_montar_url(&c, "tt0111161", 0, "series", u, sizeof u));
+    assert(posterprov_montar_url(&c, "tt0111161", 0, "series", u, sizeof u));
+    assert(strlen(u) > 512);
     c = spatial("https://spatial-posters.vercel.app", grande);
     // buffer menor que a URL: recusa em vez de truncar
     assert(!posterprov_montar_url(&c, "tt0111161", 0, "series", u, 200));

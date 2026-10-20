@@ -55,7 +55,7 @@ enum { AJ_TRAILER_CARTAZ_DESLIGADO = 0, AJ_TRAILER_CARTAZ_CHEIA = 1, AJ_TRAILER_
 int  ajustes_trailer_cartaz(void);
 // "Itens por fileira" da Home (#163): 12, 18 ou 24. Padrao 12.
 int  ajustes_itens_fileira(void);
-// Efeitos visuais do .tpk: 0 automatico, 1 completos (nivel 0), 2 leves (nivel 1).
+// Effects, all platforms/resolutions: 0 automatic, 1 full, 2 light, 3 minimal.
 int  ajustes_gpu_efeitos(void);
 // A proxima abertura da tela (ajustes_iniciar) pousa o foco em "Cor de
 // destaque" em vez da primeira linha. E o "Experimentar a cor viva" do cartao
@@ -118,6 +118,7 @@ int ajustes_animacoes_reduzidas(void);
 // V_BRILHO_PLAYER (padrao 1 = 80%).
 int ajustes_esmaecer(void);
 int ajustes_brilho_player(void);
+int ajustes_hdr_interface(void); // Experimental Android HDR output; default off.
 int ajustes_hdr_ui(void);   // #205: 1 = Automatico (padrao), 0 = Desligado
 // #202: -1 = ultimo modo usado (padrao); 0..7 = PlrAspecto aplicado ao abrir o video.
 int ajustes_proporcao_padrao(void);
@@ -158,7 +159,8 @@ int ajustes_fonte_manual(void);
 
 // "Fonte automatica" = "Primeira da lista" (issue #130): o automatico toca a
 // primeira fonte na ordem do addon e confere SO ela. 0 = "Melhor fonte", a
-// regra de pontuacao de streams.c. Ver fonteauto.h.
+// regra de pontuacao de streams.c. "Do addon" na prioridade tambem ativa
+// primeira, sem teto de qualidade nem memoria de fonte. Ver fonteauto.h.
 int ajustes_fonte_primeira(void);
 // #400: ordem visual do addon, local; nao altera autoplay.
 int ajustes_fonte_ordem_addon(void);
@@ -180,12 +182,21 @@ int ajustes_fonte_aquecer(void);
 int ajustes_fonte_conferir_varias(void);
 int ajustes_fonte_preparar(void);
 int ajustes_fonte_precarregar(void);
+// Memoria da fonte (fontepref.h, fontepref_configurar): Preferir o mesmo grupo
+// de fonte (a escolha a mao no titulo inteiro + a memoria do automatico) e
+// Reusar o grupo entre sessoes. Padrao: 1, 1 (o comportamento de antes).
+int ajustes_fonte_grupo(void);
+int ajustes_fonte_grupo_sessoes(void);
+// Reusar o ultimo link (fontevolta.h): 1 = ligado; e a validade em segundos.
+int ajustes_link_reusar(void);
+unsigned ajustes_link_prazo_s(void);
 int ajustes_fonte_escopo(void);
 int ajustes_fonte_regex_modo(void);
 // "Usar a ordem" dos add-ons (FR_ORDEM_*); 0 tambem quando nao ha ordem.
 int ajustes_fonte_ordem_uso(void);
 int ajustes_fonte_usar_outros(void);
-// R9b: 0 Equilibrio, 1 Qualidade maxima, 2 Começar rápido / 0 Preferir, 1 Indiferente, 2 Evitar HDR e DV.
+// 0 Equilibrio, 1 Qualidade maxima, 2 Começar rápido, 3 Do addon.
+// HDR: 0 Preferir, 1 Indiferente, 2 Evitar HDR e DV.
 int ajustes_fonte_prioridade(void);
 int ajustes_fonte_hdr(void);
 // 1 = a escolha automatica prefere fontes que anunciam o Idioma do audio
@@ -232,6 +243,8 @@ int  ajustes_cor_logo(void);
 int  ajustes_vidro(void);
 // "Contorno do vidro": 1 = o fio fino dos cartoes/linhas em repouso aparece.
 int  ajustes_vidro_contorno(void);
+// "Foco na cor de destaque": 1 = o foco usa um vidro tingido com o realce em vez do cinza (so com vidro).
+int  ajustes_foco_acento(void);
 // Ajustes > Conta, "Usar os addons do perfil principal" (padrao ligado): o
 // perfil que nao e o principal le os addons do principal. Ver perfis_ativo_addons.
 int  ajustes_addons_do_principal(void);
@@ -296,6 +309,7 @@ int   ajustes_pediu_livetv_diag(void);
 // Modo do load do player nos canais: 0 A, 1 B, 2 C (video_definir_modo_live).
 int   ajustes_livetv_modo(void);
 int   ajustes_livetv_proxy(void);
+int   ajustes_livetv_sugerir(void);   // Jev sugere categoria so para canal sem categoria (livecat.h)
 void  ajustes_livetv_aplicar_proxy(int ligado);   // proxy de TS da Live TV (proxyts.c)
 void  ajustes_livetv_aplicar_modo(int modo);
 
@@ -367,6 +381,9 @@ void  ajustes_ui_grafico_memoria(float x, float y, float w, float h);
 // O mesmo grafico com o historico de exemplo (previa das Novidades da 1.8.0).
 void  ajustes_ui_grafico_exemplo(float x, float y, float w, float h);
 int   ajustes_relogio_cabe(void);
+int   ajustes_relogio_navegavel(void);
+int   ajustes_pediu_relogio(void);
+int   ajustes_edicao_ativa(void);
 // A FAIXA QUE A RAIL FIXA RESERVA na borda esquerda, em px de tela: com ela
 // presa, a borda da pilula de icones do menu (Moderna 136, Padrao 88, vezes o
 // Tamanho da interface) + 64 de vao - os 104 do recuo do conteudo; 0 recolhida
@@ -410,6 +427,31 @@ int   ajustes_salvos_no_simkl(void);
 // ja usa o app: valor novo entra no fim, nunca no meio. tests/simkl_cw.sh
 // confere cada um contra o rotulo em ajustes.c.
 enum { AJ_SALVOS_LOCAL = 0, AJ_SALVOS_TRAKT = 1, AJ_SALVOS_SIMKL = 2 };
+// FONTE DA BIBLIOTECA: a escolha gravada (AJ_SALVOS_*) vira a fonte efetiva
+// conforme o que esta vinculado. Escolha desvinculada cai no outro servico
+// ligado e, sem nenhum, na lista local. Pura, para o teste e para o selo.
+static inline int ajustes_fonte_resolver(int escolha, int trakt, int simkl) {
+  if (escolha == AJ_SALVOS_TRAKT) return trakt ? AJ_SALVOS_TRAKT : simkl ? AJ_SALVOS_SIMKL : AJ_SALVOS_LOCAL;
+  if (escolha == AJ_SALVOS_SIMKL) return simkl ? AJ_SALVOS_SIMKL : trakt ? AJ_SALVOS_TRAKT : AJ_SALVOS_LOCAL;
+  return AJ_SALVOS_LOCAL;
+}
+// Escolha oferecida na linha: Nuvio sempre; Trakt/Simkl so vinculados. O valor
+// ja gravado e desvinculado continua lido (resolver acima), so nao e oferecido.
+static inline int ajustes_fonte_oferecida(int escolha, int trakt, int simkl) {
+  return escolha == AJ_SALVOS_TRAKT ? trakt : escolha == AJ_SALVOS_SIMKL ? simkl : 1;
+}
+// A Biblioteca mostra a lista do servico so quando ele e a fonte efetiva;
+// a conta Nuvio (contalib) so quando a fonte e a lista do Nuvio.
+static inline int ajustes_fonte_traz_trakt(int fonte)    { return fonte == AJ_SALVOS_TRAKT; }
+static inline int ajustes_fonte_traz_conta(int fonte)    { return fonte == AJ_SALVOS_LOCAL; }
+// So LOCAL traz os salvos locais desta TV: eles sao o feed Nuvio, nao um
+// terco extra de Trakt ou Simkl.
+static inline int ajustes_fonte_traz_locais(int fonte)   { return fonte == AJ_SALVOS_LOCAL; }
+// Texto do selo da aba Salvos para a fonte efetiva; a local o chamador resolve.
+static inline const char *ajustes_fonte_selo(int fonte) {
+  return fonte == AJ_SALVOS_TRAKT ? "TRAKT" : fonte == AJ_SALVOS_SIMKL ? "SIMKL" : "LOCAL";
+}
+int   ajustes_fonte_biblioteca(void);
 enum { AJ_CWF_AMBAS = 0, AJ_CWF_CONTA = 1, AJ_CWF_TRAKT = 2, AJ_CWF_SIMKL = 3 };
 // Envio automatico do registro (Sobre). 1 = ligado.
 int   ajustes_envio_auto(void);
@@ -440,6 +482,7 @@ int   ajustes_selos_coloridos(void);
 int   ajustes_trailer_som(void);         // UM ajuste de som para todo trailer que toca sozinho (Samsung .wgt sempre mudo)
 Uint32 ajustes_trailer_hero_espera_ms(void); // repouso no titulo antes do trailer do destaque
 int   ajustes_trailer_qualidade(void); // teto em linhas (1080/720/480); 0 = a maior
+const char *ajustes_trailer_audio(void);  // "" auto (idioma da UI), "~" original, ou codigo ISO
 int   ajustes_trailer_fonte(void);     // TRF_* de trailerfonte.h; 0 = automatico
 float ajustes_trailer_zoom(void);      // ampliacao do trailer (1.0 = quadro inteiro)
 void  ajustes_definir_envio_auto(int ligado);
@@ -464,9 +507,17 @@ int   ajustes_descobrir_na_busca(void); // searchDiscoverEnabled (derivado)
 int   ajustes_4k(void);
 // 1 = Automatica: 1080p, sondando o 4K onde a tela for 4K (resolucao.h, RES_AUTO_*).
 int   ajustes_res_auto(void);
+int   ajustes_1080p(void);
 // 1 = a pessoa escolheu 720p: desenhar em 1280x720 e ampliar (gpun_forcar_720).
 // Nunca automatico.
 int   ajustes_720p(void);
+// Device-local output choice; applied after restarting, only on a 4K panel.
+int   ajustes_ampliar_app(void);
+// Device-local upscaling algorithm and RCAS sharpness 0..4 (gpun_ampliacao).
+int   ajustes_ampliacao_algo(void);
+int   ajustes_ampliacao_nitidez(void);
+// Actual drawable granted by the platform; controls the output-limit hint.
+void  ajustes_ui_saida(int w, int h);
 // Ilha do relogio (ilha.h). _ligado: 0 = sem pilula em repouso (os avisos
 // continuam saindo dela). _pos: 0 automatica, 1 esquerda, 2 direita.
 int   ajustes_relogio_ligado(void);
@@ -479,6 +530,8 @@ int ajustes_sinopse_tamanho(void);
 // Main UI thread: validated VtLayout ID (vertudo.h); 0 keeps automatic behavior.
 int ajustes_colecao_exibicao(void);
 float ajustes_tamanho_ui(void);
+int   ajustes_det_espaco(void);     // title page row spacing: 0 Compacto, 1 Normal (default), 2 Confortavel
+float ajustes_escala_texto(void);   // 0,85..1,3 (Escala de texto e componentes); 1 = de sempre
 // Settings only: 0.8/0.9/1.0, default 0.9; independent of global UI zoom.
 float ajustes_tamanho_ajustes(void);
 // #339: 1 = Settings as a single stacked list (Ajustes › Aparência › Layout dos Ajustes). LOCAL.
@@ -495,7 +548,16 @@ int   ajustes_abertura_addon(void);
 // #508: fundo da tela Cinema da abertura: 0 = Desligado, 1 = Arte (nitida com
 // veu escuro), 2 = Arte borrada (padrao).
 int   ajustes_abertura_fundo(void);
+// Modern/Dynamic Stage background. Stored 0 was Black: it now means Cortina, so old
+// defaults move to the new default with no migration.
+enum { PALCO_CORTINA, PALCO_ATUAL, PALCO_ARTE, PALCO_PRETO, PALCO_AURA, PALCO_TRIPTICO, PALCO_MONUMENTO };
+int   ajustes_palco_fundo(void);
+int   ajustes_titulo_fil(void);        // 0 Classico, 1 Ilha, 2 Editorial, 3 Acento
+int   ajustes_abertura_estilo(void);   // 0 Centro (A3), 1 Canto (B3)
+int   ajustes_fundo_din(void);         // #205: fundo da Dinamica, 0 Cinza (padrao), 1 Cor, 2 Imersivo, 3 Cinza escuro
+void  ajustes_fundo_din_cor(float rgb[3]);   // #205: a cor escolhida para o fundo "Cor" (sRGB 0..1)
 // #205: tamanho dos cards de episodio (Moderna): 0 pequeno, 1 medio (padrao), 2 grande.
+int   ajustes_menu_cartaz_simples(void); // 0 On (default, enriched card), 1 Off (side list only); this TV only.
 int   ajustes_mural_titulos(void);      // #521: 1 = nome dentro do ladrilho do Mural
 int   ajustes_ep_tamanho(void);
 // #338: tamanho de abertura das Estatisticas ao vivo (EV_TAM_*); -1 = o ultimo usado.
@@ -516,6 +578,7 @@ int ajustes_leg2_atraso(void);
 int ajustes_leg2_definir_atraso(int ms);
 int   ajustes_legenda_forcada_auto(void);    // #287: 1 = audio in the subtitle language -> only the forced track (local, default on)
 int   ajustes_legenda_sync_auto(void);       // local, ligada por padrão
+int   ajustes_audio_offset_ms(void);        // Converted audio presentation, -500..500 ms; default 0.
 int   ajustes_legenda_sync_audio(void);      // 1 = offer "Por audio" in subtitle AutoSync (F06; local, default off)
 int   ajustes_trailer_zoom_tpk(void);        // #241: 1 = experimental trailer zoom on the native .tpk (local, default off)
 int   ajustes_teclado_na_tela(void);         // times the Teclado option is on the Ajustes list (0 = hidden here)
@@ -523,7 +586,9 @@ int   ajustes_teclado_android(void);          // Android keyboard: 0 automatic, 
 int   ajustes_mic_busca(void);               // Samsung (.tpk/.wgt) search mic button: 0 automatic, 1 on, 2 off (local)
 unsigned ajustes_p2p_limite_mb(void);           // #334: P2P space limit in MB (0 = Automatic)
 int   ajustes_p2p_usb(void);                    // #205: 1 = cache P2P em pendrive USB
-int   ajustes_buffer_preset(void);           // #338: 0 Automatico, 1 Baixo, 2 Medio, 3 Alto (0 fora do Android)
+int   ajustes_player_externo(int anime);     // #501/#205: 0 Interno, 1 Externo, 2 Perguntar, 3 app (pacote em ajustes_player_pacote); anime: -1 = Igual ao Player
+const char *ajustes_player_pacote(int anime); // #205: pacote do app escolhido ("" = nenhum)
+int   ajustes_buffer_preset(void);           // #338: 0 Automatico, 1 = 64, 2 = 128, 3 = 256 MiB
 int   ajustes_cache_seek_mb(void);           // F07: seek cache limit in MB for the next video (0 = off / not on this TV)
 #ifdef AJUSTES_TESTE
 void  ajustes_teste_escala(int percentual); // fixture only; does not persist
@@ -532,6 +597,7 @@ void  ajustes_teste_escala(int percentual); // fixture only; does not persist
 int   ajustes_fundo(void);
 float ajustes_vidro_opacidade(void);   // 0,60..0,92; 0,78 = o vidro de sempre
 int   ajustes_vidro_fosco(void);
+int   ajustes_vidro_qualidade(void);   // 0 Automatica (frost + governor), 1 Desempenho (smoked glass, no blur), 2 Alta (frost)
 void  ajustes_teste_vidro_env(void);   // so capturas        // 1 = arte borrada atras do vidro
 int   ajustes_icone_app(void);
 // 2.0 (N1): 0 = Novo (default), 1 = Classico. Local to this TV.
@@ -553,6 +619,7 @@ int   ajustes_selo_visto_modo(void);   // 0 desligado, 1 icone (check), 2 escrit
 // #366: oculta filmes vistos so na descoberta, por perfil neste aparelho.
 // Desligado de fabrica; busca, biblioteca e historico nao sao filtrados.
 int   ajustes_ocultar_filmes_vistos(void);
+int   ajustes_bib_home(void);   // #507: Library row on Home
 void  ajustes_definir_ocultar_filmes_vistos(int ligado);
 // MODO SEGURO (seguro.h). Chamar no arranque, DEPOIS de ajustes_dir e de
 // avisos_iniciar: `caiu` = a sessao anterior nao se despediu. Desfaz o ajuste
@@ -640,6 +707,8 @@ int         ajustes_tmdb_ligado(void);          // tmdb_enabled
 const char *ajustes_tmdb_idioma(void);          // "pt-BR", "en-US"… (TMDB)
 // Pais da grade do Guia de TV (#158): "" = automatico, senao "RO", "BR"...
 const char *ajustes_epg_pais(void);
+int ajustes_guia_ordem(void); // 0 category first, 1 account first
+int ajustes_guia_fonte(void); // 0 all, 1 Xtream, 2 M3U, 3 Stalker, 4 add-ons
 int         ajustes_tmdb_arte(void);            // tmdb_use_artwork
 int         ajustes_tmdb_basico(void);          // tmdb_use_basic_info
 int         ajustes_tmdb_ficha(void);           // tmdb_use_details
@@ -664,6 +733,10 @@ int         ajustes_seekr_ajuste_s(void);   // sincronia, em segundos (-60..60)
 int         ajustes_mdblist_fonte(int fonte);   // mdblist_show_*
 // A fonte (ExFonte) entra na linha do titulo? Escolha local + disponibilidade.
 int         ajustes_nota_titulo(int fonte);
+// A fonte aparece no cartao de EPISODIO? 0 = segue a linha do titulo; so IMDb/TMDB/Trakt tem nota por episodio.
+int         ajustes_nota_episodio(int fonte);
+// Source at each title-line position, including the saved custom order.
+int         ajustes_nota_fonte(int pos);
 
 // --- AJUSTES QUE VEM DA CONTA ------------------------------------------------
 // Aplica o blob de `sync_pull_profile_settings_blob` (o objeto `settings_json`,
@@ -702,17 +775,13 @@ void ajustes_perfil_esquecer(void);
 // escritos por cima. Devolve quantas chaves foram reescritas; 0 quando nao havia
 // nada a mudar, e nesse caso *saida fica NULL. Quem chama libera com free().
 //
-// O QUE ELA NAO FAZ, e e o ponto: nao INVENTA chave. So o que ja existe no blob
-// e reescrito, e so o valor. Remontar o objeto aqui mandaria de volta um blob
-// com apenas as chaves que este app conhece — e o servidor guarda o que vier,
-// entao a TV apagaria da conta tudo que so o app web usa.
-//
-// Nao sobem os ajustes de APARELHO (superficie 4K, teto de memoria de imagem,
-// qualidade da arte, idioma da interface, animacoes reduzidas, envio de
-// registro, limite/ordem de fileiras, reset de foco, borda do foco, fonte
-// manual, destino dos salvos): eles descrevem esta TV, nao o gosto da pessoa, e
-// a conta e uma so para a TV da sala e a do quarto. Ver somenteDesteAparelho.
+// Existing web fields keep their types and unknown features survive. Portable
+// C settings, including appearance, language, subtitles and row/addon order,
+// live under c_settings_v1. Device/display/decoder budgets, local endpoints
+// and credentials are excluded; see ajustePortavel in ajustes_sync.inc.
 int ajustes_mesclar_blob(const char *base, char **saida);
+// Main-thread local edit detector; avoids building the account JSON snapshot.
+unsigned long long ajustes_sync_hash(void);
 // #187: uma linha "[tmdb] idioma dos metadados: ..." com o que a TV pede ao
 // TMDB, de onde vem (ajuste desta TV) e o tmdb_language cru da conta.
 void ajustes_tmdb_idioma_relatar(const char *blob);

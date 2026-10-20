@@ -109,11 +109,11 @@ static void padroesEValores(void) {
   for (op = 0; op < AJ_N; op++) {
     assert(!uxDiferente(op));
     if (OPCOES[op].tipo == OP_ACAO || OPCOES[op].tipo == OP_LEITURA ||
-        (CHAVE[op][0] == '-' && !ajFalhaBackend(op) && !ajLegendaPrincipal(op)) || op == AJ_PERFIL_PESQ)
+        (CHAVE[op][0] == '-' && op != AJ_XTREAM_CONEXOES && !ajFalhaBackend(op) && !ajLegendaPrincipal(op)) || op == AJ_PERFIL_PESQ)
       assert(!uxTemPadrao(op));
     else {
       assert(uxTemPadrao(op));
-      assert(uxValorPadrao(op) == valorPadrao[op]);
+      assert(uxValorPadrao(op) == (op == AJ_SALVOS_DEST ? ajustes_fonte_resolver(valorPadrao[op], trakt_ativo(), simkl_ativo()) : valorPadrao[op]));
     }
   }
   assert(!uxTemPadrao(-1) && !uxTemPadrao(AJ_N));
@@ -314,11 +314,12 @@ static void cacheSeek(void) {
   assert(!strcmp(textoValor(AJ_CACHE_SEEK), "Não disponível nesta TV"));
   assert(strstr(ajudaOpcao(AJ_CACHE_SEEK), "Não disponível nesta TV"));
   for (i = 0; i < 4; i++) { valor[AJ_CACHE_SEEK] = i; assert(ajustes_cache_seek_mb() == 0); }
-  /* #338: o buffer so existe no Android; aqui (host) fica sempre em Automatico. */
-  for (i = 0; i < 4; i++) { valor[AJ_BUFFER] = i; assert(ajustes_buffer_preset() == 0); }
+  /* #338: o indice vale em toda plataforma (cacheboost_buffer_mb faz os MiB). */
+  for (i = 0; i < 4; i++) { valor[AJ_BUFFER] = i; assert(ajustes_buffer_preset() == i); }
   assert(AJ_BUFFER == AJ_CW_MINIMO + 1 && !strcmp(CHAVE[AJ_BUFFER], "bufferPlayerLocal") && OPCOES[AJ_BUFFER].n == 4 && valorPadrao[AJ_BUFFER] == 0 && somenteDesteAparelho(AJ_BUFFER));
   valor[AJ_CACHE_SEEK] = antes;
   valor[AJ_BUFFER] = valorPadrao[AJ_BUFFER];
+  assert(!strcmp(CHAVE[AJ_PLAYER_EXTERNO], "playerExternoLocal") && OPCOES[AJ_PLAYER_EXTERNO].n == 3 && !strcmp(CHAVE[AJ_PLAYER_ANIME], "playerExternoAnimeLocal") && somenteDesteAparelho(AJ_PLAYER_ANIME) && valorPadrao[AJ_PLAYER_EXTERNO] == 0 && somenteDesteAparelho(AJ_PLAYER_EXTERNO));
   n = ajustes_buscar("cache de seek", resultados, AJ_N);
   i = indiceResultado(AJ_CACHE_SEEK, n);
   assert(i >= 0 && resultados[i].bloqueado);
@@ -720,6 +721,31 @@ int main(void) {
   assert(!strcmp(CHAVE[AJ_MIC_BUSCA], "micBuscaLocal") && valorPadrao[AJ_MIC_BUSCA] == 0);
   assert(!strcmp(OPCOES[AJ_MIC_BUSCA].valores[0], "Automático") && OPCOES[AJ_MIC_BUSCA].n == 3);
   assert(somenteDesteAparelho(AJ_MIC_BUSCA) && !dePerfil(AJ_MIC_BUSCA));
+  // Memoria da fonte (15-16/10/2026): quatro linhas no fim, locais. Preferir o
+  // grupo e entre sessoes ligados (o comportamento de antes); reusar o ultimo
+  // link ligado de fabrica (dono), 24 h. Uma vez cada na tela.
+  assert(AJ_FONTE_GRUPO == AJ_ESCALA_TEXTO + 1 && AJ_LINK_PRAZO == AJ_FONTE_GRUPO + 3 &&
+         AJ_DET_ESPACO == AJ_LINK_PRAZO + 1 && AJ_FOCO_ACENTO == AJ_DET_ESPACO + 1 &&
+         AJ_NT_ORDEM == AJ_FOCO_ACENTO + 1 && AJ_ARTE_TOM == AJ_NT_ORDEM + 1 &&
+         AJ_NT_EP == AJ_URL_REM + 1 && AJ_LIVETV_SUGERIR == AJ_NT_EP + 1 && AJ_AUDIO_OFFSET == AJ_LIVETV_SUGERIR + 1 &&
+         AJ_BIB_HOME == AJ_GUIA_CATEGORIAS + 1 && AJ_AMPLIACAO_ALGO == AJ_BIB_HOME + 1 &&
+         AJ_AMPLIACAO_NITIDEZ == AJ_AMPLIACAO_ALGO + 1 && AJ_HDR_INTERFACE == AJ_AMPLIACAO_NITIDEZ + 1 &&
+         AJ_HDR_INTERFACE == AJ_N - 1 && !strcmp(CHAVE[AJ_URL_REM], "-urlRem"));
+  { static const char *CH[4] = { "fonteGrupoLocal", "fonteGrupoSessoesLocal", "linkReusarLocal", "linkPrazoLocal" };
+    static const int PAD[4] = { 0, 0, 0, 5 }, NV[4] = { 2, 2, 2, 9 };
+    for (int o = 0; o < 4; o++) {
+      int op = AJ_FONTE_GRUPO + o, vz = 0;
+      assert(!strcmp(CHAVE[op], CH[o]) && valorPadrao[op] == PAD[o] && OPCOES[op].n == NV[o]);
+      assert(somenteDesteAparelho(op) && !dePerfil(op));
+      for (int k = 0; k < AJ_N_TELA; k++) if (TELA[k].tipo == IT_OPC && TELA[k].op == op) vz++;
+      assert(vz == 1);
+    }
+    assert(ajustes_fonte_grupo() && ajustes_fonte_grupo_sessoes());
+    assert(ajustes_link_reusar() && ajustes_link_prazo_s() == 24u * 3600u);
+    assert(!inativa(AJ_LINK_PRAZO) && !inativa(AJ_FONTE_GRUPO_SESSOES));
+    assert(indiceResultado(AJ_LINK_REUSAR, ajustes_buscar("reuse last link", resultados, AJ_N)) >= 0);
+    assert(indiceResultado(AJ_FONTE_GRUPO, ajustes_buscar("binge group", resultados, AJ_N)) >= 0);
+    assert(indiceResultado(AJ_FONTE_GRUPO, ajustes_buscar("remember picked source", resultados, AJ_N)) >= 0); }
   assert(!strcmp(CHAVE[AJ_FONTE_ORDEM_ADDON], "fonteOrdemLocal"));
   assert(OPCOES[AJ_FONTE_ORDEM_ADDON].n == 2 && valorPadrao[AJ_FONTE_ORDEM_ADDON] == 0);
   assert(somenteDesteAparelho(AJ_FONTE_ORDEM_ADDON) && !dePerfil(AJ_FONTE_ORDEM_ADDON));
@@ -741,6 +767,9 @@ int main(void) {
   assert(somenteDesteAparelho(AJ_DTS_AC3) && !dePerfil(AJ_DTS_AC3));
   { int vz = 0, k; for (k = 0; k < AJ_N_TELA; k++) if (TELA[k].tipo == IT_OPC && TELA[k].op == AJ_DTS_AC3) vz++; assert(vz == 1); }
   assert(indiceResultado(AJ_DTS_AC3, ajustes_buscar("dolby digital", resultados, AJ_N)) >= 0);
+  assert(AJ_ARTE_TOM == AJ_NT_ORDEM + 1 && AJ_PALCO_FUNDO == AJ_ARTE_TOM + 1 && !strcmp(CHAVE[AJ_PALCO_FUNDO], "palcoFundoLocal"));
+  assert(valorPadrao[AJ_PALCO_FUNDO] == PALCO_CORTINA && OPCOES[AJ_PALCO_FUNDO].n == 7);
+  assert(AJ_URL_LISTA == AJ_PALCO_FUNDO + 1 && AJ_NT_EP == AJ_URL_REM + 1 && !strcmp(CHAVE[AJ_URL_REM], "-urlRem"));
   { int vz = 0, k; for (k = 0; k < AJ_N_TELA; k++) if (TELA[k].tipo == IT_OPC && TELA[k].op == AJ_APOIAR) vz++; assert(vz == 1); }
   // #287: forced subtitle when the audio is in your language. Local, last, default ON, once on screen.
   assert(AJ_LEG_FORCADA == AJ_FONTE_ESCOPO - 2 && AJ_LEG_FORCADA == AJ_APOIAR + 1 && !strcmp(CHAVE[AJ_LEG_FORCADA], "legendaForcadaLocal"));

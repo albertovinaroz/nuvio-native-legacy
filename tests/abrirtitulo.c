@@ -17,19 +17,28 @@
 static int cinemetaLig = 1;
 int ajustes_social(void) { return 1; }
 int ajustes_hist_conta(void) { return 1; }
+int ajustes_fonte_biblioteca(void) { return 0; }
 int ajustes_busca_cinemeta(void) { return cinemetaLig; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
 int ajustes_ocultar_nao_lancados(void) { return 0; }   // #369: descoberta.c le o ajuste
 int ajustes_ocultar_filmes_vistos(void) { return 0; }
 void addons_lista_travar(void) {}
 void addons_lista_destravar(void) {}
-#include "stub_perfisessao.h"
+#include "perfis.h"
+#define NV_PERFIL_SESSAO_FORTE
+static uint64_t testeSessao = 1;
+uint64_t perfis_sessao_geracao(void) { return testeSessao; }
+int perfis_sessao_atual(uint64_t g) { return g == testeSessao; }
+int perfis_sessao_travar(uint64_t g) { return perfis_sessao_atual(g); }
+void perfis_sessao_destravar(void) {}
 #include "../src/descoberta.c"
 Uint32 SDL_GetTicks(void) { return 0; }
 #include "../src/progresso.h"
 #include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
+#define NV_TEST_SESSAO_PROPRIA
+#define NV_TEST_SOCIAL_PROPRIO
 #include "jellyfin_stub.inc"
 
 // --- DUBLES: nenhum participa da regra, so fazem descoberta.c linkar ---------
@@ -272,6 +281,11 @@ char *rede_baixar(const char *u, int t) {
 }
 char *rede_baixar_com(const char *u, int t, const char *const *c) {
   (void)c; return rede_baixar(u, t); }
+char *rede_baixar_st(const char *u, int t, const char *const *c, int *status) {
+  char *r = rede_baixar_com(u, t, c);
+  if (status) *status = r ? 200 : 404;
+  return r;
+}
 int arte_reserva_registrar(const char *url, const char *imdb, int poster) {
   (void)url; (void)imdb; (void)poster; return 1; }
 
@@ -458,6 +472,24 @@ int main(void) {
     k = desc_titulo_pronto();
     assert(k >= 0 && nMeta() >= 1); }
   puts("ok  sem cartaz: cai no caminho antigo (espera o /meta)");
+
+  // A new visit must stamp both existing and newly inserted IMDb seeds.
+  // buscarEps ran inline above; restore the UI thread's unbound context.
+  free(pthread_getspecific(descSessaoChave));
+  pthread_setspecific(descSessaoChave, NULL);
+  testeSessao++;
+  nPedidos = 0;
+  desc_pedir_titulo_semente("tt0000999:1:1", 0, "series", "Titulo Y", "2020", "https://p.test/y.jpg");
+  assert(desc_titulo_pronto() == cat_indice_por_imdb("tt0000999"));
+  assert(desc_titulo_pronto() == -1);       // consumed exactly once
+  desc_pedir_titulo_semente("tt0000995", 0, "movie", "New seed", "2022", "https://p.test/new.jpg");
+  { int k = desc_titulo_pronto();
+    assert(k >= 0 && !strcmp(cat_item(k)->imdb, "tt0000995")); }
+  desc_pedir_titulo_semente("tt0000995", 0, "movie", "New seed", "2022", "https://p.test/new.jpg");
+  testeSessao++;                          // profile changes before consumption
+  assert(desc_titulo_pronto() == -1);
+  assert(nPedidos == 0);
+  puts("ok  IMDb seeds: current visit opens, stale publication is rejected");
 #endif
   puts("abrirtitulo: ok");
   return 0;

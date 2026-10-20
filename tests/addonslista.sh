@@ -7,9 +7,10 @@ TMPDIR="${TMPDIR%/}"
 #   bash tests/addonslista.sh
 set -eu
 cd "$(dirname "$0")/.."
-flags=(-O1 -g -Isrc -ffunction-sections -fdata-sections -Wl,-dead_strip \
+flags=(-O1 -g -Isrc -ffunction-sections -fdata-sections \
        -I/opt/homebrew/include -I/opt/homebrew/include/SDL2 \
        -Wno-deprecated-declarations -Wno-macro-redefined)
+if [ "$(uname -s)" = Darwin ]; then flags+=(-Wl,-dead_strip); else flags+=(-Wl,--gc-sections); fi
 if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit-frame-pointer); fi
 # SO addons.c: o teste chama o leitor do arquivo e os acessores, que nao tocam
 # rede, SDL nem descoberta. -dead_strip com secoes por funcao descarta o resto
@@ -20,8 +21,8 @@ if [ "${SANITIZE:-0}" = 1 ]; then flags+=(-fsanitize=address,undefined -fno-omit
 # parser, cache e i18n dublados no proprio teste — ver tests/addonslista.c.
 # js.c entra pelo caso do #112: o manifesto do addon de canal e lido de
 # verdade (capacidadesDoManifesto), porque e ele que decide o tipo pedido.
-cc "${flags[@]}" src/addons.c src/watchstate.c src/fontefalha.c src/js.c src/jsw.c src/addonstats.c tests/addonslista.c -o ${TMPDIR:-/tmp}/nuvio-addonslista-tests
-saida=$(${TMPDIR:-/tmp}/nuvio-addonslista-tests)
+cc "${flags[@]}" src/addons.c src/watchstate.c src/fontefalha.c src/js.c src/jsw.c src/addonstats.c src/idcanal.c tests/addonslista.c -o ${TMPDIR:-/tmp}/nuvio-addonslista-tests
+saida=$(${TMPDIR:-/tmp}/nuvio-addonslista-tests) || { echo "$saida"; exit 1; }
 echo "$saida" | grep -v '^\[addons\]' || true
 echo "$saida" | grep -q 'addonslista: ok'
 # resposta curta sem fonte vai para o log com o texto (os 75 bytes do id 1504)

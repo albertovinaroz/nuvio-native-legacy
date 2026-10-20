@@ -481,6 +481,7 @@ static const struct { const char *radical, *cod; } NOME_IDIOMA[] = {
   { "italian", "ita" }, { "japanese", "jpn" }, { "japon", "jpn" },
   { "korean", "kor" }, { "coreano", "kor" }, { "chin", "chi" },   // Chinese, Chinês
   { "russian", "rus" }, { "russo", "rus" }, { "arabic", "ara" },
+  { "العربية", "ara" }, { "عربي", "ara" }, { "arabe", "ara" },
   { "dutch", "dut" }, { "nederlands", "dut" }, { "holand", "dut" },
   { "polish", "pol" }, { "polski", "pol" }, { "turkish", "tur" }, { "turco", "tur" },
   // Nomes em ingles que addons mandam no "lang" (o Auto-Subs rotula

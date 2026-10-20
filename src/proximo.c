@@ -31,9 +31,9 @@ int prox_ancora(const CatEp *eps, int n, int temporada, int episodio,
                 int absolutaSimkl) {
   int i;
   if (!eps || n <= 0) return -1;
-  if (temporada > 0 && episodio > 0)
+  if (temporada >= 0 && episodio > 0)
     for (i = 0; i < n; i++)
-      if (valido(&eps[i]) && eps[i].temporada == temporada &&
+      if (eps[i].temporada >= 0 && eps[i].episodio > 0 && eps[i].temporada == temporada &&
           eps[i].episodio == episodio) return i;
   // So depois de o par falhar, e so quando quem chama AFIRMA que a numeracao e
   // absoluta. Reinterpretar por conta propria transformaria S2E3 de uma serie
@@ -118,7 +118,7 @@ int prox_para_item(const CatItem *ci, const CatEp *eps, int n,
   int ancora, i;
   if (!ci || !saida) return 0;
   if (strcmp(ci->tipo, "series")) return 0;
-  if (ci->temporada <= 0 || ci->episodio <= 0) return 0;
+  if (ci->temporada < 0 || ci->episodio <= 0) return 0;
   // Episodio semeado ainda em andamento: o proprio card ja oferece a coisa
   // certa. "Proximo" so existe depois que o anterior acabou.
   if (ci->progresso < PROX_CONCLUIDO) return 0;
@@ -135,7 +135,7 @@ int prox_para_item(const CatItem *ci, const CatEp *eps, int n,
   if (ancora < 0) return 0;
 
   for (i = ancora + 1; i < n; i++) {
-    if (!valido(&eps[i])) continue;
+    if (!valido(&eps[i]) && !(ci->temporada == 0 && eps[i].temporada == 0 && eps[i].episodio > 0)) continue;
     // Serie nao acompanhada e o unico caso que o nativo conhece (ver o
     // cabecalho): sem data legivel, ou fora da janela de noticia, nao mostra.
     if (!prox_mostrar_nao_acompanhada(0, prox_episodio_data_ms(&eps[i]), agoraMs))
@@ -155,14 +155,14 @@ int prox_seguinte(const CatItem *ci, const CatEp *eps, int n, int limiarPct,
   int ancora, i;
   if (!ci || !saida) return 0;
   if (strcmp(ci->tipo, "series")) return 0;
-  if (ci->temporada <= 0 || ci->episodio <= 0) return 0;
+  if (ci->temporada < 0 || ci->episodio <= 0) return 0;
   if (ci->progresso < limiarPct) return 0;
   if (!eps || n <= 0) return 0;
   ancora = prox_ancora(eps, n, ci->temporada, ci->episodio, 0);
   if (ancora < 0) return 0;
   for (i = ancora + 1; i < n; i++) {
     long long quando;
-    if (!valido(&eps[i])) continue;
+    if (!valido(&eps[i]) && !(ci->temporada == 0 && eps[i].temporada == 0 && eps[i].episodio > 0)) continue;
     quando = prox_episodio_data_ms(&eps[i]);
     if (quando != PROX_SEM_DATA && quando > agoraMs) return 0;   // nao foi ao ar
     saida->temporada = eps[i].temporada;

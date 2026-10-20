@@ -73,6 +73,10 @@ int  extras_comentario_curtidas(int i);
 // Nota de QUEM COMENTOU (user_rating do Trakt), 0..10; 0 quando nao avaliou.
 // A referencia mostra "10/10  17 curtidas" no rodape do cartao.
 int  extras_comentario_nota(int i);
+// ep selects the episode list; otherwise the title's comments.
+const char *extras_comentario_data(int ep, int i);
+int extras_comentario_spoiler(int ep, int i);
+int extras_comentario_respostas(int ep, int i);
 // Idioma do comentario ("en") quando difere do da interface; "" caso contrario.
 const char *extras_comentario_lingua(int i);
 const char *extras_comentario_ep_lingua(int i);
@@ -89,6 +93,11 @@ const char *extras_comentario_ep_lingua(int i);
 // episodios usa; a parte depois do primeiro ':' e ignorada.
 void extras_pedir_comentarios_ep(const char *imdbSerie, int temporada, int episodio);
 int  extras_n_comentarios_ep(void);
+// Paged episode feed. Appends in the worker; repeated near-end requests coalesce.
+void extras_comentarios_ep_mais(void);
+void extras_comentarios_ep_cancelar(void);
+int extras_comentarios_ep_tem_mais(void);
+int extras_comentarios_ep_tmdb(void);
 // 1 enquanto a consulta esta em voo. Quem desenha usa isto para mostrar
 // "carregando" em vez de "nao ha comentarios" — os dois estados sao a lista
 // vazia, e confundi-los faz o episodio parecer sem comentario nenhum.
@@ -101,6 +110,13 @@ const char *extras_comentario_ep_usuario(int i);
 const char *extras_comentario_ep_texto(int i);
 int  extras_comentario_ep_curtidas(int i);
 int  extras_comentario_ep_nota(int i);
+const char *extras_comentario_ep_data(int i);
+int extras_comentario_ep_respostas(int i);
+int extras_comentario_ep_spoiler(int i);
+// Lazy episode cache, shared by the comments tab and the context panel.
+int extras_comentarios_ep_do(const char *imdb, int temporada, int episodio);
+typedef struct { int nota, votos, distribuicao[11]; } ExEpNotas;
+void extras_notas_ep(ExEpNotas *saida);
 
 // NOTAS POR EPISODIO, para o painel que o web mostra em SERIE no lugar dos
 // cartoes (renderSeriesRatingsPanel, metaDetailsScreen.js:3843): uma fileira de
@@ -188,6 +204,7 @@ const char *extras_ficha_status(void);          // "Released", "Post Production"
 int         extras_ficha_duracao(void);         // minutos; 0 = nao ha
 const char *extras_ficha_paises(void);          // "United States of America, Canada"
 const char *extras_ficha_classificacao(void);   // "R", "PG-13", "14"
+const char *extras_ficha_digital(void);         // earliest announced digital release, ISO or empty
 const char *extras_ficha_lancamento(void);      // "2026-01-15"
 
 // TRAILERS. O id do YouTube, nome e miniatura saem do /movie/<id> ou /tv/<id>
@@ -198,6 +215,8 @@ const char *extras_ficha_lancamento(void);      // "2026-01-15"
 #define EX_TRAILER_MAX 6
 int         extras_n_trailers(void);
 const char *extras_trailer_yt(int i);        // id do video ("dQw4w9WgXcQ")
+void extras_trailer_audio_iso(char *dst);  // ISO de 2 letras do audio pedido ao trailer; "" no Original (so o TMDB sabe)
+int extras_trailer_idioma_preferido(int i);  // 1 in the chosen non-English audio, -1 TMDB pending
 const char *extras_trailer_nome(int i);      // "Official Trailer"
 // URL da miniatura. Previsivel a partir do id, sem chamada de API — e o mesmo
 // caminho que o web usa (metaDetailsScreen.js:5728). Passe direto a tex_obter:
@@ -216,6 +235,7 @@ void        extras_hero_trailer_pedir(const char *imdb, int serie, long tmdbId);
 // ao IMDb pedido. O snapshot sob trava evita que home combine n e ponteiro de
 // duas geracoes durante uma troca A -> B -> A.
 int         extras_hero_trailer_obter(const char *imdb, char *dst, unsigned cap);
+int         extras_hero_trailer_idioma_preferido(const char *imdb);  // same, for the hero
 #ifdef NUVIO_TRAILER_TEST
 int         extras_hero_trailer_parse(const char *json, char *dst, unsigned cap);
 #endif

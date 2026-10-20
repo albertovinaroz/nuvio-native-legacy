@@ -318,10 +318,10 @@ static long malMapeado(const char *id,long tmdb,int t,int *ep){
 }
 
 // O PEDIDO, no molde do plugin oficial (tidb.plugin.js, fetchData):
-//   - tmdb_id quando o app sabe o id do TMDB E o par temporada/episodio do
-//     TMDB deste episodio (o TMDB confirmou o par, catalogo.h CatEp.tmdbE): sem
-//     remapeamento nenhum. So sem isso vai imdb_id + numeracao do Cinemeta, e
-//     ai vale a regra de descartar a resposta que ecoa outro episodio;
+//   - tmdb_id with TMDB-confirmed season/episode (CatEp.tmdbE), otherwise
+//     imdb_id with Cinemeta numbering. v4 converts provider coordinates
+//     server-side; omit mapping because we have no verified TVDB order.
+//     Reject responses that echo a different episode;
 //   - duration_ms = a duracao REAL do video quando o player ja sabe, e um
 //     pedido de novo quando ela chega ou muda (intro_definir_duracao);
 //   - 200 = trechos; 204 (sem dados) e 404 (desconhecido) = zero trechos,
@@ -331,9 +331,9 @@ typedef struct{char id[24];long tmdb;int t,e,anime;double durAnt,durProx,dur;uns
 
 void intro_montar_url(char *url,size_t n,const char *imdb,long tmdb,int t,int e,double durSeg){
   size_t k;
-  if(tmdb>0)k=(size_t)snprintf(url,n,"https://api.theintrodb.org/v3/media?tmdb_id=%ld",tmdb);
-  else k=(size_t)snprintf(url,n,"https://api.theintrodb.org/v3/media?imdb_id=%s",imdb?imdb:"");
-  if(k<n&&t>0&&e>0)k+=(size_t)snprintf(url+k,n-k,"&season=%d&episode=%d",t,e);
+  if(tmdb>0)k=(size_t)snprintf(url,n,"https://api.theintrodb.org/v4/media?tmdb_id=%ld",tmdb);
+  else k=(size_t)snprintf(url,n,"https://api.theintrodb.org/v4/media?imdb_id=%s",imdb?imdb:"");
+  if(k<n&&t>=0&&e>0)k+=(size_t)snprintf(url+k,n-k,"&season=%d&episode=%d",t,e);
   if(k<n&&durSeg>1.0)snprintf(url+k,n-k,"&duration_ms=%.0f",durSeg*1000.0);
 }
 
@@ -352,17 +352,18 @@ void intro_definir_buscador(int (*f)(const char *,char **,int *)){buscar=f?f:bus
 static int buscarInterno(const char *url,char **corpo,int *status){return buscar(url,corpo,status);}
 
 enum{R_OK,R_VAZIO,R_FALHA};
-// Chave do cache de "nao conhece": o id que foi perguntado.
+// Episode misses are session-only (credfonte.c), cleared on upgrade/restart.
+// Persistent network misses hash the full URL, so /v3 cannot block /v4.
 static void chave404(char *k,size_t n,const Pedido *p){
   if(p->tmdb>0)snprintf(k,n,"tmdb:%ld",p->tmdb);else snprintf(k,n,"%s",p->id);
 }
 static int pedirEp(const Pedido *p,int t,int e,double dur,char **json){
   char url[320],k[32],*j=NULL;int st=0;long agora=(long)time(NULL);
   *json=NULL;chave404(k,sizeof k,p);
-  if(t>0&&e>0&&cred_404_visto(k,t,e,agora))return R_VAZIO;
+  if(t>=0&&e>0&&cred_404_visto(k,t,e,agora))return R_VAZIO;
   intro_montar_url(url,sizeof url,p->id,p->tmdb,t,e,dur);
   buscar(url,&j,&st);
-  if(st==204||st==404){free(j);if(t>0&&e>0)cred_404_marcar(k,t,e,agora);return R_VAZIO;}
+  if(st==204||st==404){free(j);if(t>=0&&e>0)cred_404_marcar(k,t,e,agora);return R_VAZIO;}
   if(st<200||st>299||!j){
     free(j);
     printf("[intro] %s S%02dE%02d: resposta %d, tenta de novo depois\n",k,t,e,st);fflush(stdout);
@@ -388,7 +389,7 @@ static int geracaoVale(unsigned g){int v;pthread_mutex_lock(&trava);v=(g==geraca
 static void tentarVizinhos(const Pedido *p){
   int cand[2],k,nc=0;double durs[2];
   double ini,dv;
-  if(p->t<1||p->e<1||cred_viz_ler(p->id,p->t,&ini,&dv))return;
+  if(p->t<0||p->e<1||cred_viz_ler(p->id,p->t,&ini,&dv))return;
   if(p->e>1){cand[nc]=p->e-1;durs[nc++]=p->durAnt;}
   cand[nc]=p->e+1;durs[nc++]=p->durProx;
   for(k=0;k<nc;k++){
@@ -423,7 +424,7 @@ static int pedirAniskip(const Pedido *p,IntroTrecho *v,int max,int *falha){
   *falha=0;
   if(ep<1)return 0;
   if(!strncmp(p->id,"kitsu:",6)||!strncmp(p->id,"mal:",4)){
-    if(p->t>1)return 0; // id do addon ja e uma temporada MAL
+    if(p->t!=1)return 0; // id do addon ja e uma temporada MAL; especial exige mapa proprio
     mal=malDe(p->id);
   }else{
     if(!p->anime)return 0;
@@ -532,7 +533,7 @@ void intro_pedir_ids(const char *imdb,long tmdb,int t,int e,double durAnt,double
     nId=(int)(c0-imdb)+(int)strcspn(c0,":");if(nId>(int)sizeof b.id-1)nId=(int)sizeof b.id-1;
     memcpy(b.id,imdb,(size_t)nId);}
   b.tmdb=tmdb>0?tmdb:0;
-  b.t=t>0&&e>0?t:0;b.e=t>0&&e>0?e:0;
+  b.t=t>=0&&e>0?t:0;b.e=t>=0&&e>0?e:0;
   b.durAnt=durAnt;b.durProx=durProx;
   disparar(&b,0.0,1);
 }
@@ -653,7 +654,7 @@ double intro_fim_estimado(double dur){
 int intro_resposta_confere(const char *j,int t,int e){
   const char *f;double rt,re;
   if(!j)return 0;
-  if(t<1||e<1)return 1;                       // filme: sem par a conferir
+  if(t<0||e<1)return 1;                       // filme: sem par a conferir
   f=js_fim(j);
   rt=js_num(j,f,"season",-1);re=js_num(j,f,"episode",-1);
   // Sem eco (formato antigo): nao ha como provar o contrario, aceita.
@@ -754,6 +755,14 @@ int intro_botao_visivel(double*fim,int*tipo){
   int v;pthread_mutex_lock(&trava);v=botaoVis;
   if(v){if(fim)*fim=botaoFim;if(tipo)*tipo=botaoTipo;}
   pthread_mutex_unlock(&trava);return v;
+}
+
+// Dismiss this appearance; opening the controls can reveal it again.
+void intro_botao_esconder(double agora){
+  pthread_mutex_lock(&trava);
+  botaoVis=0;
+  botaoDesde=agora-INTRO_BOTAO_SEG-1.0;
+  pthread_mutex_unlock(&trava);
 }
 
 // O trecho de creditos que comeca POR ULTIMO, e nao o primeiro da lista

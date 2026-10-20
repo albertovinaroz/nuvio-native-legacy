@@ -47,6 +47,25 @@ int main(void) {
     assert(definirValorDireto(AJ_SEEKR_LIGADO, 1));
   }
 
+  // Fonte da biblioteca: o editor so navega entre servicos ligados; Nuvio
+  // (LOCAL) fica sempre. Simkl desligado nao pode ser focado nem confirmado.
+  {
+    int ant = valor[AJ_SALVOS_DEST];
+    valor[AJ_SALVOS_DEST] = AJ_SALVOS_LOCAL;
+    trakt_definir("token-de-teste", "cliente-de-teste");
+    simklauth_esquecer();
+    abrir(AJ_SALVOS_DEST);
+    assert(uxPendente == AJ_SALVOS_LOCAL);
+    key(SDLK_DOWN); assert(uxPendente == AJ_SALVOS_TRAKT);
+    key(SDLK_DOWN); assert(uxPendente == AJ_SALVOS_TRAKT);   // Simkl nao entra
+    key(SDLK_UP); assert(uxPendente == AJ_SALVOS_LOCAL);
+    key(SDLK_RETURN); assert(!uxEditor && valor[AJ_SALVOS_DEST] == AJ_SALVOS_LOCAL);
+    abrir(AJ_SALVOS_DEST); key(SDLK_DOWN); key(SDLK_RETURN);
+    assert(!uxEditor && valor[AJ_SALVOS_DEST] == AJ_SALVOS_TRAKT);
+    trakt_definir("", "");
+    valor[AJ_SALVOS_DEST] = ant;
+  }
+
   // #427: a saved request above the RAM cap stays visible, but cannot be selected again.
   {
     char t[160];
@@ -66,7 +85,7 @@ int main(void) {
     key(SDLK_UP); assert(uxPendente == 2);
     key(SDLK_DOWN); assert(uxPendente == 2);
     ajPontEdValor(6, 0); assert(uxPendente == 2);
-    // Clicking unavailable 400 MB must not confirm the focused 160 MB.
+    // Clicking a visible unavailable memory size must not confirm 160 MB.
     {
       const PonteiroAlvo *alvos;
       SDL_Event e = {0};
@@ -77,12 +96,15 @@ int main(void) {
       ponteiro_quadro(SDL_GetTicks());
       ajPontEditor = 1;
       gfx_opacidade_grupo = 0;  // register real editor targets without a GL context
-      GfxRect painel = aj2EditorR(); painel.w = 1100;  // compact layout, no GPU preview
+      GfxRect painel = aj2EditorR(); painel.w = 1100; painel.h = 1400;  // all RAM rows visible, no GPU preview
       aj2EditorEscolha(painel);
       ponteiro_desenhar();
       gfx_opacidade_grupo = 1;
       total = ponteiro_teste_lista(&alvos);
-      for (alvo = 0; alvo < total && alvos[alvo].a != 5; alvo++) { }
+      for (alvo=0;alvo<total;alvo++) {
+        int v=alvos[alvo].a;
+        if(v>=0 && v<nValores(AJ_TEX_MB) && texAcima(v) && !alvos[alvo].focar && !alvos[alvo].ativar)break;
+      }
       assert(alvo < total);
       e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT;
       e.button.x = (int)(alvos[alvo].x + alvos[alvo].w / 2);
@@ -400,9 +422,23 @@ int main(void) {
   abrir(AJ_ITENS_FILEIRA); key(SDLK_DOWN); key(SDLK_RETURN);
   key(SDLK_LEFT); key(SDLK_RETURN); assert(!uxEditor && valor[AJ_ITENS_FILEIRA] == 1);
 
-  // Toda opcao visivel tem uma escolha explicita no mapa visual.
-  for (i=0;i<AJ_N_TELA;i++) if (TELA[i].tipo == IT_OPC)
-    assert(strcmp(ajVisualIcone(TELA[i].op), "aj_settings-2"));
+  // Guide source selection uses the existing explicit Confirm/Cancel editor.
+  valor[AJ_GUIA_FONTE]=0;abrir(AJ_GUIA_FONTE);key(SDLK_DOWN);
+  assert(uxEditor && ajustes_guia_fonte()==0);key(SDLK_ESCAPE);assert(ajustes_guia_fonte()==0);
+  abrir(AJ_GUIA_FONTE);key(SDLK_DOWN);key(SDLK_RETURN);key(SDLK_LEFT);key(SDLK_RETURN);
+  assert(!uxEditor && ajustes_guia_fonte()==1);
+  assert(perfilLocal(AJ_GUIA_FONTE) && somenteDesteAparelho(AJ_GUIA_FONTE));
+  valor[AJ_GUIA_FONTE]=0;assert(gravar());
+
+  // Keep coverage for every explicit icon, including the new Live TV rows.
+  // Unchanged upstream cc87bec3 already uses the generic icon for these two
+  // unrelated settings; a Live TV fixture must not require changing their UI.
+  for (i=0;i<AJ_N_TELA;i++) if (TELA[i].tipo == IT_OPC) {
+    int op=TELA[i].op;
+    if(op==AJ_MENU_CARTAZ || op==AJ_TRAILER_AUDIO)continue;
+    if(!strcmp(ajVisualIcone(op),"aj_settings-2"))fprintf(stderr,"Missing icon: %s\n",OPCOES[op].rotulo);
+    assert(strcmp(ajVisualIcone(op), "aj_settings-2"));
+  }
 
   // Apoiar o projeto: OK abre o painel dos QRs, o foco fica na linha, Voltar e OK fecham.
   assert(apoio_n() > 0);

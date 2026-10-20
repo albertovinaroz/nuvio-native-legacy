@@ -3,6 +3,12 @@
 #include <assert.h>
 static Uint32 agora;
 Uint32 SDL_GetTicks(void) { return agora; }
+// These fixtures never resolve a TorBox file link. Fail closed if requested.
+int debrid_tb_link(int usenet, int item, int file, char *dst, unsigned n) {
+  (void)usenet; (void)item; (void)file;
+  if (n) dst[0] = 0;
+  return 0;
+}
 const char *i18n(const char *s) { return s; }
 const char *ling_nome(const char *s) { return s; }
 const char *ling_audio(void) { return ""; }

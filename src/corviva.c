@@ -700,6 +700,13 @@ void corviva_quadro(float dt, int modo, int usarLogo, int reduzido) {
     fonte = &cenaLogo; fonteOk = 1;   // arte P&B com logo colorido
   }
   memcpy(novo[0], fonteOk ? fonte->acento : BRANCO, sizeof novo[0]);
+  if (fonteOk && modo == CORVIVA_SIMPLES_CLARO) {
+    float L, C, h;
+    lchDe(novo[0], &L, &C, &h);
+    // Lift lightness and halve chroma without rotating hue; gamut mapping
+    // only lowers chroma further. Existing tokens select contrasting ink.
+    lchParaSrgb(L + (1.0f - L) * 0.65f, C * 0.45f, h, novo[0]);
+  }
   memcpy(novo[1], FUNDO, sizeof novo[1]);   // o estilizado (base tingida) saiu
   for (k = 0; k < 3; k++) memcpy(novo[2 + k], fonteOk ? fonte->grad[k] : BRANCO, sizeof novo[0]);
   for (k = 0; k < 4; k++) memcpy(novo[5 + k], temCena ? cena.regiao[k] : FUNDO, sizeof novo[0]);

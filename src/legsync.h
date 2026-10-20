@@ -154,6 +154,7 @@ int legsync_pil_passo(LegSyncPil *p, const LegSyncVisao *v, unsigned agora, cons
 // Liga o AutoSync como provedor da linha de sincronizacao do seletor de
 // legendas do F04 (legendasui_definir_sync). Idempotente; thread da UI.
 void legsync_ui_ligar(void);
+void legsync_audio_offset_texto(int ms, char *dst, unsigned tam);
 
 // So para testes: leitor do legref antes do primeiro legsync_iniciar.
 void legsync_teste_leitor(LegRefLer ler, void *u);

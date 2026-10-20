@@ -1,7 +1,7 @@
 // Offline home render: real home, A27 chrome, clock, moving focus and backdrop.
-// Budget: one shared five-pass capture per animated frame on webOS (a changed
-// backdrop is never served stale), zero while static; native retains
-// every-frame freshness. Same kernel and resolution preserve the look.
+// Budget: at most two five-pass captures per animated frame on webOS and .tpk
+// (intervening backdrop draws invalidate sharing), zero while static. Same kernel
+// and resolution preserve the look.
 #include "gfx.h"
 #include "ajustes.h"
 #include "addons.h"
@@ -13,6 +13,14 @@
 #include "menu.h"
 #include "text.h"
 #include "tex_cache.h"
+// Render the real consent modal offline, without enabling its Tizen startup gate.
+#define telemetria_primeira_vez consent_unused_startup
+#define telemetria_aberto consent_unused_open
+#define telemetria_evento consent_unused_event
+#define telemetria_atualizar consent_unused_update
+#define telemetria_desenhar consent_draw
+#define telemetria_teste_foco consent_unused_focus
+#include "../src/telemetria.c"
 #include <SDL2/SDL_image.h>
 #include <assert.h>
 #include <stdio.h>
@@ -20,6 +28,7 @@
 #include <string.h>
 
 static int width, height, failures;
+static float fade = .001f;   // backdrop alpha step per frame while in motion
 static void check(int ok, const char *label) {
   printf("%s: %s\n", ok ? "PASS" : "FAIL", label);
   failures += !ok;
@@ -32,7 +41,7 @@ static void frame(int n, int motion, int trailer) {
   home_shot_trailer(trailer);
   // Change the backdrop hash before the first glass, including hero buttons.
   // Native trailer holes are checked separately below.
-  if (motion) gfx_cor((GfxRect){0, 0, 1920, 1080}, 0, .12f, .18f, .3f, .02f + .001f * (n % 20));
+  if (motion) gfx_cor((GfxRect){0, 0, 1920, 1080}, 0, .12f, .18f, .3f, .02f + fade * (n % 20));
   home_desenhar(now);
   menu_pilula_mostrar(1);
   menu_atualizar(1.0f / 60, now); menu_desenhar(now);
@@ -108,12 +117,17 @@ int main(int argc, char **argv) {
     if (gfx_vidro_capturas > maximum) maximum = gfx_vidro_capturas;
   }
   printf("tier=%s drawable=%dx%d animated/focus: captures/frame=%.2f passes/frame=%.2f blur-fill/frame=%.6f copy/frame=%.6f blur-pixels/frame=%.0f max-captures=%d\n",
-         webos ? "webos" : "native", width, height, captures / 20.0, passes / 20.0, fill / 20, copy / 20, fill / 20 * width * height, maximum);
-  check(captures > 0 && maximum <= (webos ? 1 : 4), "capture budget across all chrome regions");
-  check(captures <= (webos ? 20 : 80), "animated capture budget");
-  check(passes == captures * 5, "unchanged five-pass blur kernel");
-  check(fill / 20 <= (webos ? .7 : 1.0), "blur fill budget: one shared full-screen capture per animated frame on webOS");
-  check(webos || captures == 80, "native capture behavior unchanged");
+         strrchr(argv[2], '/') ? strrchr(argv[2], '/') + 1 : argv[2], width, height, captures / 20.0, passes / 20.0, fill / 20, copy / 20, fill / 20 * width * height, maximum);
+  check(captures > 0 && maximum <= 2, "capture budget across all chrome regions");
+  check(captures <= 40, "animated capture budget");
+  // Blur budget (gfx.c vidPreparar/vidCapturar): targets capped at the 1080p
+  // chain, so 4K pays the 1080p blur pixels; 1080p goes to 1/4 in one pass.
+  check(passes == captures * (width > 1920 ? 4 : 3), "blur passes per capture");
+  check(captures && fill * width * height / captures <= 1.5e6, "blur pixels per capture capped at the 1080p chain");
+  // Keep a full backdrop copy for region misses; blur only the glass regions.
+  check(captures && copy / captures <= 1.0, "at most one full backdrop copy per capture");
+  check(captures && fill * width * height / captures <= 2.5e5, "blur only the glass regions");
+  check(fill / 20 <= (webos ? 1.4 : 1.0), "blur fill budget with intervening backdrop invalidation");
   shot(argv[2], "focus");
   // Upload invalidation must override temporal reuse; sample age must not be
   // renewed by reuse, or animation would freeze indefinitely.
@@ -126,10 +140,43 @@ int main(int argc, char **argv) {
     frame(220, 0, 0); captures += gfx_vidro_capturas; passes += gfx_vidro_passadas;
   }
   printf("static: captures=%d passes=%d over five frames\n", captures, passes);
-  check(webos ? captures == 0 && passes == 0 : captures <= 5,
+  check(captures == 0 && passes == 0,
         "static backdrop reuse budget");
+  // Home captures first; the consent veil must enter the later modal capture,
+  // including on subsequent frames while the modal remains open: those may
+  // reuse that capture (its own slot), so they must match the first frame.
+  entrada = 1.0f;
+  size_t bytes = (size_t)width * height * 4;
+  unsigned char *first = malloc(bytes), *again = malloc(bytes);
+  assert(first && again);
+  for (int i = 0; i < 3; i++) {
+    frame(220, 0, 0);
+    int before = gfx_vidro_capturas, diff = 0;
+    consent_draw(13520);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, i ? again : first);
+    for (size_t p = 0; i && p < bytes; p++) diff |= first[p] != again[p];
+    check(i ? !diff : gfx_vidro_capturas > before, "consent veil invalidates Home backdrop before modal glass");
+  }
+  free(first); free(again);
+  shot(argv[2], "modal");
   for (int i = 0; i < 5; i++) frame(380 + i, 0, 1);
   shot(argv[2], "trailer");
+  // A changing backdrop must never reuse the previous frame's source.
+  fade = .02f; captures = 0;
+  for (int i = 0; i < 10; i++) { frame(221 + i, 1, 0); captures += gfx_vidro_capturas; }
+  printf("fade: captures=%d over ten frames\n", captures);
+  check(captures == 10, "fade recaptures each changed frame");
+  {
+    size_t bytes = (size_t)width * height * 4;
+    unsigned char *late = malloc(bytes), *fresh = malloc(bytes);
+    assert(late && fresh);
+    frame(230, 1, 0); frame(230, 1, 0);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, late);
+    gfx_vidro_sujar(); frame(230, 1, 0);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, fresh);
+    check(!memcmp(late, fresh, bytes), "the frame after a fade catches up");
+    free(late); free(fresh);
+  }
   check(glGetError() == GL_NO_ERROR, "GL state after trailer and chrome");
   tex_encerrar(); SDL_Quit();
   return failures ? 1 : 0;

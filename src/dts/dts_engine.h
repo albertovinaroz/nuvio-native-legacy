@@ -22,6 +22,9 @@ void dts_engine_set_ac3(int on);
 /* Samsung remux only: ring of the single-connection reader, in MiB (8..32,
  * default 32), for rings allocated after the call. webOS never calls it. */
 void dts_engine_set_ring_mib(int mib);
+/* Range read-ahead of dts_engine_open for engines opened after the call, in
+ * MiB (Settings > Buffer size): 0 = default (32 MiB), else 4 MiB ranges. */
+void dts_engine_set_ahead_mib(int mib);
 DtsEngine *dts_engine_create(void);
 int dts_engine_available(void);
 /* Dolby Vision path, set before open: AC-3/E-AC-3 tracks are selectable and

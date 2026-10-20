@@ -30,6 +30,7 @@
 #ifndef NV_TECLADO_H
 #define NV_TECLADO_H
 #include <SDL2/SDL.h>
+#include "arteurl.h"
 
 // Os 36 caracteres da grade, em ordem de leitura (6 fileiras de 6).
 const char *teclado_alfabeto(void);
@@ -44,7 +45,8 @@ const char *teclado_alfabeto(void);
 // regex de 450 vinda da conta era cortada so de abrir o campo e dar OK, e o corte
 // voltava para a conta. Em BYTES (o texto e UTF-8). Quem passa TECLADO_MAX ou
 // menos continua igual.
-#define TECLADO_LONGO 500
+// Posters Plus templates share the poster URL limit, including native/phone input.
+#define TECLADO_LONGO (NV_ARTE_URL_MAX - 1)
 
 // Abre a modal. `titulo` e a linha de cima ("Código do amigo"), `dica` a linha
 // de apoio logo abaixo, e `max` o teto de caracteres (limitado a TECLADO_MAX).

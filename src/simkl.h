@@ -14,6 +14,9 @@
 //   DEL  /sync/playback/{id}              apaga um pausado pelo id do registro
 //   GET  /sync/all-items/shows/watching   series em "watching", com o campo
 //                                         next_to_watch ("S01E05")
+//   GET  /sync/all-items/anime/<estado>   anime e um TERCEIRO tipo (raiz e
+//                                         objeto interno "anime"): os mesmos
+//                                         endpoints, o mesmo envelope
 //   GET  /sync/all-items/{movies|shows}/plantowatch
 //   POST /sync/add-to-list                {"movies":[{"to":"plantowatch",
 //                                          "ids":{"imdb":".."}}]}
@@ -61,6 +64,7 @@
 
 // 1 quando ha token do Simkl nesta TV (vinculo feito em Ajustes).
 int simkl_ativo(void);
+int simkl_aguardando(void);
 
 // Snapshot mensal da tela Perfil e Stats. A leitura de JSON e separada da
 // rede para os testes cobrirem a forma oficial de /users/settings e
@@ -83,12 +87,13 @@ const char *simkl_aviso_sem_vinculo(int querSimkl);
 // Item sem ids.imdb nao entra: sem imdb nao ha arte, fonte nem retomada.
 int simkl_ler_playback(const char *json, CatItem *dst, long long *ids, int max);
 
-// GET /sync/all-items/shows/watching -> o PROXIMO episodio de cada serie
-// (next_to_watch "S02E05"), com progresso 0 e o last_watched_at como instante.
-// Serie sem next_to_watch (em dia com o que foi ao ar) nao entra.
+// GET /sync/all-items/<shows|anime>/watching -> o PROXIMO episodio de cada
+// serie ou anime (next_to_watch "S02E05"), com progresso 0 e o last_watched_at
+// como instante. Serie sem next_to_watch (em dia com o que foi ao ar) nao entra.
 int simkl_ler_assistindo(const char *json, CatItem *dst, int max);
 
-// GET /sync/all-items/<movies|shows>/plantowatch -> itens com naLista = 1.
+// GET /sync/all-items/<movies|shows|anime>/plantowatch -> itens com
+// naLista = 1. `serie` = 0 le "movies"; 1 le "shows" e "anime".
 int simkl_ler_plantowatch(const char *json, int serie, CatItem *dst, int max);
 
 // Corpo e rota do "+" (adicionar = 1) e do "-" (0). 1 quando montou; 0 para id
