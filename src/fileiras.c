@@ -1,6 +1,7 @@
 #include "fileiras.h"
 #include "dados.h"
 #include "addons.h"
+#include "addonurl.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -814,6 +815,10 @@ void fil_remover(int i) {
 //      tambem as escolhas das suas fileiras (#365/#504), mesmo ja vistas.
 // A chave de catalogo comeca por <id do manifesto>_ ou, sem id, <base>_.
 static int doAddon(const char *chave, const char *id, const char *base) {
+  char instance[32];
+  nv_addon_chave(base, instance, sizeof instance);
+  size_t len = strlen(instance);
+  if (len && !strncmp(chave, instance, len) && chave[len] == '_') return 1;
   size_t li = id ? strlen(id) : 0, lb = base ? strlen(base) : 0;
   if (li && !strncmp(chave, id, li) && chave[li] == '_') return 1;
   if (lb && !strncmp(chave, base, lb) && chave[lb] == '_') return 1;
@@ -849,8 +854,8 @@ int fil_addon_ausente(const char *id, const char *base) {
       ((id && *id) || (base && *base))) {
     ausente = 1;
     for (int i = 0; i < nAddonsConta; i++)
-      if ((id && *id && !strcmp(id, addonsConta[i].id)) ||
-          (base && *base && !strcmp(base, addonsConta[i].base))) ausente = 0;
+      if (base && *base ? !strcmp(base, addonsConta[i].base) :
+          (id && *id && !strcmp(id, addonsConta[i].id))) ausente = 0;
   }
   pthread_mutex_unlock(&trava);
   if (vinculada) addons_destravar_lista();

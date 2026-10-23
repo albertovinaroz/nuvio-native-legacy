@@ -74,6 +74,14 @@ const char *sessao_usuario(void)  { return __atomic_load_n(&fixtureDono, __ATOMI
 int         perfis_ativo(void)    { return 1; }
 #endif
 const char *dados_dir(void)       { return dirDados; }
+char *dados_caminho(char *dst, unsigned size, const char *name) {
+  snprintf(dst, size, "%s/%s", dirDados, name); return dst;
+}
+int ajustes_nota_episodio(int source) { (void)source; return 1; }
+void addons_catalogo_chave(const char *id, const char *base, const char *type,
+                           const char *catalog, char *dst, unsigned size) {
+  (void)base; snprintf(dst, size, "%s_%s_%s", id, type, catalog);
+}
 static void caminhoDado(char *dst, size_t tam, const char *nome) {
   snprintf(dst, tam, "%s/%s", dirDados, nome);
 }

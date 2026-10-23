@@ -774,7 +774,8 @@ static GfxRect celulaRect(int i, const CatItem *it, const char **arte) {
   float x0 = vtInicio();
   float cx = x0 + celX[i], cy = VT_TOPO + celY[i] - scrollY;
   if (lay == VT_LAY_LINHA) {
-    *arte = it->backdrop[0] ? it->backdrop : it->poster;
+    *arte = posterprov_card_formato(it->origem, it->imdb, it->tmdb, it->tipo,
+                                   it->backdrop[0] ? it->backdrop : it->poster, 1);
     return vtTimelineArte(vtTimelineCard(cy));
   }
   { const char *pp = posterprov_card_addon(it->origem, it->imdb, it->tmdb, it->tipo, it->poster);
@@ -2357,7 +2358,8 @@ static void painel(float a) {
   if (cartaz) {
     // Mantém a geometria 2:3 mesmo sem arte para não deslocar os metadados.
     GfxRect r = { VT_PAN_X, y, VT_PAN_ART_W, VT_PAN_ART_H };
-    const char *arte = it.poster[0] ? it.poster : it.backdrop;
+    const char *arte = posterprov_card_addon(it.origem, it.imdb, it.tmdb, it.tipo,
+                                              it.poster[0] ? it.poster : it.backdrop);
     float raio = ajustes_raio_poster_px() / VT_PAN_ART_H;   // o raio de cartaz do app
     GLuint t = arte[0] ? tex_obter_larg(arte, VT_PAN_ART_W) : 0;
     gfx_cor(r, raio, 1, 1, 1, 0.05f * a);
@@ -3023,7 +3025,7 @@ static void timelineCard(int i,float cy,float a,float x0) {
     gfx_cor((GfxRect){card.x,card.y+12,3,card.h-24},.5f,ar,ag,ab,a);}
   // ARTE PREENCHE O QUADRO 16:9 (cover). Sem backdrop: o cartaz desfocado
   // preenche e o cartaz nitido fica no meio — nunca uma moldura cinza.
-  const char *art=it.backdrop[0]?it.backdrop:it.poster;GLuint tex=art[0]?tex_obter_larg(art,390):0;
+  const char *art=posterprov_card_formato(it.origem,it.imdb,it.tmdb,it.tipo,it.backdrop[0]?it.backdrop:it.poster,1);GLuint tex=art[0]?tex_obter_larg(art,390):0;
   GLuint fundo=tex&&!it.backdrop[0]?gfx_desfocado(tex,art):tex;
   if(fundo){gfx_card_forcar_cover_atual=1;gfx_tex_aspect_atual=tex_aspecto(art);
     gfx_rect(artRect,fundo,GFX_CARD,0,0,0,ra,0,0,0,a);gfx_card_forcar_cover_atual=0;gfx_tex_aspect_atual=0;}
@@ -3168,7 +3170,8 @@ static void fluxoInfo(float a, float x0) {
     txt_bloco_corta(TXT_DET_META2, it.sinopse, 226, 229, 236, x0, y, w, 30.0f, a * 0.9f, 2);
 }
 static const char *arteDeitada(const CatItem *it) {
-  return it->backdrop[0] ? it->backdrop : it->poster;
+  return posterprov_card_formato(it->origem, it->imdb, it->tmdb, it->tipo,
+                                 it->backdrop[0] ? it->backdrop : it->poster, 1);
 }
 
 // O CARTAZ DA GRADE (Grade e Decadas): arte 2:3, titulo embaixo, e na Grade de

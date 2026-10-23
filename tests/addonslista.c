@@ -15,6 +15,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "addons.h"
+#include "plugins.h"
 #include "fontecache.h"
 #include "stub_perfisessao.h"
 
@@ -64,6 +65,13 @@ static int falhasLento, chamadasLento, prazoLento[2], prazoCanal;
 // instalado sem capacidades (nasce "fonte"), o manifesto diz so "subtitles" e
 // /stream/ responde 404.
 static int pedidosLegendaStream, pedidosLegendaManifesto, idxLegenda = -1;
+char *rede_baixar(const char *url, int seconds);
+char *rede_baixar_st(const char *url, int seconds, const char *const *headers, int *status) {
+  (void)headers;
+  char *body = rede_baixar(url, seconds);
+  if (status) *status = body ? 200 : 0;
+  return body;
+}
 const char *rede_ultimo_erro(void) { return ""; }
 char *rede_baixar(const char *url, int s) {
   const char *r;
@@ -216,6 +224,21 @@ static void conferirTexto(const char *o_que, const char *obtido, const char *esp
 
 static int sempreCancelado(void *u) { (void)u; return 1; }
 
+static int pluginsEnabled, pluginSources;
+static PlugResumo pluginSummary;
+void plugins_resumo(const char *id, const char *tipo, PlugResumo *saida) {
+  (void)id; (void)tipo;
+  *saida = pluginsEnabled ? pluginSummary : (PlugResumo){0};
+}
+static int pluginsActive(void) { return pluginsEnabled; }
+static int pluginProvider(const char *id, const char *tipo, int (*cancelado)(void *),
+                          void *ctx, OrigemAviso aviso, void *avisoU, void *saida) {
+  (void)id; (void)tipo; (void)cancelado; (void)ctx; (void)aviso; (void)avisoU;
+  Stream **streams = saida;
+  *streams = pluginSources ? calloc(1, sizeof **streams) : NULL;
+  return pluginSources;
+}
+
 int main(void) {
   const char *liveTypes[] = {"tv", "channel", "channels", "live", "iptv", "LiVe", "sport", "sports"};
   for (unsigned i = 0; i < sizeof liveTypes / sizeof *liveTypes; i++) {
@@ -290,10 +313,10 @@ int main(void) {
   // 4) so um consultado, e ele nao responde
   addons_alternar(1);                       // "Fonte e catalogo" desligado
   conferirTexto("um mudo", buscarMotivo("tt0000004"), "Formato antigo não respondeu");
-  // 5) so um, e responde vazio
+  // Malformed resource responses are failures, not empty stream arrays.
   resp[1] = "{\"err\":\"Invalid debrid key\"}";
-  conferirTexto("um vazio", buscarMotivo("tt0000005"),
-                "Formato antigo respondeu: não tem este título");
+  conferirTexto("invalid resource", buscarMotivo("tt0000005"),
+                "Formato antigo não respondeu");
   // 6) D5: os de fonte desligados
   addons_alternar(2);
   conferirTexto("desligados", buscarMotivo("tt0000006"),
@@ -618,12 +641,33 @@ int main(void) {
     conferirTexto("ultimo dos 128 presente", addons_nome(127), "Conta 127");
   }
 
+  // Local JS scrapers are source providers even without Stremio add-ons.
+  f = fopen(caminho, "w");
+  if (!f) return 1;
+  fclose(f);
+  addons_carregar(dir);
+  conferir("zero Stremio add-ons", addons_n(), 0);
+  addons_definir_origem_extra(pluginProvider, pluginsActive);
+  conferirTexto("no providers", buscarMotivo("tt2050000"), "Nenhum add-on de fontes instalado");
+  pluginsEnabled = 1;
+  conferirTexto("plugins returned nothing", buscarMotivo("tt2050001"), "(sem causa)");
+  pluginSummary = (PlugResumo){ .enfileirados = 3, .terminados = 2 };
+  conferirTexto("plugin counts precede generic fallback", buscarMotivo("tt2050001"),
+                "Plugins não encontraram fontes (2 de 3 scrapers verificados)");
+  pluginSummary = (PlugResumo){0};
+  pluginSources = 1;
+  conferirTexto("plugin sources failed to open", buscarMotivo("tt2050002"), "(sem causa)");
+  conferir("plugin list has sources", addons_estado(), ADD_PRONTO);
+  addons_adicionar("Disabled source", "https://desligado.test/manifest.json");
+  addons_alternar(0);
+  pluginSources = 0;
+  conferirTexto("plugins with disabled Stremio sources", buscarMotivo("tt2050003"), "(sem causa)");
+  pluginsEnabled = 0;
+  conferirTexto("all providers disabled", buscarMotivo("tt2050004"), "Os add-ons de fontes estão desligados");
+
   remove(caminho);
   rmdir(dir);
   if (falhas) { printf("%d falha(s)\n", falhas); return 1; }
   printf("addonslista: ok\n");
   return 0;
 }
-
-// This fixture simulates account sync; the new owner marks add-on toggles dirty.
-void sync_sujar_addons(const char *url) { (void)url; }

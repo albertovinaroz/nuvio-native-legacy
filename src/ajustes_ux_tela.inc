@@ -26,7 +26,7 @@ static const Item TELA[] = {
     ROT("Durante e depois"),
       OPC(AJ_PAUSA_OVERLAY), OPC(AJ_TELA_ABERTURA), OPC(AJ_ABERTURA_ADDON), OPC(AJ_ABERTURA_FUNDO), OPC(AJ_ABERTURA_ESTILO), OPC(AJ_ESTAT_TAMANHO), OPC(AJ_ESTAT_LADO), OPC(AJ_PLR_CLASSIF), OPC(AJ_PULAR_ABERTURA), OPC(AJ_PULAR_RESUMO),
       OPC(AJ_PULAR_CREDITOS), OPC(AJ_PROXIMO_AUTO), OPC(AJ_PROXIMO_CONTAGEM), OPC(AJ_REACAO_CREDITOS), OPC(AJ_CW_CONCLUIDO), OPC(AJ_CW_MINIMO),
-      OPC(AJ_SAIDA_PLAYER), OPC(AJ_PROPORCAO_PADRAO), OPC(AJ_BRILHO_PLAYER), OPC(AJ_HDR_UI),
+      OPC(AJ_PLR_FORMATO), OPC(AJ_SAIDA_PLAYER), OPC(AJ_PROPORCAO_PADRAO), OPC(AJ_BRILHO_PLAYER), OPC(AJ_HDR_UI),
     ROT("Miniatura ao avançar"),
       OPC(AJ_SEEKR_LIGADO), OPC(AJ_SEEKR_CHAVE), OPC(AJ_SEEKR_TESTAR), OPC(AJ_SEEKR_FITA),
     MAIS(),
@@ -44,8 +44,14 @@ static const Item TELA[] = {
       OPC(AJ_SELOS_PACOTE), OPC(AJ_SELOS_PACOTE_ADD), OPC(AJ_SELOS_PACOTE_REM),
     ROT("Som e vídeo desta TV"),
       OPC(AJ_DTS_AC3),
+#ifdef NV_ANDROID
+      OPC(AJ_TUNNELING),
+#endif
 #if !defined(NV_TPK) && !defined(NV_ANDROID)
       OPC(AJ_DV_MKV),
+#ifdef NV_DV7_CONVERSION
+      OPC(AJ_DV7),
+#endif
 #endif
       OPC(AJ_CACHE_SEEK), OPC(AJ_MANTER_VIDEO), OPC(AJ_RETOMADA_MORNA), OPC(AJ_MANTER_PRAZO), OPC(AJ_SEEKR_AJUSTE),
 #if defined(NV_ANDROID) || (!defined(NV_TPK) && !defined(__EMSCRIPTEN__))
@@ -58,8 +64,10 @@ static const Item TELA[] = {
 #ifndef __EMSCRIPTEN__
     // .wgt: sem socket TCP/UDP no navegador, sem motor; P2P escondido (a8e7685d).
     // #205: Android tambem lista o pendrive (NuvioActivity.volumesExternos).
-    ROT("P2P"), OPC(AJ_P2P_LIGADO), OPC(AJ_P2P_URL), OPC(AJ_P2P_TESTAR), OPC(AJ_P2P_LIMITE),
-    OPC(AJ_P2P_DESTINO),
+    ROT("P2P"), OPC(AJ_P2P_LIGADO), OPC(AJ_P2P_URL), OPC(AJ_P2P_TESTAR),
+#if !defined(NV_ANDROID) || defined(NV_P2P_MOTOR)
+    OPC(AJ_P2P_LIMITE), OPC(AJ_P2P_DESTINO),
+#endif
 #endif
 
   SEC("Idiomas e legendas", "Idioma da interface, áudio, legenda e metadados", "aj_languages"),
@@ -245,6 +253,9 @@ static const Item TELA[] = {
   SEC("Esta TV", "Resolução, imagens, efeitos e diagnóstico", "aj_monitor-cog"),
 OPC(AJ_RESOLUCAO), OPC(AJ_GPU_EFEITOS), OPC(AJ_AMPLIAR_UI), OPC(AJ_AMPLIACAO_ALGO), OPC(AJ_AMPLIACAO_NITIDEZ), OPC(AJ_HDR_INTERFACE), OPC(AJ_QUALIDADE_IMG),
     OPC(AJ_NAV_RAPIDA), OPC(AJ_MEDIDOR), OPC(AJ_DIAGNOSTICO), OPC(AJ_VELOCIDADE), OPC(AJ_ESPACO),
+#ifdef NV_ANDROID
+    OPC(AJ_LIMPAR_CACHE),
+#endif
     MAIS(),
     ROT("Memória"), OPC(AJ_TEX_MB),
 
@@ -255,7 +266,7 @@ OPC(AJ_RESOLUCAO), OPC(AJ_GPU_EFEITOS), OPC(AJ_AMPLIAR_UI), OPC(AJ_AMPLIACAO_ALG
     OPC(AJ_AVISO_LEGAL),
     ROTS("App", ""), OPC(AJ_VERSAO_I), OPC(AJ_ATUALIZAR),
     ROTS("Registro", "para quem faz o app"),
-      OPC(AJ_VER_REGISTRO), OPC(AJ_ENVIAR_LOG), OPC(AJ_LOG_DESTINO), OPC(AJ_ENVIO_AUTO),
+      OPC(AJ_VER_REGISTRO), OPC(AJ_ENVIAR_LOG), OPC(AJ_LOG_DESTINO), OPC(AJ_ENVIO_AUTO), OPC(AJ_LOG_REDE),
 #ifdef NV_ANDROID
       OPC(AJ_BAIXAR_REGISTRO),
 #endif

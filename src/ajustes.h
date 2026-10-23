@@ -118,6 +118,7 @@ int ajustes_animacoes_reduzidas(void);
 // V_BRILHO_PLAYER (padrao 1 = 80%).
 int ajustes_esmaecer(void);
 int ajustes_brilho_player(void);
+int ajustes_tunneling(void); // Android-only tunneled playback; default off.
 int ajustes_hdr_interface(void); // Experimental Android HDR output; default off.
 int ajustes_hdr_ui(void);   // #205: 1 = Automatico (padrao), 0 = Desligado
 // #202: -1 = ultimo modo usado (padrao); 0..7 = PlrAspecto aplicado ao abrir o video.
@@ -132,6 +133,10 @@ int ajustes_pausa_overlay(void);
 int ajustes_classif_player(void);   // 1 = mostra a classificacao/guia parental no player (padrao)
 // "O que achou?" nos creditos (reacao.h). Ligado de fabrica.
 int ajustes_reacao_creditos(void);
+// Formato do player (4K, HDR, Atmos, idioma do audio). Estilo: PLR_FMT_*; padrao
+// Original (as marcas do canto de cima); Pilula = fileira embaixo do titulo.
+enum { PLR_FMT_TEXTO = 0, PLR_FMT_PILULA, PLR_FMT_MARCAS, PLR_FMT_SELOS, PLR_FMT_ORIGINAL, PLR_FMT_OFF, PLR_FMT_N };
+int ajustes_plr_formato(void);
 // #329: pula abertura/resumo sozinho quando ha marcador (desligado de fabrica).
 int ajustes_pular_abertura(void);
 int ajustes_pular_resumo(void);
@@ -189,6 +194,7 @@ int ajustes_fonte_grupo(void);
 int ajustes_fonte_grupo_sessoes(void);
 // Reusar o ultimo link (fontevolta.h): 1 = ligado; e a validade em segundos.
 int ajustes_link_reusar(void);
+int ajustes_log_rede(void);   // pagina de registro na rede local (logrede.h)
 unsigned ajustes_link_prazo_s(void);
 int ajustes_fonte_escopo(void);
 int ajustes_fonte_regex_modo(void);
@@ -367,6 +373,8 @@ void  ajustes_voltar_de_lista(int plugins);
 void  ajustes_ui_fundo(void);                                  // arte + veu
 void  ajustes_ui_arte(int n);   // amostra atras da tela sem catalogo (capturas)
 void  ajustes_ui_ilha(GfxRect r, float raioPx, int modal);     // miolo, luz, sombra
+// Same island at opacity `a`: a modal that fades has to fade its card too.
+void  ajustes_ui_ilha_a(GfxRect r, float raioPx, int modal, float a);
 void  ajustes_ui_veu(void);                                    // veu dos modais
 float ajustes_ui_kicker(const char *s, float x, float y, float a);
 float ajustes_ui_meta(const char *k, const char *v, float x, float y, float w);
@@ -597,6 +605,8 @@ void  ajustes_teste_escala(int percentual); // fixture only; does not persist
 int   ajustes_fundo(void);
 float ajustes_vidro_opacidade(void);   // 0,60..0,92; 0,78 = o vidro de sempre
 int   ajustes_vidro_fosco(void);
+// Raw Automatic preferences: quality/frost/animations/glass, bits 0..3.
+int   ajustes_efeitos_automaticos(void);
 int   ajustes_vidro_qualidade(void);   // 0 Automatica (frost + governor), 1 Desempenho (smoked glass, no blur), 2 Alta (frost)
 void  ajustes_teste_vidro_env(void);   // so capturas        // 1 = arte borrada atras do vidro
 int   ajustes_icone_app(void);
@@ -647,6 +657,7 @@ int   ajustes_hist_conta(void);          // 1 = this profile's history goes to t
 int   ajustes_amigos_estilo(void); // 0 Feed, 1 Live, 2 Stories, 3 Presence, 4 Poster, 5 Classic
 int   ajustes_social(void);              // 1 = friends/social features on (per profile, default on)
 int   ajustes_dv_mkv(void);              // 1 = Dolby Vision MKV through our demux (webOS, local, default off)
+int   ajustes_dv7(void);
 int   ajustes_cw_retido_tambem(void);   // 1 = o titulo da ilha/Retomar tambem fica em Continuar assistindo
 // Percentual (70-98, padrao 90) a partir do qual o episodio conta como
 // assistido: sai do Continuar assistindo e o card passa ao proximo. Local.

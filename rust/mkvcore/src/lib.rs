@@ -31,7 +31,7 @@ fn on_panic(_: &core::panic::PanicInfo) -> ! {
 
 /// Link-only personality symbol for compiler_builtins' ARM32 EHABI and
 /// aarch64 Android unwind tables. With panic=abort it is never called.
-#[cfg(not(test))]
+#[cfg(all(not(test), not(feature = "external-personality")))]
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}
 

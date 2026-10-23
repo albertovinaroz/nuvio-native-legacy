@@ -25,6 +25,7 @@
 #include "menu.h"
 #include "explorar.h"
 #include "mapa.h"
+#include "posterprov.h"
 #include "catalogo.h"
 #include "descoberta.h"
 #include "tex_cache.h"
@@ -213,7 +214,8 @@ static GfxRect crescer(GfxRect r, float s) {
 }
 
 // Cartaz com esqueleto enquanto a arte nao chega; `f` e o foco (0..1).
-static void cartaz(const char *url, GfxRect r, float f, float a) {
+static void cartaz(const MapaObra *obra, GfxRect r, float f, float a) {
+  const char *url = posterprov_card(obra->imdb, obra->tmdb, obra->tipo, obra->poster);
   float largura=EX_TEX_LARG;
 #ifdef NV_TOUCH_UI
   if(telefoneui_ativo())largura=fmaxf(largura,r.w*gfx_escala());
@@ -752,7 +754,7 @@ static float climaConteudoTelefone(const MapaClima *c, float x, float y, float w
   float contagemH=0, afinidadeH=0;
   if (c->n > 0) {
     if (a > 0) for (int k=0;k<c->n && k<3;k++)
-      cartaz(c->itens[k].poster,(GfxRect){x+50*k,y,84,126},0,a);
+      cartaz(&c->itens[k],(GfxRect){x+50*k,y,84,126},0,a);
     y += 142;
     snprintf(s,sizeof s,i18n(c->total==1 ? "%d título · você viu %d" : "%d títulos · você viu %d"),c->total,c->vistos);
     contagemH=climaBlocoTelefone(TXT_HEADLINE,s,196,200,212,x,y,w,48,a);y+=contagemH;
@@ -863,7 +865,7 @@ static void desenharClimas(void) {
     // coluna que sobra a direita.
     for (k = 0; k < c->n && k < 3; k++) {
       GfxRect p = { r.x + 24.0f + 34.0f * (float)k, r.y + r.h - 20.0f - 78.0f, 52.0f, 78.0f };
-      cartaz(c->itens[k].poster, p, 0.0f, a);
+      cartaz(&c->itens[k], p, 0.0f, a);
     }
     if (c->n == 0) {
       TxtLinha l = txt_linha_corta(TXT_CAPTION2, i18n("Nada deste clima no seu catálogo ainda"), 150, 154, 168, 255, r.w - 48.0f);
@@ -912,7 +914,7 @@ static void fileiraClima(int linha, float y, float w, float h, float a) {
     ponteiro_alvo(r.x, r.y, r.w, r.h, ponteiroClima, NULL, linha, i);
 #endif
     if (sel) r = crescer(r, 0.06f * f);
-    cartaz(o->poster, r, f, a);
+    cartaz(o, r, f, a);
     if (sel) {
       TxtLinha t = txt_linha_corta(TXT_BODY, o->titulo, 240, 241, 245, 255, w + 120.0f);
       txt_desenhar_alpha(t, x, r.y + r.h + 12.0f, a);
@@ -1034,7 +1036,7 @@ static void desenharHero(float a) {
   char meta[120];
   float f = vzLinha < 0 ? focoT : 0.0f;
   GfxRect p = { x, y, 240.0f, 360.0f };
-  cartaz(o->poster, p, 0.0f, a);
+  cartaz(o, p, 0.0f, a);
   if (viz.focoVisto) seloVisto(p, a);
   y += p.h + 22.0f;
   y += txt_bloco_corta(TXT_TITULO3, o->titulo, 246, 246, 248, x, y, EX_HERO_W, 56.0f, a, 2) + 8.0f;
@@ -1150,7 +1152,7 @@ static void desenharGrupos(float a) {
         painel(fundo, 14.0f / fundo.h, ae * f * 0.8f);
         p = crescer(p, 0.05f * f);
       }
-      cartaz(it->obra.poster, p, f, ae);
+      cartaz(&it->obra, p, f, ae);
       if (it->visto) seloVisto(p, ae);
       ty = p.y + 2.0f;
       ty += txt_bloco_corta(TXT_CAPTION, it->obra.titulo, sel ? 255 : 230, sel ? 255 : 232, sel ? 255 : 238,
@@ -1346,7 +1348,7 @@ static void desenharClimaTelefone(void) {
       if(px+pw<=x || px>=x+exPlano.w)continue;
       const MapaObra *o=&c->itens[caIdx[l][i]];GfxRect r={px,cy,pw,exPlano.cardH[l]};
       telefoneAlvo(r,ponteiroClima,l,i);
-      cartaz(o->poster,(GfxRect){px,cy,pw,ph},l==caLinha && i==caCol[l]?focoT:0,a);
+      cartaz(o,(GfxRect){px,cy,pw,ph},l==caLinha && i==caCol[l]?focoT:0,a);
       telefoneTexto(o->titulo,px,cy+ph+16,pw,a,240,241,245);
     }
     gfx_sem_recorte();
@@ -1358,7 +1360,7 @@ static void desenharVizTelefone(void) {
   char s[1024];telefoneTrilha(s,sizeof s);
   telefoneRecorte(x,exPlano.topo,exPlano.w,exPlano.baixo-exPlano.topo);
   telefoneTexto(s,x,exPlano.topo-exPagina,exPlano.w,1,170,176,196);
-  GfxRect poster=exPlano.poster;poster.y-=exPagina;cartaz(viz.foco.poster,poster,0,a);
+  GfxRect poster=exPlano.poster;poster.y-=exPagina;cartaz(&viz.foco,poster,0,a);
   if(viz.focoVisto)telefoneVisto(poster,a);
   telefoneHeroTexto(&exPlano,exPlano.heroY-exPagina,a);
   GfxRect b=exPlano.botao;b.y-=exPagina;telefoneAlvo(b,ponteiroViz,-1,0);
@@ -1393,7 +1395,7 @@ static void desenharVizTelefone(void) {
       const MapaVizItem *it=&g->itens[i];int sel=l==vzLinha && i==vzCol;
       telefoneAlvo(r,ponteiroViz,l,i);
       if(sel)painel(r,16/r.h,a*.8f);
-      GfxRect p={r.x+12,r.y+12,160,240};cartaz(it->obra.poster,p,sel?focoT:0,a);if(it->visto)telefoneVisto(p,a);
+      GfxRect p={r.x+12,r.y+12,160,240};cartaz(&it->obra,p,sel?focoT:0,a);if(it->visto)telefoneVisto(p,a);
       float th=telefoneTexto(it->obra.titulo,r.x+184,r.y+12,tw,a,240,241,245),ty=r.y+12+th+12;
       char pq[140];porque(g,it,pq,sizeof pq);telefoneTexto(pq,r.x+184,ty,tw,a,170,176,196);
     }

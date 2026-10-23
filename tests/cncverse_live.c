@@ -20,9 +20,10 @@ static char *ler(const char *caminho) {
   fclose(f);
   return b;
 }
+static char *catalogo;
 char *rede_baixar(const char *url, int segundos) {
   (void)url; (void)segundos;
-  return ler("tests/fixtures/cncverse_live_catalog.json");
+  return catalogo ? strdup(catalogo) : ler("tests/fixtures/cncverse_live_catalog.json");
 }
 char *rede_baixar_medido_controle(const char *url, int segundos,
                                   const char *const *cabecalhos,
@@ -42,6 +43,8 @@ int dados_gravar(const char *n, const char *v) { (void)n; (void)v; return 1; }
 const char *i18n(const char *s) { return s; }
 int xtream_e_id(const char *id) { return id && !strncmp(id, "xtream:", 7); }
 
+int ajustes_livetv_sugerir(void) { return 0; }
+const char *livecat_secao(const char *n, int *r) { (void)n; *r = 0; return NULL; }
 int main(void) {
   GFonte f = {0};
   int novos;
@@ -60,7 +63,7 @@ int main(void) {
   strcpy(carga.base, f.base); carga.ativo = 1; addonsCarga = &carga; nAddonsCarga = 1;
   int fl = sFonte(LTV_ADDON, f.base, f.nome, f.base);
   assert(fl >= 0);
-  assert(lerPagina(&f, fl, 0, &novos, NULL) == 3);
+  assert(lerPagina(&f, fl, 0, &novos) == 3);
   assert(novos == 3 && sNCanais == 3);
   for (int k = 0; k < 3; k++) {
     CatItem it;
@@ -84,5 +87,20 @@ int main(void) {
     assert(!strcmp(v[0].url, "https://example.invalid/proxy/hls/sun-tv-hd/master.m3u8"));
     assert(v[0].notWebReady);
     free(v); free(json); }
+  if (!getenv("CNC_FIXTURE_DIR")) return 0;
+  // One generated tv catalog: 1321 distinct long IDs, eleven groups.
+  stagingZerar(); sTeto = ltv_teto_canais(2, 2048);
+  fl = sFonte(LTV_ADDON, f.base, f.nome, f.base);
+  char path[2048];
+  const char *dir = getenv("CNC_FIXTURE_DIR");
+  assert(dir);
+  snprintf(path, sizeof path, "%s/catalog.json", dir);
+  catalogo = ler(path);
+  assert(lerPagina(&f, fl, 0, &novos) == 1321);
+  printf("B: retained %d/1321, arena %zu bytes\n", sNCanais, ltv_arena_bytes(&sArena));
+  assert(sNCanais == 1321 && novos == 1321 && !sLtvF[fl].cortada);
+  selecionarSecoes(); assert(sNCanais == 1321);
+  assert(ltv_arena_bytes(&sArena) < 2 * 1024 * 1024);
+  free(catalogo); stagingZerar();
   puts("PASS: canal CNCVerse de id longo entra na aba e pede /stream/ com o id inteiro");
 }

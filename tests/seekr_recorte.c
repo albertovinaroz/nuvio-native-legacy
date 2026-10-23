@@ -5,6 +5,7 @@
 //
 //   bash tests/seekr_recorte.sh
 #include <stdio.h>
+int perftv_enabled, perftv_uploads;
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>

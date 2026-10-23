@@ -41,14 +41,10 @@
 // mais e mais um nome que o CORS do servidor precisa aceitar. User-Agent sai
 // de rede.c.
 //
-// O QUE FICOU DE FORA, e por que:
-//   - anime em "watching": o next_to_watch de anime vem na numeracao do AniDB
-//     ("E12", sem temporada), e o resto do app (Cinemeta, addons) fala
-//     temporada/episodio do TVDB. Converter exigiria /anime/episodes por
-//     titulo. Anime PAUSADO entra, porque /sync/playback manda tvdb_season e
-//     tvdb_number junto.
-//   - nada: o scrobble (start/pause/stop do player, #459) e o historico estao
-//     la embaixo. Esta tela so le o playback que o proprio player escreve.
+// Anime next_to_watch 12, "12" or "E12" uses absolute numbering. Cached provider videos
+// map it to season/episode; missing mapping keeps a title-only CW entry.
+// Paused anime uses tvdb_season/tvdb_number from /sync/playback.
+// Scrobble (start/pause/stop) and history are declared below.
 //
 // MODELO DE FIOS: o de trakt.c. Leituras BLOQUEIAM e so sao chamadas do fio de
 // descoberta (montarContinuar, montar); escritas do "+" e do "tirar da

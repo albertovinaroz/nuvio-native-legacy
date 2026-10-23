@@ -766,14 +766,14 @@ static void corteLimpo(char *out, size_t sz, const char *src) {
 // titles of one language get " (k)". Returns 1 when the title is a name.
 int legendasui_titulo(const LegUiCand *cs, int n, int i, char *out, size_t sz) {
   const LegUiCand *c = &cs[i];
-  const char *nome = c->embutida ? (c->nome[0] ? c->nome : strstr(c->rotulo, LU_SEP)) : c->arquivo;
+  const char *nome = c->embutida ? (c->nome[0] ? c->nome : strstr(c->rotulo, LU_SEP)) : (c->arquivo[0] ? c->arquivo : c->rotulo);
   int j, dup = 0, pos = 0, nomeado;
   char outro[96];
   if (c->embutida && !c->nome[0] && nome) nome += strlen(LU_SEP);
   nomeado = nome && !nomeInutil(c, nome);
   corteLimpo(out, sz, nomeado ? nome : c->idioma[0] ? nomeIdioma(c->idioma) : c->rotulo);
   for (j = 0; j < n; j++) {
-    const char *on = cs[j].embutida ? (cs[j].nome[0] ? cs[j].nome : strstr(cs[j].rotulo, LU_SEP)) : cs[j].arquivo;
+    const char *on = cs[j].embutida ? (cs[j].nome[0] ? cs[j].nome : strstr(cs[j].rotulo, LU_SEP)) : (cs[j].arquivo[0] ? cs[j].arquivo : cs[j].rotulo);
     if (j == i || cs[j].embutida != c->embutida || cs[j].tipo != c->tipo || !ling_casa(cs[j].idioma, c->idioma) || !ling_casa(c->idioma, cs[j].idioma)) continue;
     if (cs[j].embutida && !cs[j].nome[0] && on) on += strlen(LU_SEP);
     corteLimpo(outro, sizeof outro, on && !nomeInutil(&cs[j], on) ? on : nomeIdioma(cs[j].idioma));
@@ -847,6 +847,7 @@ static void textoLinha(const LuiLinha *l, char *nome, size_t tn, char *sub, size
       *ativo = ativoNoSlot(l->slot, c) && (l->slot == 0 || legenda2_estado() == LEG2_ATIVA);
       { int nomeado = legendasui_titulo(cand, nCand, l->cand, nome, tn);
         if (nomeado) juntar(sub, ts, nomeIdioma(c->idioma));   // language is secondary
+        if (!c->embutida && strcmp(c->rotulo, c->arquivo) && !nomeInutil(c, c->rotulo)) juntar(sub, ts, c->rotulo);
         if (!mais && !ver) {
           juntar(sub, ts, c->embutida ? i18n("Embutida") : c->origem);
           juntar(sub, ts, legendasui_tipo_rotulo(c));

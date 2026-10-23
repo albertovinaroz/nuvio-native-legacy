@@ -21,13 +21,16 @@
 #include <strings.h>
 #include <time.h>
 
+#define PLUG_HIT_S         (30 * 24 * 3600)  // successful scrapers stay preferred for 30 days
 #define PLUG_CACHE_S       (6 * 3600)        // manifesto e codigo: 6 h
 #define PLUG_MANIFESTO_MAX (256u * 1024)
 #define PLUG_CODIGO_MAX    (2u * 1024 * 1024)
 #define PLUG_PRAZO_MS      20000              // por scraper
 // A RODADA INTEIRA, contada do disparo: scraper que ainda nao comecou aos
 // PLUG_TETO_MS nao comeca, e quem esta rodando e cortado (fica o que terminou).
+#ifndef PLUG_TETO_MS
 #define PLUG_TETO_MS       30000
+#endif
 #define PLUG_REDE_S        15                 // por fetch
 #ifndef PLUG_PARALELOS
 #if defined(__EMSCRIPTEN__) || defined(NV_WEBOS) || defined(NV_TPK40)
@@ -39,12 +42,13 @@
 
 typedef struct {
   char id[64], nome[96], arquivo[256], url[700];
-  int filme, serie, ativo, repo;
+  int filme, serie, ativo, repo, anime;
+  time_t ultimoHit;        // Round-local ordering score; not configuration.
 } Scraper;
 
 // Escolha por scraper, por perfil (local, como no web): chave (manifesto, id).
 #define PLUG_ESCOLHAS_MAX 320
-typedef struct { unsigned long long h; char id[64]; char man[600]; int ativo; } Escolha;
+typedef struct { unsigned long long h; char id[64]; char man[600]; int ativo; time_t ultimoHit; } Escolha;
 
 typedef struct { PlugRepo r; int estado; } Repo;
 
@@ -58,6 +62,9 @@ typedef struct {
 
 static pthread_mutex_t trava = PTHREAD_MUTEX_INITIALIZER;
 static Estado E;                       // sob `trava`
+static PlugResumo ultimoResumo;
+static char resumoId[64], resumoTipo[16];
+static unsigned resumoGeracao;
 static char ctxUsuario[80];            // dono do estado carregado (sob trava)
 static int ctxPerfil = -1;
 static unsigned geracao = 1;           // atomico
@@ -169,7 +176,7 @@ static void nomeEstado(const char *usuario, int perfil, char *dst, size_t tam) {
 
 // Monta o texto com a trava; quem chama grava FORA dela (escreverEstado).
 static char *serializar(char *nome, size_t tamNome, unsigned *seq) {
-  size_t cap = 512 + (size_t)E.nRepos * 800 + (size_t)E.nEsc * 760, u = 0;
+  size_t cap = 512 + (size_t)E.nRepos * 800 + (size_t)E.nEsc * 1500, u = 0;
   char *buf = malloc(cap);
   int i;
   if (!buf) return NULL;
@@ -181,8 +188,12 @@ static char *serializar(char *nome, size_t tamNome, unsigned *seq) {
     u += (size_t)snprintf(buf + u, cap - u, "repo\t%d\t%s\t%s\t%s\n", E.repos[i].r.ativo,
                           E.repos[i].r.tipo[0] ? E.repos[i].r.tipo : "NUVIO_JS", nomeR, E.repos[i].r.url);
   }
-  for (i = 0; i < E.nEsc; i++)
+  for (i = 0; i < E.nEsc; i++) {
     u += (size_t)snprintf(buf + u, cap - u, "scraper\t%d\t%s\t%s\n", E.esc[i].ativo, E.esc[i].id, E.esc[i].man);
+    if (E.esc[i].ultimoHit)
+      u += (size_t)snprintf(buf + u, cap - u, "hit\t%lld\t%s\t%s\n",
+                            (long long)E.esc[i].ultimoHit, E.esc[i].id, E.esc[i].man);
+  }
   nomeEstado(ctxUsuario, ctxPerfil, nome, tamNome);
   *seq = ++gravaSeq;
   return buf;
@@ -270,6 +281,8 @@ static int aplicarManifesto(Estado *s, int i, const char *json, const char *urlM
     js_bruto(p, f, "supportedTypes", tipos, sizeof tipos);
     sc->filme = !tipos[0] || strstr(tipos, "\"movie\"") != NULL;
     sc->serie = !tipos[0] || strstr(tipos, "\"tv\"") || strstr(tipos, "\"series\"") || strstr(tipos, "\"anime\"");
+    sc->anime = strstr(tipos, "\"anime\"") && !sc->filme &&
+                !strstr(tipos, "\"tv\"") && !strstr(tipos, "\"series\"");
     sc->ativo = !(js_bruto(p, f, "enabled", en, sizeof en) && !strcmp(en, "false"));
     { const Escolha *e = escolhaDe(s, urlMan, sc->id); if (e) sc->ativo = e->ativo; }
     sc->repo = i;
@@ -315,6 +328,14 @@ static void carregar(void) {
       snprintf(n->repos[n->nRepos].r.nome, sizeof n->repos[n->nRepos].r.nome, "%s", c[2]);
       snprintf(n->repos[n->nRepos].r.url, sizeof n->repos[n->nRepos].r.url, "%s", p);
       n->nRepos++;
+    } else if (!strncmp(l, "hit\t", 4)) {
+      char *id = strchr(l + 4, '\t'), *man;
+      if (!id) continue;
+      *id++ = 0; man = strchr(id, '\t');
+      if (!man) continue;
+      *man++ = 0;
+      Escolha *e = escolhaDe(n, man, id);
+      if (e) e->ultimoHit = (time_t)strtoll(l + 4, NULL, 10);
     } else if (!strncmp(l, "scraper\t", 8)) {
       char *ativo = l + 8, *id, *man;
       id = strchr(ativo, '\t'); if (!id) continue; *id++ = 0;
@@ -644,6 +665,7 @@ struct PluginsConsulta {
   PlugRepo repos[PLUG_REPOS_MAX]; int nRepos;
   Scraper scr[PLUG_SCRAPERS_MAX]; int nScr;
   TmC tmdb[64];
+  time_t hits[PLUG_SCRAPERS_MAX];
   char chaveTmdb[64], usuario[80], so[400];
   int perfil, ligado, disponivel, log;
   unsigned geracao;
@@ -668,6 +690,11 @@ PluginsConsulta *plugins_consulta_capturar(void) {
   c->nRepos = E.nRepos; c->nScr = E.nScr;
   for (int i = 0; i < c->nRepos; i++) c->repos[i] = E.repos[i].r;
   memcpy(c->scr, E.scr, (size_t)c->nScr * sizeof *c->scr);
+  for (int i = 0; i < c->nScr; i++) {
+    char man[700]; urlManifesto(E.repos[E.scr[i].repo].r.url, man, sizeof man);
+    const Escolha *e = escolhaDe(&E, man, E.scr[i].id);
+    if (e) c->hits[i] = e->ultimoHit;
+  }
   memcpy(c->tmdb, tmCache, sizeof c->tmdb);
   c->grupo = grupoDe(); c->job = rede_job_criar(c->grupo);
   pthread_mutex_unlock(&trava);
@@ -777,12 +804,58 @@ static long tmdbDe(const char *imdb, int serie, RedeJob *job) {
 
 // ------------------------------------------------------------ consulta
 
+void plugins_resumo(const char *id, const char *tipo, PlugResumo *saida) {
+  *saida = (PlugResumo){0};
+  if (!plugins_ligado() || !id || !tipo) return;
+  pthread_mutex_lock(&trava);
+  if (resumoGeracao == gerAtual() && !strcmp(resumoId, id) && !strcmp(resumoTipo, tipo))
+    *saida = ultimoResumo;
+  else for (int k = 0; k < E.nScr; k++) {
+    const Scraper *s = &E.scr[k];
+    if (s->ativo && s->repo >= 0 && s->repo < E.nRepos && E.repos[s->repo].r.ativo &&
+        (!strcmp(tipo, "movie") ? s->filme :
+         (!strcmp(tipo, "series") || !strcmp(tipo, "anime")) && s->serie))
+      saida->enfileirados++;
+  }
+  pthread_mutex_unlock(&trava);
+}
+
+static int tituloAnime(const char *id, const char *tipo) {
+  if (!strcmp(tipo, "anime")) return 1;
+  CatItem *item = malloc(sizeof *item);
+  int anime = item && cat_copiar_por_id(id, tipo, item) &&
+    (strstr(item->genero, "Anime") || strstr(item->genero, "anime") ||
+     ((strstr(item->genero, "Animation") || strstr(item->genero, "Animação")) &&
+      (strstr(item->pais, "Japan") || strstr(item->pais, "Japão"))));
+  free(item);
+  return anime;
+}
+
+static void ordenarScrapers(Scraper *lista, int n, int anime) {
+  time_t agora = time(NULL);
+  for (int i = 0; i < n; i++)
+    if (lista[i].ultimoHit > agora || agora - lista[i].ultimoHit > PLUG_HIT_S)
+      lista[i].ultimoHit = 0;
+  // Stable insertion sort; at most PLUG_SCRAPERS_MAX entries.
+  for (int i = 1; i < n; i++) {
+    Scraper s = lista[i];
+    int j = i, ultimo = !anime && s.anime;
+    while (j > 0) {
+      const Scraper *p = &lista[j - 1];
+      int pUltimo = !anime && p->anime;
+      if (pUltimo < ultimo || (pUltimo == ultimo && p->ultimoHit >= s.ultimoHit)) break;
+      lista[j] = *p; j--;
+    }
+    lista[j] = s;
+  }
+}
+
 typedef void (*AvisoFn)(void *u, int k, const char *nome, int estado, const void *fontes, int n);
 typedef struct {
   Scraper *lista; int n, prox;
   char tmdb[24]; const char *tipo; int t, e;
   int cancel;              // atomico: 1 = descarta tudo; 2 = corte (fica o que terminou)
-  int vivos;
+  int vivos, terminados;
   pthread_mutex_t m;
   Stream **res; int *nRes;
   AvisoFn aviso; void *avisoU;
@@ -833,6 +906,7 @@ static void rodarScrapers(Rodada *r) {
     cod = r->capturada ? codigoDeCapturado(s, r->job) : codigoDe(s, r->job);
     if (!cod) {
       if (r->capturada) __atomic_store_n(&r->incompleta, 1, __ATOMIC_RELEASE);
+      if (!rodadaParou(r)) __atomic_add_fetch(&r->terminados, 1, __ATOMIC_RELAXED);
       printf("[plugins] %s: sem codigo\n", s->nome);
       if (r->aviso && !rodadaParou(r)) r->aviso(r->avisoU, i, s->nome, 3, NULL, 0);
       continue;
@@ -851,6 +925,7 @@ static void rodarScrapers(Rodada *r) {
     if (r->capturada && (!arrayCapturadoValido(res.json, "streams") || res.cancelado || res.estourou || res.semMemoria || res.erro[0]))
       __atomic_store_n(&r->incompleta, 1, __ATOMIC_RELEASE);
     free(cod);
+    if (!res.cancelado && !rodadaParou(r)) __atomic_add_fetch(&r->terminados, 1, __ATOMIC_RELAXED);
     { Stream *l = NULL;
       int n = res.json && !res.cancelado ? stream_extrair(res.json, s->nome, &l) : 0;
       if (n < 0) { if (r->capturada) __atomic_store_n(&r->incompleta, 1, __ATOMIC_RELEASE); n = 0; }
@@ -884,11 +959,12 @@ int plugins_consultar(const char *id, const char *tipo, int (*cancelado)(void *)
   Rodada r;
   char base[64];
   int serie, k, total = 0, fios, criados = 0, descartar;
+  unsigned ger = gerAtual();
   pthread_t f[PLUG_PARALELOS];
   Stream *todos = NULL;
   *saida = NULL;
   if (!plugins_ligado() || !id || !tipo) return 0;
-  serie = !strcmp(tipo, "series");
+  serie = !strcmp(tipo, "series") || !strcmp(tipo, "anime");
   if (!serie && strcmp(tipo, "movie")) return 0;
   memset(&r, 0, sizeof r);
   r.job = rede_job_criar(grupoDe());
@@ -918,9 +994,20 @@ int plugins_consultar(const char *id, const char *tipo, int (*cancelado)(void *)
       if (so && *so) { char alvo[80], lista[400];
         snprintf(alvo, sizeof alvo, ",%s,", s->id); snprintf(lista, sizeof lista, ",%s,", so);
         if (!strstr(lista, alvo)) continue; } }
-    r.lista[r.n++] = *s;
+    r.lista[r.n] = *s;
+    char man[700]; urlManifesto(E.repos[s->repo].r.url, man, sizeof man);
+    const Escolha *e = escolhaDe(&E, man, s->id);
+    if (e) r.lista[r.n].ultimoHit = e->ultimoHit;
+    r.n++;
+  }
+  if (gerAtual() == ger) {
+    ultimoResumo = (PlugResumo){ .enfileirados = r.n };
+    snprintf(resumoId, sizeof resumoId, "%s", id);
+    snprintf(resumoTipo, sizeof resumoTipo, "%s", tipo);
+    resumoGeracao = ger;
   }
   pthread_mutex_unlock(&trava);
+  ordenarScrapers(r.lista, r.n, tituloAnime(id, tipo));
   if (!r.n) { free(r.lista); rede_job_soltar(r.job); return 0; }
   r.res = calloc((size_t)r.n, sizeof(Stream *));
   r.nRes = calloc((size_t)r.n, sizeof(int));
@@ -962,6 +1049,21 @@ int plugins_consultar(const char *id, const char *tipo, int (*cancelado)(void *)
     }
     free(r.res[k]);
   }
+  pthread_mutex_lock(&trava);
+  if (!descartar && gerAtual() == ger) {
+    ultimoResumo = (PlugResumo){r.n, r.terminados, r.cancel == 2 ? r.n - r.terminados : 0};
+    int mudou = 0;
+    for (k = 0; k < r.n; k++) if (r.nRes[k] > 0)
+      for (int j = 0; j < E.nScr; j++) {
+        const Scraper *s = &E.scr[j];
+        if (strcmp(s->id, r.lista[k].id) || strcmp(s->url, r.lista[k].url)) continue;
+        char man[700]; urlManifesto(E.repos[s->repo].r.url, man, sizeof man);
+        lembrarEscolha(&E, man, s->id, s->ativo);
+        escolhaDe(&E, man, s->id)->ultimoHit = time(NULL);
+        mudou = 1; break;
+      }
+    if (mudou) soltarEGravar(); else pthread_mutex_unlock(&trava);
+  } else pthread_mutex_unlock(&trava);
   free(r.res); free(r.nRes); free(r.lista);
   pthread_mutex_destroy(&r.m);
   rede_job_soltar(r.job);
@@ -981,7 +1083,7 @@ int plugins_consulta_consultar(const PluginsConsulta *c, const char *id, const c
   if (!c || !id || !*id || !tipo || !*tipo || !plugins_consulta_atual(c) ||
       (cancelado && cancelado(ctx))) return -1;
   if (!c->ligado || !c->disponivel) return 0;
-  int serie = !strcmp(tipo, "series");
+  int serie = !strcmp(tipo, "series") || !strcmp(tipo, "anime");
   if (!serie && strcmp(tipo, "movie")) return 0;
   Rodada r = {0};
   r.capturada = c; r.job = c->job; r.debrid = c->debrid;
@@ -994,8 +1096,10 @@ int plugins_consulta_consultar(const PluginsConsulta *c, const char *id, const c
     if (c->so[0]) { char alvo[80], lista[sizeof c->so + 3];
       snprintf(alvo, sizeof alvo, ",%s,", s->id); snprintf(lista, sizeof lista, ",%s,", c->so);
       if (!strstr(lista, alvo)) continue; }
-    r.lista[r.n++] = *s;
+    r.lista[r.n] = *s;
+    r.lista[r.n++].ultimoHit = c->hits[i];
   }
+  ordenarScrapers(r.lista, r.n, tituloAnime(id, tipo));
   if (!r.n) { free(r.lista); return 0; }
   char base[64]; int completo = 1;
   if (!strncmp(id, "tmdb:", 5)) {

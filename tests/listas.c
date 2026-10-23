@@ -80,9 +80,8 @@ static void testeSimkl(void) {
   CatItem v[16];
   int n = lst_ler_simkl_itens(j, 0, v, 16);
   printf("\n[3] /sync/all-items/movies/plantowatch\n");
-  // Sem imdb nao ha como pedir arte ao Cinemeta nem abrir o detalhe: o item
-  // seria um cartaz cinza que nao responde. Fica de fora.
-  CONFERE(n == 2, "dois itens; o sem imdb fora (veio %d)", n);
+  // Missing external metadata must not hide an account title.
+  CONFERE(n == 3, "all three movies, including missing IMDb (got %d)", n);
   CONFERE(!strcmp(v[0].titulo, "Aftersun"), "titulo do primeiro");
   CONFERE(!strcmp(v[0].imdb, "tt19770238"), "imdb de dentro de ids (veio %s)", v[0].imdb);
   CONFERE(!strcmp(v[0].tipo, "movie"), "tipo movie");
@@ -95,7 +94,7 @@ static void testeSimkl(void) {
   // "shows" — era o que faltava no relato: "Simkl has anime too".
   j = ler("tests/fixtures/simkl_plantowatch_series_anime.json");
   n = lst_ler_simkl_itens(j, 1, v, 16);
-  CONFERE(n == 2, "show + anime; o sem imdb fora (veio %d)", n);
+  CONFERE(n == 3, "show + anime, including missing IMDb (got %d)", n);
   CONFERE(!strcmp(v[0].titulo, "Shogun") && !strcmp(v[0].tipo, "series"),
           "a serie primeiro (veio %s)", v[0].titulo);
   CONFERE(!strcmp(v[1].imdb, "tt22248376") && !strcmp(v[1].tipo, "series"),

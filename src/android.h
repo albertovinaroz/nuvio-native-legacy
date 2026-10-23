@@ -8,6 +8,7 @@
 // espelha stdout/stderr no logcat (tag "nuvio") sem tirar nada do arquivo, e
 // pede ao SDL que o Voltar chegue ao app em vez de fechar a Activity.
 void android_iniciar(void);
+void android_limpar_cache(void);
 // Saved device mode: changes the existing Activity, without recreating native state.
 void android_interface_modo(int mobile);
 // Salva uma copia local do registro pelo seletor de arquivos do Android.
@@ -32,6 +33,8 @@ int android_hdr_interface(int ativa);
 // FileProvider). 1 = instalador aberto, 2 = falta a permissao de instalar apps
 // desta fonte (a tela dela foi aberta), 0 = falhou. Chamar do fio do SDL.
 int android_instalar_apk(const char *caminho);
+// Prune superseded APKs before download; refuse while the installer is active.
+int android_preparar_apk(const char *caminho);
 // Texto do sistema (sistexto.h). Teclado do sistema com `inicial` no campo;
 // voz no idioma dado ("pt-BR"); fechar os dois; e o proximo evento da fila do
 // NuvioActivity (1 = veio um em dst). O formato dos eventos esta em sistexto.c.

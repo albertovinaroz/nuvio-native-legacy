@@ -7,6 +7,7 @@
 #include "idioma.h"
 #include "catalogo.h"
 #include "extras.h"
+#include "posterprov.h"
 #include "gfx.h"
 #include "text.h"
 #include "sinopse.h"
@@ -811,7 +812,8 @@ static void posplay_desenharCorpo_(Uint32 agora, float baseY) {
 #endif
     gfx_recorte(ilha.x, ilha.y - 40.0f, ilha.w, ilha.h + 40.0f);
     for (i = 0; i < n; i++) {
-      const char *po = extras_relacionado_poster(i);
+      const char *po = posterprov_card(extras_relacionado_imdb(i), 0, "movie",
+                                      extras_relacionado_poster(i));
       GLuint t = po[0] ? tex_obter_larg(po, 200.0f) : 0;
       int sel = (i == foco);
       float k = sel ? 1.08f : 1.0f, w = 182.0f * k, h = 273.0f * k;

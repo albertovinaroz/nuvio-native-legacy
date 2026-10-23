@@ -84,6 +84,60 @@ int main(void) {
      "normal file: the first SeekHead lists the Cues");
   ok(mkvfix_ler_inicio((const unsigned char *)"RIFF....WAVEfmt ", 16, &c) == 0, "not Matroska: 0");
 
+  // SUBTITLE TRACKS HIDDEN FROM THE TV (S01E03 Itsuki Gang: a 71 KB vector ASS
+  // event hangs the TV's own subtitle decoder). Tracks: video, audio, ASS, SRT,
+  // PGS. With an ASS track present, every TEXT subtitle (ASS and SRT) is
+  // hidden; video, audio and image subtitles stay.
+  { unsigned char tr[512], te[128], cont[400];
+    long nc = 0, nt;
+    int64_t off[MKVFIX_OCULTAS];
+    struct { unsigned char tipo; const char *codec; } fx[] = {
+      { 0x01, "V_MPEGH/ISO/HEVC" }, { 0x02, "A_OPUS" }, { 0x11, "S_TEXT/ASS" },
+      { 0x11, "S_TEXT/UTF8" }, { 0x11, "S_HDMV/PGS" } };
+    long ini[5];
+    for (int i = 0; i < 5; i++) {
+      long m = 0; unsigned char num = (unsigned char)(i + 1);
+      m += el(te + m, 0xD7, &num, 1);                 // TrackNumber
+      m += el(te + m, 0x83, &fx[i].tipo, 1);           // TrackType
+      m += el(te + m, 0x86, (const unsigned char *)fx[i].codec, (long)strlen(fx[i].codec));
+      ini[i] = nc;
+      nc += el(cont + nc, 0xAE, te, m);                // TrackEntry
+    }
+    nt = el(tr, 0x1654AE6B, cont, nc);                 // Tracks (4-byte id + 1-byte size)
+    int k = mkvfix_legendas_texto(tr, nt, off, MKVFIX_OCULTAS);
+    ok(k == 2, "subtitles: ASS present -> the two text subtitle tracks are hidden");
+    // TrackEntry header (2) + TrackNumber (3) + TrackType id and size (2).
+    ok(k == 2 && off[0] == 5 + ini[2] + 2 + 3 + 2 && off[1] == 5 + ini[3] + 2 + 3 + 2,
+       "subtitles: offsets point at the TrackType values of the ASS and SRT tracks");
+    ok(k == 2 && tr[off[0]] == 0x11 && tr[off[1]] == 0x11, "subtitles: the bytes to swap are TrackType 0x11");
+    // After the swap the Tracks still parses, the tracks are "control" and
+    // nothing is left to hide.
+    if (k == 2) { tr[off[0]] = MKVFIX_TIPO_ESCONDIDA; tr[off[1]] = MKVFIX_TIPO_ESCONDIDA; }
+    ok(mkvfix_legendas_texto(tr, nt, off, MKVFIX_OCULTAS) == 0, "subtitles: patched Tracks parses, nothing left to hide");
+  }
+  // Only SRT: left alone (the TV handles plain text; nothing to fix).
+  { unsigned char tr[128], te[64]; long m = 0, nt; int64_t off[MKVFIX_OCULTAS];
+    unsigned char num = 1, tipo = 0x11;
+    m += el(te + m, 0xD7, &num, 1); m += el(te + m, 0x83, &tipo, 1);
+    m += el(te + m, 0x86, (const unsigned char *)"S_TEXT/UTF8", 11);
+    unsigned char cont[80]; long nc = el(cont, 0xAE, te, m);
+    nt = el(tr, 0x1654AE6B, cont, nc);
+    ok(mkvfix_legendas_texto(tr, nt, off, MKVFIX_OCULTAS) == 0, "subtitles: SRT only -> nothing hidden");
+    ok(mkvfix_legendas_texto(tr, nt - 1, off, MKVFIX_OCULTAS) == -1, "subtitles: cut Tracks -> -1");
+  }
+  // Tracks position: from the SeekHead entry, else by walking the top level.
+  { uint32_t i1[] = { 0x1654AE6B }, p1[] = { 4321 };
+    n = arquivo(f, i1, p1, 1, 60, &segIni);
+    ok(mkvfix_ler_inicio(f, n, &c) == 1 && mkvfix_tracks_pos(f, n, &c) == segIni + 4321,
+       "tracks position: taken from the SeekHead"); }
+  { uint32_t i1[] = { ID_INFO }, p1[] = { 60 };
+    unsigned char z[4] = {0};
+    n = arquivo(f, i1, p1, 1, 60, &segIni);
+    long tpos = n;
+    n += el(f + n, 0x1654AE6B, z, 4);
+    ok(mkvfix_ler_inicio(f, n, &c) == 1 && mkvfix_tracks_pos(f, n, &c) == tpos,
+       "tracks position: found walking the top-level elements"); }
+
   printf(falhas ? "mkvfix: %d FAIL(S)\n" : "mkvfix: ok\n", falhas);
   return falhas != 0;
 }

@@ -91,6 +91,13 @@ static void varredura(void) {
 }
 
 int main(void) {
+  for (size_t i = 1; i < sizeof CHAVES / sizeof *CHAVES; i++) {
+    if (strcmp(CHAVES[i - 1].pt, CHAVES[i].pt) >= 0) {
+      printf("FAIL: keys out of order or duplicated: \"%s\" before \"%s\"\n",
+             CHAVES[i - 1].pt, CHAVES[i].pt);
+      return 1;
+    }
+  }
   // Uma de cada tela, incluindo as que tem acento no meio e aspas escapadas.
   confere("Continuar assistindo", "Continue Watching");
   confere("Ajustes", "Settings");
@@ -328,10 +335,11 @@ int main(void) {
     { char c[6]; size_t n = idioma_maiusc_em(IDIOMA_TR, c, sizeof c, "iiiii");
       if (n >= sizeof c || strlen(c) != n) { printf("FALHOU: maiusc turco estourou o destino\n"); falhas++; } } }
 
-  // Separador decimal: ponto so em ingles, japones e chines.
+  // Decimal points: English, Japanese, Chinese and Arabic.
   { int l, ponto = 0;
     for (l = 0; l < IDIOMA_N; l++) ponto += idioma_ponto_decimal(l);
-    if (ponto != 4 || !idioma_ponto_decimal(IDIOMA_EN) || !idioma_ponto_decimal(IDIOMA_JA) ||
+    if (ponto != 5 || !idioma_ponto_decimal(IDIOMA_AR) ||
+        !idioma_ponto_decimal(IDIOMA_EN) || !idioma_ponto_decimal(IDIOMA_JA) ||
         !idioma_ponto_decimal(IDIOMA_ZHCN) || !idioma_ponto_decimal(IDIOMA_ZHTW) ||
         idioma_ponto_decimal(IDIOMA_PT) || idioma_ponto_decimal(IDIOMA_TR) || idioma_ponto_decimal(IDIOMA_PTPT)) {
       printf("FALHOU: idioma_ponto_decimal\n"); falhas++; } }
@@ -370,7 +378,7 @@ int main(void) {
   // Codigo ISO do idioma da interface (compara com o `language` do Trakt).
   { static const char *ISO[] = { "pt", "en", "ro", "uk", "ru", "fr", "de", "es",
       "it", "nl", "pl", "tr", "pt", "sv", "da", "no", "cs", "sk", "sl", "hu", "lt",
-      "bs", "sr", "bg", "el", "id", "vi", "ja", "zh", "zh" };
+      "bs", "sr", "bg", "el", "id", "vi", "ja", "zh", "zh", "ar" };
     _Static_assert(sizeof ISO / sizeof *ISO == IDIOMA_N, "um ISO por IDIOMA_*");
     int i;
     for (i = 0; i < IDIOMA_N; i++)

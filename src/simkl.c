@@ -8,16 +8,21 @@
 #include "nuvem.h"
 #include "rede.h"
 #include "js.h"
+#include "idbase.h"
 #include "idioma.h"
 #include "trakt.h"
 #include "traktscrobble.h"
 #include "artemetahub.h"
 #include "dados.h"
+#include "fichameta.h"
+#include "metaprov.h"
+#include "metaep.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <math.h>
+#include <limits.h>
 #include <time.h>
 #include <unistd.h>
 #include "provedorhttp.h"
@@ -170,40 +175,113 @@ int simkl_ler_playback(const char *json, CatItem *dst, long long *ids, int max) 
   return n;
 }
 
+// Reuse the provider metadata cache; an unknown mapping opens the title only.
+static int animeAbsoluto(const char *id, int absoluto, int *t, int *e) {
+  char chave[64];
+  MetaEpInfo ep;
+  int ok;
+  snprintf(chave, sizeof chave, "series/%s/%s", id, metaprov_idioma());
+  char *corpo = fichameta_ler(chave, 6 * 3600);
+  ok = metaep_buscar(corpo, 1, 1, &ep);
+  // ponytail: repeated scans reuse provider ordering; index if long shows cost time.
+  for (int i = 1; ok && i < absoluto; i++) {
+    MetaEpInfo prox;
+    ok = metaep_proximo(corpo, ep.temporada, ep.episodio, &prox) &&
+         ((prox.temporada == ep.temporada && prox.episodio == ep.episodio + 1) ||
+          (prox.temporada == ep.temporada + 1 && prox.episodio == 1));
+    if (ok) ep = prox;
+  }
+  free(corpo);
+  *t = ok ? ep.temporada : 0;
+  *e = ok ? ep.episodio : 0;
+  return ok;
+}
+
 int simkl_ler_assistindo(const char *json, CatItem *dst, int max) {
   // O Simkl guarda anime num terceiro tipo: /sync/all-items/anime/<estado>
   // devolve a raiz "anime" e o objeto interno tambem se chama "anime".
   static const char *vetores[] = { "shows", "anime" };
   static const char *chaves[]  = { "show", "anime" };
   const char *p;
-  int n = 0, k;
+  int n = 0, k, animeEntries = 0, animeKept = 0;
   if (!json || !dst) return 0;
   // Sem nada em "watching" o Simkl responde `null` ou `{}` — js_array devolve
   // NULL e o laco nem comeca.
-  for (k = 0; k < 2 && n < max; k++)
-  for (p = js_array(json, NULL, vetores[k]); p && *p == '{' && n < max;
+  for (k = 0; k < 2; k++)
+  for (p = js_array(json, NULL, vetores[k]); p && *p == '{';
        p = js_prox(js_fim(p))) {
     const char *f = js_fim(p), *oi, *of;
-    CatItem *d = &dst[n];
-    char imdb[24], prox[16] = "", quando[40] = "";
-    int t = 0, e = 0;
+    CatItem *d;
+    char imdb[24] = "", prox[16] = "", quando[40] = "";
+    const char *reason = "missing next_to_watch";
+    int t = 0, e = 0, absoluto = 0;
+    if (k == 1) animeEntries++;
+    if (n >= max) { reason = "candidate limit"; goto watchingDropped; }
+    d = &dst[n];
     memset(d, 0, sizeof *d);
-    // "S01E05". Em dia com o que foi ao ar vem null, e ai nao ha o que seguir.
-    if (!js_texto_raiz_em(p, f, "next_to_watch", prox, sizeof prox)) continue;
-    if (sscanf(prox, "S%dE%d", &t, &e) != 2 || t < 0 || e <= 0) continue;
-    if (!objetoRaiz(p, f, chaves[k], &oi, &of)) continue;
-    if (!lerObra(oi, of, d, imdb, sizeof imdb)) continue;
+    // Anime may return a bare absolute number, as a JSON number or string.
+    if (!js_texto_raiz_em(p, f, "next_to_watch", prox, sizeof prox)) {
+      const char *vi, *vf;
+      if (k != 1 || !valorRaiz(p, f, "next_to_watch", &vi, &vf) ||
+          *vi < '0' || *vi > '9') goto watchingDropped;
+      while (vf > vi && (unsigned char)vf[-1] <= ' ') vf--;
+      if (vf - vi >= (int)sizeof prox) goto watchingDropped;
+      snprintf(prox, sizeof prox, "%.*s", (int)(vf - vi), vi);
+    }
+    reason = "invalid next_to_watch";
+    if (sscanf(prox, "S%dE%d", &t, &e) != 2) {
+      char *end;
+      long number;
+      if (k != 1) goto watchingDropped;
+      const char *start = prox + (prox[0] == 'E');
+      number = strtol(start, &end, 10);
+      if (end == start || *end || number <= 0 || number > INT_MAX) goto watchingDropped;
+      absoluto = e = (int)number;
+    }
+    if (t < 0 || e <= 0) goto watchingDropped;
+    reason = "missing title object";
+    if (!objetoRaiz(p, f, chaves[k], &oi, &of)) goto watchingDropped;
+    if (!lerObra(oi, of, d, imdb, sizeof imdb)) {
+      const char *ii, *ifim;
+      long id;
+      reason = "missing supported id";
+      if (k != 1 || !objetoRaiz(oi, of, "ids", &ii, &ifim)) goto watchingDropped;
+      id = (long)js_num(ii, ifim, "tmdb", 0);
+      if (id > 0) snprintf(imdb, sizeof imdb, "tmdb:%ld", id);
+      else {
+        id = (long)js_num(ii, ifim, "simkl", 0);
+        if (id <= 0) goto watchingDropped;
+        snprintf(imdb, sizeof imdb, "simkl:%ld", id);
+      }
+    }
+    { const char *ii, *ifim;
+      if (objetoRaiz(oi, of, "ids", &ii, &ifim))
+        d->tmdb = (long)js_num(ii, ifim, "tmdb", 0);
+    }
+    if (absoluto) animeAbsoluto(imdb, absoluto, &t, &e);
     d->temporada = t;
     d->episodio = e;
     d->progresso = 0;
-    snprintf(d->imdb, sizeof d->imdb, "%s:%d:%d", imdb, t, e);
+    if (e > 0) snprintf(d->imdb, sizeof d->imdb, "%s:%d:%d", imdb, t, e);
+    else snprintf(d->imdb, sizeof d->imdb, "%s", imdb);
     snprintf(d->tipo, sizeof d->tipo, "series");
     // O instante do "a seguir" e o do ULTIMO EPISODIO VISTO, como no Trakt
     // (ult[].quandoMs): e ele que diz quando a pessoa mexeu nesta serie.
     if (js_texto_raiz_em(p, f, "last_watched_at", quando, sizeof quando))
       d->retomadoMs = js_ms_iso(quando);
     n++;
+    if (k == 1) {
+      animeKept++;
+      printf("[simkl] anime watching #%d id=%s next=%s: candidate (%s)\n",
+             animeEntries, imdb, prox, e > 0 ? "episode mapped" : "title fallback");
+    }
+    continue;
+watchingDropped:
+    if (k == 1)
+      printf("[simkl] anime watching #%d: dropped (%s)\n", animeEntries, reason);
   }
+  printf("[simkl] anime watching: %d entries, %d candidates, %d dropped\n",
+         animeEntries, animeKept, animeEntries - animeKept);
   return n;
 }
 
@@ -724,7 +802,7 @@ int simkl_e_a_seguir(const char *id) {
 }
 
 static int mesmaSerie(const char *a, const char *b) {
-  size_t la = strcspn(a, ":"), lb = strcspn(b, ":");
+  size_t la = idbase_len(a), lb = idbase_len(b);
   return la == lb && !strncmp(a, b, la);
 }
 
@@ -743,6 +821,7 @@ int simkl_continuar(CatItem *saida, int max) {
   if (h && h == assCw && corpoPlay && corpoAssist && corpoAssistAnime) {
     cPlay = strdup(corpoPlay); cAssist = strdup(corpoAssist);
     cAnime = strdup(corpoAssistAnime);
+    printf("[simkl] resume: activities unchanged, cached playback/shows/anime bodies\n");
   }
   pedidoDestravar();
   if (!cPlay || !cAssist || !cAnime) {
@@ -752,6 +831,7 @@ int simkl_continuar(CatItem *saida, int max) {
     // Anime e um TERCEIRO tipo no Simkl: /sync/all-items/anime/<estado>.
     // Sem este pedido, nenhum anime aparece no Continuar assistindo.
     cAnime = pegar(pedido, "/sync/all-items/anime/watching", NULL, &st);
+    printf("[simkl] anime watching fetch: status=%d body=%s\n", st, cAnime ? "received" : "missing");
     if (pedidoTravar(pedido)) {
       if (h && cPlay && cAssist && cAnime) {
         trocar(&corpoPlay, strdup(cPlay)); trocar(&corpoAssist, strdup(cAssist));
@@ -767,26 +847,38 @@ int simkl_continuar(CatItem *saida, int max) {
   nP = prox && ajustes_cw_proximo() ? simkl_ler_assistindo(cAssist, prox, SMK_PLAY_MAX) : 0;
   // O mesmo leitor aceita a raiz "anime"; funde aqui, dedup por serie, para
   // nao repetir um titulo que o endpoint de shows ja tenha trazido.
-  if (prox && ajustes_cw_proximo() && nP < SMK_PLAY_MAX) {
+  if (!prox || !ajustes_cw_proximo())
+    printf("[simkl] anime watching: skipped (%s)\n", prox ? "next-up disabled" : "allocation failed");
+  if (prox && ajustes_cw_proximo()) {
     nA = simkl_ler_assistindo(cAnime, prox + nP, SMK_PLAY_MAX - nP);
     for (k = nP; k < nP + nA; k++) {
       int j, ja = 0;
       for (j = 0; j < nP && !ja; j++) ja = mesmaSerie(prox[j].imdb, prox[k].imdb);
-      if (ja) memmove(prox + k, prox + k + 1, sizeof prox[0] * (size_t)(nP + nA - k - 1)), nA--, k--;
+      if (ja) {
+        printf("[simkl] anime watching id=%s: dropped (duplicate show)\n", prox[k].imdb);
+        memmove(prox + k, prox + k + 1, sizeof prox[0] * (size_t)(nP + nA - k - 1));
+        nA--; k--;
+      }
     }
     nP += nA;
   }
   for (k = 0; k < nP; k++) {
     int ja = 0, alvo;
     for (i = 0; i < n && !ja; i++) ja = mesmaSerie(saida[i].imdb, prox[k].imdb);
-    if (ja) continue;
+    if (ja) {
+      printf("[simkl] watching id=%s: dropped (already in resume row)\n", prox[k].imdb);
+      continue;
+    }
     if (n < max) alvo = n++;
     else {
       int vel = -1;
       for (i = 0; i < n; i++)
         if (saida[i].progresso == 0 &&
             (vel < 0 || saida[i].retomadoMs < saida[vel].retomadoMs)) vel = i;
-      if (vel < 0 || saida[vel].retomadoMs >= prox[k].retomadoMs) continue;
+      if (vel < 0 || saida[vel].retomadoMs >= prox[k].retomadoMs) {
+        printf("[simkl] watching id=%s: dropped (resume row limit)\n", prox[k].imdb);
+        continue;
+      }
       alvo = vel;
     }
     saida[alvo] = prox[k];
@@ -843,6 +935,10 @@ int simkl_plantowatch(CatItem *saida, int max) {
       } else assPtw = 0;
       pedidoDestravar();
     }
+  }
+  if (!cF || !cS || !cA) {
+    free(cF); free(cS); free(cA);
+    return -1;
   }
   n = simkl_ler_plantowatch(cF, 0, saida, max);
   n += simkl_ler_plantowatch(cS, 1, saida + n, max - n);
@@ -1272,6 +1368,8 @@ static int scrobbleDecidir(int evento, const char *id, double pct) {
     scrEstado.ativo = 1;
     return SCR_START;
   }
+  if (evento == SCR_EV_PONTO)
+    return scrEstado.ativo && mesmo && pct >= 1.0 && pct < 80.0 ? SCR_START : SCR_NADA;
   if (evento == SCR_EV_PAUSOU) {
     if (!scrEstado.ativo || !mesmo) return SCR_NADA;
     scrEstado.ativo = 0;

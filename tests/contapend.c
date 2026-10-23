@@ -401,6 +401,21 @@ int main(int argc, char **argv) {
   assert(disco && strstr(disco, "ttH"));
   OK("poda: watched stays as evidence, stale remote loses until newer timestamp");
 
+  // #639: confirmed removals survive later cycles, disk reload and stale pulls.
+  zerar();
+  addLib(1, "tt5555555", 1); addLib(1, "tt6666666", 2);
+  agora += 1000;
+  assert(contapend_lista("tt5555555", "movie", "", "", 0) == 1);
+  assert(contapend_enviar() == 1);
+  contapend_podar(agora + 1);
+  contapend_esquecer();
+  assert(contapend_lista_oculta("tt5555555", 1) == 1);
+  perfil = 2;
+  assert(contapend_lista_oculta("tt5555555", 1) == 0);
+  perfil = 1;
+  assert(contapend_lista_oculta("tt5555555", agora + 1) == 0);
+  OK("confirmed library tombstone survives stale sync and reload; newer save wins");
+
   // 9. Sem conta, nada entra.
   zerar();
   logada = 0;

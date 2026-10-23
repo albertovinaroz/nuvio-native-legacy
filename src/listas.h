@@ -38,8 +38,7 @@
 // Fixadas na Biblioteca. Teto pequeno de proposito: e uma tela de atalhos, nao
 // um segundo catalogo, e cada fixada vira uma linha no arquivo do perfil.
 #define LST_FIX_MAX  24
-// Itens baixados de uma lista do Simkl. As outras duas fontes passam pelo
-// desc_vertudo_*, que tem o teto proprio dele (VT_MAX).
+// Context-menu batch size. Simkl list storage grows with its full response.
 #define LST_ITENS_MAX 120
 
 typedef enum { LST_TRAKT = 0, LST_SIMKL, LST_NUVIO, LST_FONTE_N } LstFonte;

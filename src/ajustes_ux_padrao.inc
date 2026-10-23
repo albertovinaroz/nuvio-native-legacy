@@ -99,7 +99,7 @@
   // ter escolhido e pior do que ler em ingles sem ter escolhido — por isso o
   // ultimo degrau e o ingles. Quem prefere outro troca em Ajustes -> Interface,
   // e a escolha fica gravada (e desliga o automatico).
-  0, 0, 0,          /* idioma, animacoes, resolucao (0 = 1080p) */
+  0, 2, 0,          /* language, animations Automatic, resolution Automatic */
   AJ_TEMA_DINAMICA, /* tema (cor de destaque): Da arte desde a 2.0 (dono, 05/10/2026: era Imersiva) */
   0,                /* cor da logo (so com tema dinamico): ligada */
   // O COMENTARIO ANTIGO AQUI ESTAVA ERRADO, e o erro so nao machucou por sorte.
@@ -156,7 +156,7 @@
   0,                /* itens por fileira: 12, como sempre foi (ver V_ITENS_FIL) */
   TXT_FAMILIA_INTER,/* fonte da interface: independente da legenda */
   0,                /* efeitos visuais do .tpk: automatico (adaptativo, ate o nivel 1) */
-  1,                /* interface de vidro: DESLIGADA (V_LIGA: 1 = Desligado) */
+  2,                /* glass interface: Automatic */
   1,                /* servidor P2P: DESLIGADO (V_LIGA: 1 = Desligado) */
   0, 0,             /* endereco, testar: acoes */
   0,                /* posteres personalizados: DESLIGADO (indice 0) */
@@ -170,7 +170,7 @@
   0, 1, 1, 1, 1, 1,/* trakt, tmdb, letterboxd, mal, ebert, nota do mdblist */
   1,                /* perfil pesquisavel: DESLIGADO (V_LIGA: 1 = Desligado). Padrao de todo mundo. */
   0,                /* meu perfil publico: acao */
-  0,                /* contorno do vidro: LIGADO (V_LIGA: 0 = Ligado), o visual de antes */
+  0,                /* glass contour: On (aesthetic, never automatic) */
   1,                /* som do trailer no destaque: DESLIGADO (V_LIGA: 1 = Desligado) */
   22,               /* espera do trailer no destaque: 2,2 s (em decimos de segundo) */
   90,               /* percentual assistido: 90%, o numero fixo de antes */
@@ -204,8 +204,8 @@
   0, 0, 0,          /* pacote de selos (espelho de selospacote_ativo), adicionar e remover: o embutido */
   UI_SIZE_AUTO,     /* Untouched interface size follows the physical panel. */
   2,                /* fundo: Frost desde a 2.0 (FUNDO_FROST; dono, 05/10/2026) */
-  2,                /* opacidade do vidro: 78%, a de sempre */
-  0,                /* vidro fosco: desligado */
+  0,                /* glass opacity: 60%, owner default */
+  2,                /* frosted glass: Automatic */
 
   0, /* app icon: Original */
 
@@ -331,7 +331,7 @@
   0, /* suggest Live TV categories: On, names only */
   0, /* #578: audio presentation offset, unchanged by default */
   0, /* Xtream limited connections: Auto; account storage owns the value. */
-  1, /* interface scaling: App (4K) hardware, preserving the existing drawable */
+  2, /* interface scaling: Automatic */
   0, 0, 0, 0, 0, /* guide source, refresh and M3U actions */
 
   0, 0, 0, 0, 0, 0, 0, /* native Live TV account registry views/actions */
@@ -343,3 +343,8 @@
   0, /* upscaling algorithm: Automatic (default) */
   2, /* upscaling RCAS sharpness, 0..4 */
   0, /* experimental HDR menus: Off */
+  0, /* clear cache action */
+  0, /* tunneled playback: Off */
+  1, /* experimental P7 conversion: Off until explicitly enabled */
+  1, /* log page on the local network (logrede.h): Desligado */
+  4, /* player format style: Original (V_PLR_FORMATO 4) */

@@ -5,6 +5,8 @@ static int ajustePortavel(int op) {
   if (ajLegendaPrincipal(op)) return 1;
   if (!CHAVE[op] || CHAVE[op][0] == '-') return 0;
   switch (op) {
+    // Experimental DV7 conversion stays on this TV, outside account sync.
+    case AJ_DV7: return 0;
     case AJ_AMPLIAR_UI: case AJ_RESOLUCAO: case AJ_TEX_MB: case AJ_QUALIDADE_IMG:
     case AJ_GPU_EFEITOS: case AJ_ITENS_FILEIRA:
     case AJ_TAMANHO_UI: case AJ_TAMANHO_AJUSTES: case AJ_ESCALA_TEXTO:

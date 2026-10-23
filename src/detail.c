@@ -1333,7 +1333,8 @@ static int  arteFixaPoster;
 static GfxRect morphLogo;   // o logo do hero no ultimo quadro (player_morph_de)
 static const char *logoDe(int i) {
   const CatItem *c = cat_item(i);
-  if (i == idx && logoFixo[0]) return logoFixo;
+  if (i == idx && logoFixo[0] && !tex_falhou(logoFixo)) return logoFixo;
+  if (i == idx) logoFixo[0] = 0;
   if (i == idx) {
     const char *u = artehero_logo_sessao(c);
     if (u) {
@@ -4697,9 +4698,10 @@ static void heroWeb(float a, float desloc) {
     hSinInit = 1;
     hSin = hSinVis; }
   const char *arqLogo = logoDe(idx);
-  const char *nome = mostrarNomeLogo(ci, arqLogo && tex_falhou(arqLogo) ? NULL : arqLogo,
-                                    0, desc_tmdb_idioma()) ? tituloDe(idx) : NULL;
-  int nomeAbaixo = nome && arqLogo && !tex_falhou(arqLogo);
+  GLuint texLogo = arqLogo ? tex_obter_logo_larg_qualquer(arqLogo, larguraLogoHero()) : 0;
+  const char *nome = mostrarNomeLogo(ci, texLogo ? arqLogo : NULL,
+                                    texLogo != 0, desc_tmdb_idioma()) ? tituloDe(idx) : NULL;
+  int nomeAbaixo = nome && texLogo;
   float hNome = nome ? txt_bloco(TXT_DET_META2, nome, 255, 255, 255,
                                 -1, 0, larguraLogoHero(), 34, 0, 0) : 0;
   float hCaption = nomeAbaixo ? hNome + 16.0f : 0;
@@ -4749,7 +4751,6 @@ static void heroWeb(float a, float desloc) {
   // textura menor enquanto reprocessa se ela tiver ao menos metade do
   // pedido. Pedindo o teto, o logo sumia por um instante ao abrir o titulo;
   // pedindo a largura real, aparece na hora e troca pela nitida em seguida.
-  GLuint texLogo = arqLogo ? tex_obter_logo_larg_qualquer(arqLogo, larguraLogoHero()) : 0;
   titulo_tempo_logo(&detalheTempo, "detalhe", arqLogo, texLogo, 0);
   if (a > 0.05f) titulo_tempo_info(&detalheTempo, "detalhe", ci, 0);
   float baseLogo = ((temRetom > 0.0f || agLinha[0]) ? yEstado : yAcoes)
@@ -7268,6 +7269,8 @@ static void desenhaEpisodio(GfxRect r, int c, float f, float a, Uint32 agora);
 static void menuDeVisto(Uint32 agora) {
   if (!episodios_menu_visivel()) { episodios_menu_desenhar(); return; }
   if (menuOrigem.w > 8.0f && (foco.fileira == SEC_EPISODIOS || foco.fileira == SEC_TEMPORADAS)) {
+    if (foco.fileira == SEC_EPISODIOS && gfx_escala_txt() > 1.0f)
+      menuOrigem.y = fminf(menuOrigem.y, NV_TELA_H - ANC(40.0f) - menuOrigem.h);
     float e = gfx_escala() / gfx_escala_ui();
     episodios_menu_ancora((GfxRect){ menuOrigem.x * e, menuOrigem.y * e, menuOrigem.w * e, menuOrigem.h * e });
   }
@@ -7637,7 +7640,8 @@ static void desenhaPessoa(float a) {
 #endif
       if (lin < pessoaLinha) continue;
       GfxRect r = { x, y, PES_CARD_W, PES_CARD_H };
-      const char *po = pessoa_credito_poster(i);
+      const char *po = posterprov_card(pessoa_credito_imdb(i), pessoa_credito_tmdb(i),
+                                        pessoa_credito_tipo(i), pessoa_credito_poster(i));
       GLuint t = po[0] ? tex_obter_larg(po, PES_CARD_W) : 0;
 #ifdef NV_TOUCH_UI
       if (telefoneui_ativo())

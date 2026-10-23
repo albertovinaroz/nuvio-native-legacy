@@ -92,6 +92,7 @@ int  salvos_tem(const char *imdb);
 // no arranque seguinte o painel abre antes de existir catalogo nenhum, e uma
 // lista de ids nus desenharia oito retangulos cinza sem nome.
 int  salvos_definir(const CatItem *ci, int salvo);
+void salvos_remover_remoto(const char *id); // No outbound gesture.
 // Quem quer saber de CADA gesto de salvar/tirar (app.c liga o jornal da conta,
 // contapend.h). Chamado antes da lista local mudar, mesmo quando ela nao muda.
 void salvos_ao_definir(void (*f)(const CatItem *ci, int salvo));

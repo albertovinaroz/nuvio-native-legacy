@@ -3,6 +3,7 @@
 #include "imdbnota.h"
 #include "notasfontes.h"
 #include "extras.h"
+#include "posterprov.h"
 #include "streams.h"
 #include "marco.h"
 #include "vistoep.h"
@@ -2353,7 +2354,7 @@ const char *extras_colecao_capa(void) { return colCapa; }
 const char *extras_colecao_fundo(void) { return colFundo; }
 const char *extras_colecao_sinopse(void) { return colSinopse; }
 const char *extras_colecao_poster(int i) {
-  return (i >= 0 && i < nCol) ? col[i].poster : "";
+  return (i >= 0 && i < nCol) ? posterprov_card(NULL, col[i].tmdb, "movie", col[i].poster) : "";
 }
 const char *extras_colecao_sinopse_parte(int i) {
   return (i >= 0 && i < nCol) ? col[i].sinopse : "";

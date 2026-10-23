@@ -28,7 +28,13 @@ static const GLubyte *testGlString(GLenum e) {
 #define glGetString testGlString
 #define telaW gpunTelaW
 #define telaH gpunTelaH
+#ifdef IMGBAIXA_BASELINE
+#include IMGBAIXA_BASELINE
+int gpun_upscale_suportado(void) { return 1; }
+void gpun_ampliar_app(int app) { (void)app; }
+#else
 #include "../src/gpunivel.c"
+#endif
 #undef telaW
 #undef telaH
 #undef glGetString
@@ -62,6 +68,18 @@ static void png(const char *dir, const char *name) {
   SDL_Surface *s=SDL_CreateRGBSurfaceWithFormatFrom(flipped,sw,sh,32,sw*4,SDL_PIXELFORMAT_RGBA32);
   assert(s);
   assert(IMG_SavePNG(s,path)==0); SDL_FreeSurface(s);
+  printf("PNG %s\n",path);
+}
+static void artCrop(const char *dir, const char *name, SDL_Rect rect) {
+  char path[1024];
+  assert(snprintf(path,sizeof path,"%s/%s.png",dir,name)<(int)sizeof path);
+  SDL_Surface *full=SDL_CreateRGBSurfaceWithFormatFrom(flipped,sw,sh,32,sw*4,SDL_PIXELFORMAT_RGBA32);
+  SDL_Surface *crop=SDL_CreateRGBSurfaceWithFormat(0,rect.w,rect.h,32,SDL_PIXELFORMAT_RGBA32);
+  assert(full && crop);
+  SDL_SetSurfaceBlendMode(full,SDL_BLENDMODE_NONE);
+  assert(SDL_BlitSurface(full,&rect,crop,NULL)==0);
+  assert(IMG_SavePNG(crop,path)==0);
+  SDL_FreeSurface(crop); SDL_FreeSurface(full);
   printf("PNG %s\n",path);
 }
 static void frame(int settings) {
@@ -181,6 +199,44 @@ int main(int argc,char **argv) {
   pixels=malloc(capacity);flipped=malloc(capacity);linear=malloc(capacity);native=malloc(capacity);
   assert(pixels&&flipped&&linear&&native);
   int failed=0;
+  if (getenv("NUVIO_SHOT_C9")) {
+    sw=1920; sh=1080; iw=1920; ih=1080;
+    ui720_settings(3840,2160,1,0,1080);
+    png(argv[1],"c9-hero");
+    artCrop(argv[1],"c9-backdrop",(SDL_Rect){900,100,500,400});
+    SDL_Event down={0};
+    for (int row=0;row<2;row++) {
+      down.type=SDL_KEYDOWN; down.key.keysym.sym=SDLK_DOWN; home_evento(&down);
+      down.type=SDL_KEYUP; home_evento(&down);
+      for (int n=0;n<90;n++) { home_atualizar(1.f/60,10000); frame(0); }
+    }
+    // Home art is stable; Settings frost changes between consecutive frames.
+    for (int effects=0;effects<4;effects++) {
+      gpun_iniciar(sw,sh);
+      gpun_preferencia(effects);
+      gpun_ampliar_app(ajustes_ampliar_app());
+      target(0); frame(0); readback(); memcpy(native,pixels,(size_t)sw*sh*4);
+      gpun_quadro_inicio(); frame(0); gpun_quadro_fim();
+      readback();
+      GLint viewport[4]; glGetIntegerv(GL_VIEWPORT,viewport);
+      assert(viewport[2]==1920 && viewport[3]==1080 && intW==0);
+      assert(!memcmp(native,pixels,(size_t)sw*sh*4));
+      if (effects==3) {
+        png(argv[1],"c9-home");
+        artCrop(argv[1],"c9-poster",(SDL_Rect){100,620,600,225});
+      }
+      printf("PASS C9 effects=%d native 1920x1080; gradient=%.6f MAE=%.6f\n",
+             effects,gradient(pixels,0),error(pixels,0));
+    }
+    // Negative control: explicit 720p must still work and lose native detail.
+    gpun_iniciar(sw,sh); gpun_preferencia(3); gpun_forcar_720();
+    gpun_ampliar_app(ajustes_ampliar_app());
+    gpun_quadro_inicio(); frame(0); gpun_quadro_fim(); readback();
+    assert(intW==1280 && intH==720 && error(pixels,0)>0.1);
+    printf("PASS C9 explicit 720p negative control MAE=%.6f\n",error(pixels,0));
+    return 0;
+  }
+#ifndef IMGBAIXA_BASELINE
   if(argc==3) {
     // C9 drawable: effects never select a lower-resolution target.
     sw=1920; sh=1080;
@@ -216,6 +272,7 @@ int main(int argc,char **argv) {
     }
     return failed;
   }
+#endif
   for(int test=0;test<4;test++) {
     sw=test==1||test==2?3840:1920;sh=sw*9/16;
     iw=test>=2?1920:1280;ih=iw*9/16;

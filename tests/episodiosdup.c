@@ -4,6 +4,8 @@
 //
 //   bash tests/episodiosdup.sh
 int ajustes_social(void) { return 1; }
+int ajustes_fonte_biblioteca(void) { return 0; }
+int ajustes_nota_episodio(int fonte) { (void)fonte; return 0; }
 int ajustes_hist_conta(void) { return 1; }
 int ajustes_busca_cinemeta(void) { return 1; }
 int ajustes_busca_nuvio(void) { return 0; }   // #311: Primeiro (padrao)
@@ -59,6 +61,13 @@ const char *i18n(const char *s)         { return s; }
 const char *idioma_mes_data(int mes, const char *nomePt) { (void)mes; return nomePt; }
 static const char *fakeDados = "";
 const char *dados_dir(void)             { return fakeDados; }
+char *dados_caminho(char *dst, unsigned tam, const char *nome) {
+  snprintf(dst, tam, "%s/%s", fakeDados, nome); return dst;
+}
+void addons_catalogo_chave(const char *id, const char *base, const char *tipo,
+                           const char *catalogo, char *dst, unsigned tam) {
+  (void)base; snprintf(dst, tam, "%s:%s:%s", id, tipo, catalogo);
+}
 const char *sessao_usuario(void)        { return ""; }
 static int fakePerfil = 1;
 int         perfis_ativo(void)          { return fakePerfil; }
@@ -279,6 +288,9 @@ char *rede_baixar(const char *u, int t) {
   if (strstr(u, "themoviedb.org/3/movie/278?") && tmdbFilme) return strdup(tmdbFilme);
   return NULL;   // outros addons: fora do teste
 }
+char *rede_baixar_st(const char *u, int t, const char *const *c, int *status) {
+  (void)c; if (status) *status = 200; return rede_baixar(u, t);
+}
 char *rede_baixar_com(const char *u, int t, const char *const *c) {
   (void)c; return rede_baixar(u, t); }
 int arte_reserva_registrar(const char *url, const char *imdb, int poster) {
@@ -430,18 +442,18 @@ int main(void) {
   }
   // Samsung 2.0.4: One Piece renumerado por um addon de fontes.
   {
-    size_t cap = 2u << 20, k;
+    size_t cap = 8u << 20, k;
     char *cine = malloc(cap), *arq = malloc(cap);
     int i, caso, via;
     assert(cine && arq);
-    for (caso = 0; caso < 5; caso++) {
+    for (caso = 0; caso < 6; caso++) {
       // 18 temporadas/1180 vs 1/1200; depois 89%, 90%, 100% de
       // cobertura em uma temporada; por fim 98% com perda de temporadas.
       // Quatro variantes por arquivo.
-      int nc = caso && caso < 4 ? 100 : 1180, na = caso && caso < 4 ? 120 : 1200;
+      int nc = caso && caso < 4 ? 100 : 1180, na = caso == 5 ? 10843 : (caso && caso < 4 ? 120 : 1200);
       k = (size_t)snprintf(cine, cap, "{\"meta\":{\"id\":\"tt0388629\",\"type\":\"series\",\"name\":\"One Piece\",\"videos\":[");
       for (i = 0; i < nc; i++) {
-        int t = caso ? 1 : i % 18 + 1, ep = caso ? i + 1 : i / 18 + 1;
+        int t = caso && caso != 5 ? 1 : i % 18 + 1, ep = caso && caso != 5 ? i + 1 : i / 18 + 1;
         if (caso == 4 && i >= nc - 17) { t = i - (nc - 17) + 2; ep = 1; }
         k += (size_t)snprintf(cine + k, cap - k,
           "%s{\"id\":\"tt0388629:%d:%d\",\"season\":%d,\"episode\":%d,\"name\":\"C%d\"}",
@@ -450,12 +462,20 @@ int main(void) {
       snprintf(cine + k, cap - k, "]}}");
       k = (size_t)snprintf(arq, cap, "{\"meta\":{\"id\":\"tt0388629\",\"type\":\"series\",\"name\":\"One Piece\",\"videos\":[");
       for (i = 0; i < na * 4; i++) {
-        int ep = i % na + 1;
+        int ep = i % na + 1, t = 1;
+        // Field logs 95009/95369/95816: 10843 distinct file episodes
+        // replace 1180 catalog episodes, then get truncated to 2400.
+        // Full pair coverage must not make an oversized replacement safe.
+        if (caso == 5) {
+          int j = i % na;
+          t = j < nc ? j % 18 + 1 : 1;
+          ep = j < nc ? j / 18 + 1 : j + 1;
+        }
         if (caso == 1 && ep > 89) ep += 100;
         if (caso == 2 && ep > 90) ep += 100;
         k += (size_t)snprintf(arq + k, cap - k,
-          "%s{\"id\":\"file%d\",\"season\":1,\"episode\":%d,\"name\":\"One.Piece.%d.mkv\"}",
-          i ? "," : "", i, ep, ep);
+          "%s{\"id\":\"file%d\",\"season\":%d,\"episode\":%d,\"name\":\"One.Piece.%d.mkv\"}",
+          i ? "," : "", i, t, ep, ep);
       }
       snprintf(arq + k, cap - k, "]}}");
       assert(k < cap - 8);
@@ -474,9 +494,9 @@ int main(void) {
         abrir();
         printf("One Piece caso=%d catalogo-primeiro=%d: %d episodios, %d temporadas\n",
                caso, via, cat_n_episodios(0), cat_item(0)->nTemporadas);
-        assert(cat_n_episodios(0) == (caso < 2 || caso == 4 ? nc : na));
+        assert(cat_n_episodios(0) == (caso < 2 || caso >= 4 ? nc : na));
         assert(cat_item(0)->nTemporadas == (caso && caso < 4 ? 1 : 18));
-        if (caso < 2 || caso == 4) {
+        if (caso < 2 || caso >= 4) {
           assert(!strcmp(cat_episodio(0, 0)->vid, "tt0388629:1:1"));
           assert(!strstr(cat_episodio(0, nc - 1)->nome, ".mkv"));
         }

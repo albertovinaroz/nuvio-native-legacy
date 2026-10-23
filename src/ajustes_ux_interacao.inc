@@ -98,7 +98,7 @@ static int uxLigarRequisitos(int op, int aplicar) {
   memcpy(salvo, valor, sizeof salvo);
   for (k = 0; k < 3 && inativa(op); k++) {
     int req = uxRequisito(op);
-    if (req < 0 || !ehInterruptor(req) || lig(req) || inativa(req)) break;
+    if (req < 0 || (!ehInterruptor(req) && OPCOES[req].valores != V_LIGA_AUTO) || lig(req) || inativa(req)) break;
     valor[req] = 0; ligar[n++] = req;
   }
   res = n > 0 && !inativa(op) ? (ehInterruptor(op) && !lig(op) ? 2 : 1) : 0;

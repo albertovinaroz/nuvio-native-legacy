@@ -49,7 +49,7 @@ static int pluginFixture(const char *id, const char *tipo, int (*cancelado)(void
 int main(void) {
   char esperado[2][FONTEFALHA_CHAVE], plugin[2][FONTEFALHA_CHAVE];
   BaldeFonte baldes[2] = {{.idx = 0}, {.idx = 1}};
-  Consulta c = { .id = "tt1", .tipo = "movie", .tipoAlt = "", .timeout = 1,
+  Consulta c = { .id = "tt1", .tipo = "movie", .timeout = 1,
                  .baldes = baldes, .nBaldes = 2, .progresso = 1, .rodada = 1 };
   nAddon = 2; memset(addon, 0, sizeof addon);
   for (int i = 0; i < 2; i++) {
@@ -96,7 +96,7 @@ int main(void) {
   respCanalTv = "{\"streams\":[]}";
   respCanalChannel = "{\"streams\":[{\"url\":\"https://x/channel.m3u8\"}]}";
   memset(&c, 0, sizeof c); memset(baldes, 0, sizeof baldes);
-  c.id = "channel1"; c.tipo = "tv"; c.tipoAlt = "channel";
+  c.id = "channel1"; c.tipo = "tv";
   c.timeout = 1; c.baldes = baldes; c.nBaldes = 1;
   pthread_mutex_init(&c.trava, NULL);
   c.sessao = perfis_sessao_geracao();

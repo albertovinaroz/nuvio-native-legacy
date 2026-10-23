@@ -108,6 +108,8 @@ namespace NuvioTpk
         Player player;
         int sessao, playerSessao;
         volatile int posMs;
+        int posGer;
+        bool acabou;
 
         // Um contexto por sessao mantem comandos e continuacoes async no mesmo
         // fio. Fechar descarta a fila antiga; nunca espera uma API presa.
@@ -310,13 +312,15 @@ namespace NuvioTpk
             var f = Volatile.Read(ref fio);
             if (f == null || Interlocked.Exchange(ref f.consulta, 1) != 0) return;
             int minha = Volatile.Read(ref sessao);
-            f.Post(_ => {
+            // Polling must not occupy the command queue: firmware reads can take seconds.
+            int ger = Volatile.Read(ref posGer);
+            _ = Task.Run(() => {
                 var p = Volatile.Read(ref player);
                 long inicio = Stopwatch.GetTimestamp();
                 try {
                     if (p != null && playerSessao == minha && minha == Volatile.Read(ref sessao) && p.State == PlayerState.Playing) {
                         int ms = p.GetPlayPosition();
-                        lock (trocaTrava) { if (minha == sessao && player == p) posMs = ms; }
+                        lock (trocaTrava) { if (minha == sessao && player == p && ger == posGer) posMs = ms; }
                     }
                 } catch (InvalidOperationException e) {
                     Log("posicao: " + e.Message);
@@ -328,7 +332,7 @@ namespace NuvioTpk
                     if (ms >= 5000 && minha == Volatile.Read(ref sessao)) NvVid.Evento(EV_CONSULTA_LENTA, 0, 0);
                     Volatile.Write(ref f.consulta, 0);
                 }
-            }, null);
+            });
         }
 
         public void Log(string s)
@@ -411,7 +415,8 @@ namespace NuvioTpk
 
         async void Abrir(string url, string cabecalhos, int minha)
         {
-            posMs = 0; buscando = false; buscaPend = pausaPend = -1;
+            posMs = 0; acabou = false; Interlocked.Increment(ref posGer);
+            buscando = false; buscaPend = pausaPend = -1;
             aspectoRecusado = false;
             try
             {
@@ -429,7 +434,14 @@ namespace NuvioTpk
                     try {
                         if (p.State != PlayerState.Ready) return;
                         lock (trocaTrava) {
-                            if (minha == sessao && player == p) NvVid.Evento(EV_FIM, 0, 0);
+                            if (minha == sessao && player == p && !acabou) {
+                                acabou = true;
+                                Interlocked.Increment(ref posGer);
+                                // Ready no longer exposes a playing position. Publish EOS
+                                // at duration so the existing next-episode flow can run.
+                                try { posMs = p.StreamInfo.GetDuration(); } catch { }
+                                NvVid.Evento(EV_FIM, 0, 0);
+                            }
                         }
                     } catch (Exception ex) { Log("completion state: " + ex.Message); }
                 });
@@ -585,16 +597,9 @@ namespace NuvioTpk
 
         bool Liberar(Player p)
         {
-            try { p.Muted = true; } catch (Exception e) { Log("parar muted: " + e.Message); }
-            try { p.Display = null; } catch (Exception e) { Log("parar display: " + e.Message); }
-            // Um GetState so: no player preso cada leitura custa ~5 s (#412) e,
-            // recusada, Stop/Unprepare tambem seriam; segue direto ao Dispose.
-            PlayerState st = PlayerState.Idle;
-            try { st = p.State; } catch (Exception e) { Log("parar estado: " + e.Message); }
-            try { if (st == PlayerState.Playing || st == PlayerState.Paused) { p.Stop(); st = PlayerState.Ready; } }
-            catch (Exception e) { Log("parar stop: " + e.Message); }
-            try { if (st == PlayerState.Ready || st == PlayerState.Playing || st == PlayerState.Paused) p.Unprepare(); }
-            catch (Exception e) { Log("parar unprepare: " + e.Message); }
+            // Dispose owns native teardown. Preliminary property reads/writes,
+            // Stop and Unprepare can each block beyond the release deadline.
+            // Trocar still requires confirmed disposal before creating a player.
             try { p.Dispose(); return true; }
             catch (Exception e) { Log("parar dispose: " + e.Message); Volatile.Write(ref naoSolto, p); return false; }
         }
@@ -613,7 +618,7 @@ namespace NuvioTpk
             try
             {
                 if (pausa && p.State == PlayerState.Playing) { p.Pause(); NvVid.Evento(EV_PAUSADO, 0, 0); }
-                else if (!pausa && p.State == PlayerState.Paused) { p.Start(); windowMetrics.Invalidate(); NvVid.Evento(EV_TOCANDO, 0, 0); }
+                else if (!pausa && (p.State == PlayerState.Paused || p.State == PlayerState.Ready)) { acabou = false; p.Start(); windowMetrics.Invalidate(); NvVid.Evento(EV_TOCANDO, 0, 0); }
             }
             catch (InvalidOperationException e)
             {
@@ -631,6 +636,8 @@ namespace NuvioTpk
             var p = player;
             int minha = Volatile.Read(ref sessao);
             buscando = true;
+            acabou = false;
+            Interlocked.Increment(ref posGer);
             bool expirou = false;
             try {
                 var busca = p.SetPlayPositionAsync(ms, false);

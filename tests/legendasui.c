@@ -383,6 +383,29 @@ int main(void) {
     mais = ver = 0;
   }
 
+  // Provider labels survive menu formatting without becoming release filenames.
+  { const char *labels[] = { "⚠️ Not synced · OpenSubtitles · Release",
+      "Weak sync", "Syncs when picked", "Weak sync" };
+    char title[96], detail[512]; const char *language, *icon; int active, dim;
+    nEmb = 0; nAdd = 4;
+    for (int k = 0; k < nAdd; k++) {
+      addon(k, "en", "SubtitleSync", k == 3 ? "Release.srt" : "", "");
+      snprintf(add[k].rotulo, sizeof add[k].rotulo, "%s", labels[k]);
+    }
+    montarLinhas();
+    for (int mode = 0; mode < 3; mode++) {
+      mais = mode == 1; ver = mode == 2;
+      for (int k = 0; k < nAdd; k++) {
+        LuiLinha row = {0}; row.tipo = LR_CAND; row.cand = k;
+        textoLinha(&row, title, sizeof title, detail, sizeof detail, &language, &icon, &active, &dim);
+        assert(strstr(title, k == 0 ? "Not synced" : k == 3 ? "Release.srt" : labels[k]));
+        assert(strstr(detail, labels[k]));
+        assert(!strcmp(cand[k].arquivo, k == 3 ? "Release.srt" : ""));
+      }
+    }
+    mais = ver = 0;
+  }
+
   puts("legendasui: identities, formats, kinds, full list, late arrivals, second-slot refusals, offsets, AutoSync, settings, active-outside-recommendations, track titles OK");
   return 0;
 }

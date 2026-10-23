@@ -13,6 +13,14 @@
 #include <string.h>
 #include <pthread.h>
 
+extern void salvos_remover_remoto(const char *) NV_PERFIL_OPCIONAL;
+// Mach-O: weak_import indefinido nao resolve num link estatico (ver
+// perfisessao.h). Duble fraco para os fixtures que nao linkam salvos.c; a
+// definicao forte de salvos.c o sobrepoe no app.
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((weak)) void salvos_remover_remoto(const char *id) { (void)id; }
+#endif
+
 // Nao esta em catalogo.h — ctxmenu.c e trakt.c ja a declaram assim. Repetir a
 // declaracao em vez de mexer no cabecalho mantem a mudanca dentro dos arquivos
 // deste conserto; o lugar certo dela e catalogo.h, e isso esta no relatorio.
@@ -256,6 +264,20 @@ int contalib_ler_biblioteca(const char *json) {
   }
   free(seq);
 
+  // A complete replacement removes only titles previously supplied by this
+  // account snapshot. Local-only saves and unrelated provider bits survive.
+  if (ajustes_fonte_traz_conta(ajustes_fonte_biblioteca()))
+    for (i = 0; i < nItens; i++) {
+      for (j = 0; j < k; j++) if (!strcmp(itens[i].id, novo[j].id)) break;
+      if (j == k) {
+        // Um '+' de lista PENDENTE nesta TV vence a remocao do espelho local
+        // ate subir: sem isto o snapshot apagava um salvo feito aqui.
+        if (contapend_lista_pendente && contapend_lista_pendente(itens[i].id)) continue;
+        int idx = cat_indice_por_imdb(itens[i].id);
+        if (idx >= 0) cat_definir_na_lista(idx, 0);
+        if (salvos_remover_remoto) salvos_remover_remoto(itens[i].id);
+      }
+    }
   free(itens);
   itens = novo;
   nItens = k;

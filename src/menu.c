@@ -1151,8 +1151,9 @@ static void tvAvatar(GfxRect av, float alfa) {
   // Como o avatar do menu: pela largura com que desenha (tex_obter_larg).
   GLuint tex = (p && p->avatarUrl[0]) ? tex_obter_larg(p->avatarUrl, av.w) : 0;
   if (tex) {
-    gfx_tex_aspect_atual = 1.0f;
-    gfx_rect(av, tex, GFX_CARD, 0, 0, 0, 0.5f, 0, 0, 0, alfa);
+    gfx_tex_aspect_atual = tex_aspecto(p->avatarUrl);
+    gfx_rect(av, tex, GFX_AVATAR, 0, 0, 0, 0.5f, 0, 0, 0, alfa);
+    gfx_tex_aspect_atual = 0.0f;
   } else {
     float cr, cg, cb;
     char ini[16];

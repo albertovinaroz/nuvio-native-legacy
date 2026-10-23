@@ -37,6 +37,11 @@ _Static_assert(AJ_SALVOS_LOCAL == 0 && AJ_SALVOS_TRAKT == 1 && AJ_SALVOS_SIMKL =
 
 // ---------------------------------------------------------------- stubs
 
+#ifndef SIMKL_ANIME_FIXTURE
+const char *metaprov_idioma(void) { return "en"; }
+char *fichameta_ler(const char *key, long ttl) { (void)key; (void)ttl; return NULL; }
+#endif
+
 char *dados_ler(const char *nome) { (void)nome; return NULL; }
 int dados_gravar(const char *nome, const char *buf) { (void)nome; (void)buf; return 1; }
 int dados_apagar(const char *nome) { (void)nome; return 1; }
@@ -159,7 +164,7 @@ static void rota(const char *url, char *dst, size_t tam) {
   memcpy(dst, p, n); dst[n] = 0;
 }
 
-static int perfilRede, trocarNaResposta, perfilHistorySt = 200;
+static int perfilRede, trocarNaResposta, perfilHistorySt = 200, libraryFailure;
 static const char *perfilHistoryBody = "{\"movies\":[],\"shows\":[],\"anime\":[]}";
 
 char *rede_baixar_st(const char *url, int s, const char *const *cab, int *st) {
@@ -169,6 +174,9 @@ char *rede_baixar_st(const char *url, int s, const char *const *cab, int *st) {
   rota(url, r, sizeof r);
   snprintf(ultimaRota, sizeof ultimaRota, "%s", r);
   *st = 200;
+  if (libraryFailure && !strcmp(r, "/sync/all-items/shows/plantowatch")) {
+    *st = 400; return NULL;
+  }
   if (perfilRede && !strcmp(r, "/users/settings")) {
     if (trocarNaResposta == 1) { tokenAtual = "OUTRO-TOKEN-FALSO"; credGeracao++; }
     return strdup("{\"user\":{\"name\":\"Identidade Simkl\"}}");
@@ -194,6 +202,8 @@ char *rede_baixar_st(const char *url, int s, const char *const *cab, int *st) {
   *st = 404;
   return strdup("{\"error\":\"id_err\",\"code\":404}");
 }
+
+#include "library639_http.inc"
 
 char *rede_postar_st(const char *url, int s, const char *const *cab,
                      const char *corpo, int *st) {
@@ -296,7 +306,7 @@ static void leitores(void) {
   assert(!strcmp(v[1].titulo, "Severance") && v[1].retomadoMs > v[0].retomadoMs);
   // E a resposta do endpoint de ANIME, pelo mesmo leitor (raiz "anime").
   n = simkl_ler_assistindo(WATCHING_ANIME, v, 12);
-  assert(n == 1 && !strcmp(v[0].imdb, "tt22248376:3:4") && !strcmp(v[0].tipo, "series"));
+  assert(n == 2 && !strcmp(v[0].imdb, "tt22248376:3:4") && !strcmp(v[0].tipo, "series"));
   assert(!strcmp(v[0].titulo, "Frieren"));
   assert(simkl_ler_assistindo("null", v, 12) == 0);
   assert(simkl_ler_assistindo("{}", v, 12) == 0);
@@ -319,13 +329,16 @@ static void retomada(void) {
   n = simkl_continuar(v, 12);
   // 3 pausados + Frieren (anime) + Severance (a seguir). Breaking Bad do
   // watching NAO entra de novo: a serie ja esta pausada no S01E05.
-  assert(n == 5);
-  for (i = 0; i < n; i++) assert(strncmp(v[i].imdb, "tt0903747:1:6", 13));
-  // Pausados primeiro; sugestoes ficam nos lugares restantes, a mais recente
-  // na frente (Frieren 01-22 depois Severance 01-20).
-  assert(!strcmp(v[0].imdb, "tt1375666"));
-  assert(!strcmp(v[3].imdb, "tt22248376:3:4") && !strcmp(v[3].tipo, "series"));
-  assert(!strcmp(v[4].imdb, "tt11280740:2:3"));
+  assert(n == 6);
+  int frieren = 0, severance = 0, paused = 0;
+  for (i = 0; i < n; i++) {
+    assert(strncmp(v[i].imdb, "tt0903747:1:6", 13));
+    if (i) assert(v[i - 1].retomadoMs >= v[i].retomadoMs);
+    frieren += !strcmp(v[i].imdb, "tt22248376:3:4") && !strcmp(v[i].tipo, "series");
+    severance += !strcmp(v[i].imdb, "tt11280740:2:3");
+    paused += !strcmp(v[i].imdb, "tt1375666");
+  }
+  assert(frieren == 1 && severance == 1 && paused == 1);
   assert(simkl_e_a_seguir("tt22248376:3:4"));
   assert(simkl_e_a_seguir("tt11280740:2:3"));
   assert(!simkl_e_a_seguir("tt1375666"));
@@ -335,11 +348,11 @@ static void retomada(void) {
 
   // Atividades iguais: nada de playback nem all-items de novo.
   n = simkl_continuar(v, 12);
-  assert(n == 5 && batidas[0] == 2 && batidas[1] == 1 && batidas[2] == 1 && batidas[8] == 1);
+  assert(n == 6 && batidas[0] == 2 && batidas[1] == 1 && batidas[2] == 1 && batidas[8] == 1);
   // Atividade nova: rebaixa.
   snprintf(atividades, sizeof atividades, "{\"all\":\"2024-01-21T00:00:00Z\"}");
   n = simkl_continuar(v, 12);
-  assert(n == 5 && batidas[0] == 3 && batidas[1] == 2 && batidas[2] == 2 && batidas[8] == 2);
+  assert(n == 6 && batidas[0] == 3 && batidas[1] == 2 && batidas[2] == 2 && batidas[8] == 2);
   OK("retomada: /sync/activities igual nao baixa all-items de novo");
 
   // Lista cheia: a sugestao nao expulsa nenhum pausado.
@@ -412,6 +425,12 @@ static void maisMenos(void) {
   assert(esperarEscrita() == SMK_OP_CONFIRMADA);
   assert(!strcmp(ultimoCorpo, "{\"shows\":[{\"ids\":{\"imdb\":\"tt2788316\"}}]}"));
   OK("plantowatch da rede: naLista e a guarda do - conhece o que veio de la");
+  simkl_esquecer();
+  libraryFailure = 1;
+  assert(simkl_plantowatch(v, 12) == -1);
+  libraryFailure = 0;
+  simkl_esquecer();
+  OK("partial Simkl library is rejected instead of replacing complete membership");
 }
 
 static void perfilRedeCasos(void) {
@@ -493,7 +512,14 @@ static void perfilStats(void) {
   OK("perfil: identidade e estatisticas mensais saem do Simkl; outro mes fica fora");
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+  (void)argv;
+  if (argc > 1) {
+    CatItem *v = calloc(12, sizeof *v);
+    assert(v); tokenAtual = TOKEN; libraryFailure = 1;
+    assert(simkl_plantowatch(v, 12) == -1);
+    free(v); puts("#639 Simkl partial snapshot: PASS"); return 0;
+  }
   char caminho[NVT_MAX]; nvt_set(caminho, sizeof caminho, "/nuvio-simkl-cw-XXXXXX");
   int fd = mkstemp(caminho), salvo = dup(1);
   FILE *f;

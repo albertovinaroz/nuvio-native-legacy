@@ -2,6 +2,8 @@
 #define NV_DTS_ENGINE_H
 #include "dts_media.h"
 typedef struct DtsEngine DtsEngine;
+/* Recoverable by a fresh native Load/decoder timeline, not a decode failure. */
+#define DTS_ENGINE_TIMESTAMP_DISCONTINUITY "DTS timestamp discontinuity requires reload"
 /* Numeric worker-only transport diagnostics, reset on open. No URL or headers
  * are retained here. Short reads exclude the final range at end of content.
  * Counters describe consumed ranges; range_wait_ns sums their HTTP durations,
@@ -30,6 +32,8 @@ int dts_engine_available(void);
 /* Dolby Vision path, set before open: AC-3/E-AC-3 tracks are selectable and
  * pass through undecoded; HTTP ranges are larger and reuse the final address. */
 void dts_engine_dv(DtsEngine *, int enabled);
+/* Explicit opt-in before open: P7 conversion and webOS recovery. Default off. */
+void dts_engine_allow_p7(DtsEngine *, int enabled);
 /* Open and seek return 0 on success, negative on error. */
 int dts_engine_open(DtsEngine *, const char *url, const char *headers,
                     int audio_stream, int core_only, double start_seconds);

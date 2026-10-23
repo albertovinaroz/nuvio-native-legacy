@@ -29,6 +29,7 @@
 #include "marco.h"
 #include "streams.h"
 #include "video.h"
+#include "ajustes.h"
 #include "xtream.h"
 #include "capmkv.h"
 #include "audioinfo.h"
@@ -698,6 +699,11 @@ JNIEXPORT void JNICALL Java_space_nuvio_nativelegacy_NvPlayer_nativeCache(JNIEnv
     printf("[video] android cache: estado %d, pedido %d MB, limite %d MB\n", (int)estado, (int)pedidoMb, (int)limiteMb);
     fflush(stdout);
   }
+}
+
+JNIEXPORT jboolean JNICALL Java_space_nuvio_nativelegacy_NvPlayer_nativeTunneling(JNIEnv *env, jclass cls) {
+  (void)env; (void)cls;
+  return ajustes_tunneling();
 }
 
 JNIEXPORT jint JNICALL Java_space_nuvio_nativelegacy_NvPlayer_nativeLimitedStatus(JNIEnv *env, jclass cls) {

@@ -122,6 +122,12 @@ char *rede_baixar_trecho64_final(const char *url, const char *headers,
                               int64_t start, int64_t end, long *size,
                               int64_t *total, int *status,
                               volatile int *cancelled, char *final, int *cross);
+/* Optional guard for an actively awaited range. Atomic urgent flag is owned
+ * by the caller for this synchronous call. Last retry can omit this guard. */
+char *rede_baixar_trecho64_vigiado(const char *url,const char *headers,
+    int64_t start,int64_t end,long *size,int64_t *total,int *status,
+    volatile int *cancelled,char *final,int *cross,volatile int *urgent,
+    unsigned idle_ms,int *stalled);
 /* One streaming read "bytes=start-" for the Samsung converter: the body goes to
  * sink(opaque, data, n) as it arrives (return 0 to stop; it may block). Same
  * redirect and header rules as rede_baixar_trecho64_final. No limit on the

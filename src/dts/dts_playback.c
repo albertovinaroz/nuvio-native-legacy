@@ -21,10 +21,13 @@
 #define DTS_STALL_SECONDS 8.0
 #define DTS_STALL_SEEK_SECONDS 2.0
 #define DTS_STALL_RETRIES 2
+#define DTS_TIMESTAMP_RETRIES 2
+/* Reset only after real presentation progress, not time spent reloading. */
+#define DTS_TIMESTAMP_PROGRESS_SECONDS 30.0
 typedef struct { DtsSubtitle cue; unsigned revision; } DtsQueuedSubtitle;
 #define DTS_DV_STARVED_WINDOWS 4
 struct DtsPlayback {
-  int dv, starved; /* Dolby Vision path: passthrough audio, starvation fallback. */
+  int allow_p7, dv, starved; /* Dolby Vision path: passthrough audio, starvation fallback. */
   pthread_t thread;
   pthread_mutex_t lock;
   pthread_cond_t wake;
@@ -163,7 +166,7 @@ static int trackMatches(DtsPlayback *p, const DtsTrack *t) {
       (!p->selected.channels || t->channels == p->selected.channels);
 }
 static double clockSeconds(clockid_t clock);
-static int prepare(DtsPlayback *p, int stream, int core, double target) {
+static int prepareMode(DtsPlayback *p, int stream, int core, double target,int reuse) {
   const DtsMediaInfo *info;
   /* A native Load is single-use. Retire its callbacks before reconfiguration. */
   pthread_mutex_lock(&p->lock);
@@ -180,12 +183,22 @@ static int prepare(DtsPlayback *p, int stream, int core, double target) {
   pthread_mutex_unlock(&p->lock);
   /* Reloading selects the exact same source stream and resets encoder delay. */
   double began = clockSeconds(CLOCK_MONOTONIC), opened;
-  nativeEvent(p,"{\"dtsStage\":{\"name\":\"source-open-requested\"}}");
-  if (dts_engine_open(p->engine, p->url, p->headers, stream, core, target) < 0) {
-    fail(p, dts_engine_error(p->engine)); return 0;
+  int reused=0;
+  info=dts_engine_info(p->engine);
+  if(reuse && info && info->audio_stream==stream) {
+    nativeEvent(p,"{\"dtsStage\":{\"name\":\"source-seek-requested\"}}");
+    reused=dts_engine_seek(p->engine,target)>=0;
+    if(!reused && stopped(p)) return 0;
+    if(!reused) nativeEvent(p,"{\"dtsStage\":{\"name\":\"source-seek-reopen\"}}");
+  }
+  if(!reused) {
+    nativeEvent(p,"{\"dtsStage\":{\"name\":\"source-open-requested\"}}");
+    if (dts_engine_open(p->engine, p->url, p->headers, stream, core, target) < 0) {
+      fail(p, dts_engine_error(p->engine)); return 0;
+    }
   }
   info = dts_engine_info(p->engine);
-  if (stream < 0 && info) {
+  if (stream < 0 && info && !reused) {
     int i, count = 0, desired = -1, matches = 0, first_audio = -1;
     for (i = 0; i < info->n_tracks; i++) {
       const DtsTrack *t = &info->tracks[i];
@@ -225,8 +238,8 @@ static int prepare(DtsPlayback *p, int stream, int core, double target) {
   opened = clockSeconds(CLOCK_MONOTONIC);
   {
     char event[128];
-    snprintf(event, sizeof event, "{\"dtsStage\":{\"name\":\"source-opened\",\"detail\":\"ms=%.0f\"}}",
-             (opened - began) * 1000);
+    snprintf(event, sizeof event, "{\"dtsStage\":{\"name\":\"%s\",\"detail\":\"ms=%.0f\"}}",
+             reused?"source-seeked":"source-opened",(opened - began) * 1000);
     nativeEvent(p, event);
   }
   p->pipeline = dts_pipeline_create(NV_APP_ID, p->window,
@@ -255,6 +268,9 @@ static int prepare(DtsPlayback *p, int stream, int core, double target) {
     if (!selectSubtitle(p, stream)) { fail(p, "DTS subtitle decoder unavailable"); return 0; }
   }
   return 1;
+}
+static int prepare(DtsPlayback *p,int stream,int core,double target) {
+  return prepareMode(p,stream,core,target,0);
 }
 /* Retry the same selected stream using its DTS core once, resuming at the
  * native presentation clock rather than a timestamp fed ahead of playback. */
@@ -313,7 +329,8 @@ static void *run(void *user) {
   double fed_audio = position, fed_video = position;
   DtsRate rate = {.start = cpu_window};
   DtsStall stall;
-  unsigned stall_retries = 0;
+  unsigned stall_retries = 0, timestamp_retries = 0;
+  double timestamp_anchor = position;
   int native_unhealthy = 0;
   int recovery_waiting = 0;
   resetStall(&stall, position);
@@ -377,6 +394,7 @@ static void *run(void *user) {
         nativeEvent(p, event);
         fail(p, "DTS native playback stalled after two recovery attempts"); break;
       }
+      if (seek_reload) { timestamp_retries = 0; timestamp_anchor = target; }
       if (stall_reload) { target = presented; stall_retries++; }
       double stale_seconds = wall - stall.changed_at;
       int blocked_kind = have_frame ? frame.kind : 0;
@@ -384,7 +402,11 @@ static void *run(void *user) {
       /* BUFFERSTREAM flush leaves the old segment/decoder timeline in place
        * on these TVs. Every seek needs a fresh Load with ptsToDecode and new
        * codec preroll, including healthy playback and paused scrubbing. */
-      if (!prepare(p, stream, core, target)) break;
+      /* Healthy explicit seeks can keep the validated container/track
+       * metadata and reset demux/decoder/encoder through engine_seek. The LG
+       * native pipeline still receives a fresh Load and codec preroll. Error
+       * recovery keeps a full source reopen; a failed seek also falls back. */
+      if (!prepareMode(p, stream, core, target,seek_reload && !stall_seek)) break;
       char event[256];
       snprintf(event, sizeof event,
         "{\"dtsStage\":{\"name\":\"%s\",\"detail\":\"at=%.3f attempt=%u seek=%d blocked=%d pts=%.3f stale=%.1fs\"}}",
@@ -405,6 +427,7 @@ static void *run(void *user) {
     } else if (audio) {
       seek_preroll = seek; seek_audio = seek_video = 0;
       stream = new_stream; core = core_tried = 0;
+      timestamp_retries = 0; timestamp_anchor = target;
       if (!prepare(p, stream, core, target)) break;
       position = preroll = presented = target; complete = clock_seen = 0;
       fed_audio = fed_video = target;
@@ -442,6 +465,48 @@ static void *run(void *user) {
       if (read_started >= 0 && now >= read_started) rate.read_wall += now - read_started;
       if (stopped(p)) break;
       const char *error = r < 0 ? dts_engine_error(p->engine) : "";
+      if (r < 0 && !strcmp(error, DTS_ENGINE_TIMESTAMP_DISCONTINUITY)) {
+#ifndef NV_DTS_WEBOS_RECOVERY
+        fail(p, error); break;
+#endif
+        /* Use the latest presentation clock, never a packet fed ahead.
+         * Pending user seek/track requests are handled by the next iteration. */
+        int pending_control;
+        pthread_mutex_lock(&p->lock);
+        target = p->presented;
+        pending_control = p->seek_dirty || p->audio_dirty;
+        pthread_mutex_unlock(&p->lock);
+        if (pending_control) continue;
+        if (timestamp_retries && target >= timestamp_anchor + DTS_TIMESTAMP_PROGRESS_SECONDS)
+          timestamp_retries = 0;
+        if (timestamp_retries >= DTS_TIMESTAMP_RETRIES) {
+          char event[192];
+          snprintf(event, sizeof event,
+            "{\"dtsStage\":{\"name\":\"timestamp-recovery-exhausted\",\"detail\":\"at=%.3f attempts=%u\"}}",
+            target, timestamp_retries);
+          nativeEvent(p, event);
+          fail(p, "DTS timestamp recovery exhausted after two reload attempts");
+          break;
+        }
+        timestamp_retries++; timestamp_anchor = target;
+        printf("[dts] timestamp-recovery-request at=%.3f attempt=%u core=%d stream=%d dv=%d\n",
+               target, timestamp_retries, core, stream, p->dv);
+        fflush(stdout);
+        if (!prepare(p, stream, core, target)) break;
+        char event[192];
+        snprintf(event, sizeof event,
+          "{\"dtsStage\":{\"name\":\"timestamp-reload\",\"detail\":\"at=%.3f attempt=%u core=%d stream=%d dv=%d\"}}",
+          target, timestamp_retries, core, stream, p->dv);
+        nativeEvent(p, event);
+        position = fed_audio = fed_video = target;
+        have_frame = eof = seek_preroll = seek_audio = seek_video = 0;
+        resetStall(&stall, target);
+        recovery_waiting = stall.advanced = 1;
+        native_unhealthy = 0; p->starved = 0;
+        cpu_window = clockSeconds(CLOCK_MONOTONIC); cpu_used = 0;
+        rate = (DtsRate){.start = cpu_window};
+        continue;
+      }
       int decode_error = r < 0 && !strncmp(error, "DTS decode", 10);
       int encoder_error = r < 0 && (!strncmp(error, "Audio encode", 12) ||
                                    !strncmp(error, "Audio output", 12));
@@ -548,13 +613,16 @@ static void *run(void *user) {
     }
   }
 done:
+  /* Ignore closing callbacks after terminal failure, too. */
+  pthread_mutex_lock(&p->lock); p->suppress_events = 1; pthread_mutex_unlock(&p->lock);
   dts_subtitles_destroy(p->subtitle_decoder); p->subtitle_decoder = NULL;
   dts_pipeline_destroy(p->pipeline);
   p->pipeline = NULL;
   return NULL;
 }
 
-static int dvNext;
+static int dvNext, p7Next;
+void dts_playback_next_p7(int enabled) { p7Next = !!enabled; }
 void dts_playback_next_dv(int enabled) { dvNext = !!enabled; }
 DtsPlayback *dts_playback_start(const char *url, const char *headers,
                                int audio_stream, double position,
@@ -571,6 +639,8 @@ DtsPlayback *dts_playback_start(const char *url, const char *headers,
   if (!p->engine) { dts_playback_close(p); return NULL; }
   p->dv = dvNext; dvNext = 0;
   dts_engine_dv(p->engine, p->dv);
+  p->allow_p7 = p7Next; p7Next = 0;
+  dts_engine_allow_p7(p->engine, p->allow_p7);
   snprintf(p->url, sizeof p->url, "%s", url);
   snprintf(p->headers, sizeof p->headers, "%s", headers ? headers : "");
   snprintf(p->window, sizeof p->window, "%s", window ? window : "");

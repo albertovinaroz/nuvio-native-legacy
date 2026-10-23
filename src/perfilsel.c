@@ -1171,7 +1171,6 @@ static void disco(GfxRect a, const ContaPerfil *p, float f, float alfa,
   float cr = 0.12f, cg = 0.53f, cb = 0.90f;
   float vivo = 0.55f + 0.45f * f;
   GLuint foto;
-  int emGif = 0;
   corDe(p->corHex, &cr, &cg, &cb);
   corLegivel(&cr, &cg, &cb);
   gfx_rect(a, 0, GFX_DISCO, 0, 0, 0, 0, 0.09f, 0.09f, 0.10f, alfa);
@@ -1189,14 +1188,12 @@ static void disco(GfxRect a, const ContaPerfil *p, float f, float alfa,
       // nao sobe nada (1.4.7; o passo de 67 ms prendia o GIF a 15 fps).
       GLuint m = gif_textura(arq, (int)a.w);
       if (m) gifTex = m;
-      if (gifTex) { foto = gifTex; emGif = 1; }
+      if (gifTex) foto = gifTex;
     }
   }
   if (foto) {
-    // O GIF vem na proporcao DELE (o quadro animado nao e a foto parada
-    // registrada no cache), e e ela que o "cover" do circulo precisa: com 0
-    // um GIF 16:9 era espremido no disco e o rosto saia achatado.
-    gfx_tex_aspect_atual = emGif ? gif_aspecto() : tex_aspecto(p->avatarUrl);
+    // Both decoders preserve the source aspect; share the static cover crop (#621).
+    gfx_tex_aspect_atual = tex_aspecto(p->avatarUrl);
     gfx_rect(a, foto, GFX_AVATAR, 0, 0, 0, 0, 1, 1, 1, vivo * alfa);
     gfx_tex_aspect_atual = 0;
   } else {

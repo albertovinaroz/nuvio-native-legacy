@@ -29,6 +29,10 @@ static int recusaExtras, semRange, trechos;
 static _Atomic int requests;
 static int status[3] = {200, 200, 200};
 const char *rede_ultimo_erro(void) { return ""; }
+const char *rede_url_publica(const char *url, char *dst, unsigned tam) {
+  (void)url; snprintf(dst, tam, "redacted"); return dst;
+}
+int xtream_url_limitada(const char *url) { (void)url; return 0; }
 char *rede_baixar_medido_controle(const char *url, int seconds,
                                   const char *const *headers,
                                   const RedeControle *controle,
@@ -98,7 +102,41 @@ static void dense(char *json, size_t size, int provider) {
   }
   strncat(json, "]}", size - strlen(json) - 1);
 }
+static char *fixture(const char *name) {
+  char path[160];
+  snprintf(path, sizeof path, "tests/fixtures/subsync/%s.json", name);
+  FILE *f = fopen(path, "rb"); assert(f);
+  assert(!fseek(f, 0, SEEK_END)); long n = ftell(f); assert(n > 0);
+  rewind(f); char *body = calloc((size_t)n + 1, 1); assert(body);
+  assert(fread(body, 1, (size_t)n, f) == (size_t)n); fclose(f);
+  return body;
+}
+
 int main(void) {
+  // Captured Subtitle Sync 2.1.0 responses; download URLs replaced with markers.
+  {
+    char *body = fixture("movie"), *manifest = fixture("manifest");
+    ling_local_legenda("pt-br"); ling_conta_legenda2("");
+    responses[0] = body; run(1, "tt0111161", "movie");
+    capacidadesDoManifesto(0, manifest);
+    assert(addon[0].legenda && !addon[0].fonte);
+    assert(nLegs == 3); // Informational SRT must not enter automatic selection.
+    assert(!strcmp(legs[0].idioma, "pob"));
+    assert(!strcmp(ling_selo(legs[0].idioma), "PT-BR"));
+    assert(strstr(legs[0].rotulo, "Not synced"));
+    assert(strcmp(legs[0].rotulo, legs[1].rotulo));
+    free(body); body = fixture("extras"); responses[0] = body;
+    snprintf(legExt.id, sizeof legExt.id, "tt0111161");
+    snprintf(legExt.arquivo, sizeof legExt.arquivo, "The.Shawshank.Redemption.1994.1080p.mkv");
+    legExt.tamanho = 1000000;
+    run(1, "tt0111161", "movie");
+    assert(nLegs == 3 && strstr(ultimaUrl[0], "videoSize=1000000&filename="));
+    assert(strstr(legs[0].rotulo, "Weak sync"));
+    assert(strstr(legs[1].rotulo, "Syncs when picked"));
+    assert(!legs[0].arquivo[0]); // A display label is not a release filename.
+    memset(&legExt, 0, sizeof legExt);
+    free(body); free(manifest);
+  }
   {
     int t, e;
     episodioPedido("tt12409194:0:1", &t, &e); assert(t == 0 && e == 1);

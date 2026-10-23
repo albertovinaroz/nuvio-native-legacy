@@ -310,9 +310,13 @@ class NuvioActivity : SDLActivity() {
     // a levar 16 s com o low-memory killer ativo. SDLActivity so repassa
     // onLowMemory (o aviso mais forte), nao estes degraus.
     private external fun nativeTrimMemoria(nivel: Int)
+    private var trimResumida = false
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        // Background trim levels describe lifecycle, not foreground pressure.
+        // Guard both paths: SDL also forwards a strongest-level memory event.
+        if (trimResumida && level >= 20) return
         if (level >= 5) SDLActivity.nativeLowMemory()
         // Antes de a libmain.so carregar nao ha para quem avisar.
         try { nativeTrimMemoria(level) } catch (_: UnsatisfiedLinkError) { }
@@ -475,7 +479,29 @@ class NuvioActivity : SDLActivity() {
     // nao foi queda, e o modo seguro nao desfaz ajustes por causa dela.
     private fun despedida() = File(filesDir, "dados/despedida.txt")
 
-    private var instalando = false
+    @Volatile private var instalando = false
+
+    @Suppress("DEPRECATION")
+    private fun apkVersion(file: File): Long? = try {
+        packageManager.getPackageArchiveInfo(file.path, 0)?.let {
+            if (Build.VERSION.SDK_INT >= 28) it.longVersionCode else it.versionCode.toLong()
+        }
+    } catch (_: Exception) { null }
+
+    @Suppress("DEPRECATION")
+    private fun installedVersion(): Long {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+    }
+
+    fun prepararApk(caminho: String): Boolean {
+        if (instalando) return false
+        val dir = File(cacheDir, "regenerable/atualizacao")
+        val file = File(caminho)
+        if (file.parentFile != dir) return false
+        ApkCache.prune(dir, installedVersion(), file.name, ::apkVersion)
+        return true
+    }
 
     // Chamado pelo C (android_instalar_apk, atualizacao.c), do fio do SDL.
     // 1 = instalador aberto, 2 = falta a permissao "instalar apps desta fonte"
@@ -647,7 +673,14 @@ class NuvioActivity : SDLActivity() {
         jaComecou = true
     }
 
+    private external fun nativeCheckpoint()
+
+    private fun checkpoint() {
+        if (!mBrokenLibraries) try { nativeCheckpoint() } catch (_: UnsatisfiedLinkError) {}
+    }
+
     override fun onStop() {
+        checkpoint()
         val ini = SystemClock.elapsedRealtime()
         try {
             val f = despedida()
@@ -662,6 +695,7 @@ class NuvioActivity : SDLActivity() {
     }
 
     override fun onResume() {
+        trimResumida = true
         super.onResume()
         aplicarOrientacaoTouch()
         telaCheiaTouch()
@@ -677,6 +711,8 @@ class NuvioActivity : SDLActivity() {
     // do ciclo de vida (ANR ao apertar a tecla de ajustes da TV tocando, TCL,
     // 2.0.3). Direto no logcat: o printf do C passa por um pipe e pode esperar.
     override fun onPause() {
+        trimResumida = false
+        checkpoint()
         val ini = SystemClock.elapsedRealtime()
         vigia?.frente(false)
         NvPlayer.pausarPeloSistema()
@@ -699,6 +735,17 @@ class NuvioActivity : SDLActivity() {
 
     // Variaveis que o C le (contrato do porte Android). Tem de rodar antes do
     // super.onCreate: o SDL abre o main numa thread logo depois.
+    fun limparCache() {
+        runOnUiThread {
+            NvPlayer.parar()
+            CacheMidia.descartar("clear cache")
+            // Session release runs on the cache executor before deleting its files.
+            CacheMidia.limparTudo(cacheDir)
+        }
+        File(cacheDir, "logs/nuvio-anterior.log").delete()
+        File(cacheDir, "engine/p2p").deleteRecursively()
+    }
+
     private fun prepararAmbiente() {
         val dados = File(filesDir, "dados").apply { mkdirs() }
         val uiMode = (getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)?.currentModeType
@@ -716,11 +763,23 @@ class NuvioActivity : SDLActivity() {
         fun env(k: String, v: String) = Os.setenv(k, v, true)
         env("NUVIO_INTERFACE_AUTO", if (automaticMobile) "1" else "0")
         env("NUVIO_DADOS", dados.path)
+        val regenerable = File(cacheDir, "regenerable").apply { mkdirs() }
+        ApkCache.prune(File(regenerable, "atualizacao"), installedVersion(), null, ::apkVersion)
+        val p2pCache = File(cacheDir, "engine").apply { mkdirs() }
+        env("NUVIO_CACHE", regenerable.path)
+        env("NUVIO_CACHE_ROOT", cacheDir.path)
+        env("TMPDIR", regenerable.path)
+        env("NUVIO_P2P_CACHE", p2pCache.path)
+        val logs = File(cacheDir, "logs").apply { mkdirs() }
+        File(dados, "atualizacao").deleteRecursively()
+        File(dados, "p2p").deleteRecursively()
+        File(dados, "nuvio.log").delete()
+        File(dados, "nuvio-anterior.log").delete()
         // Scoped to signing key/user/device; stable across app reinstall.
         val deviceId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
         if (!deviceId.isNullOrBlank()) env("NUVIO_DEVICE_ID", "android:$deviceId")
-        env("NUVIO_LOG", File(dados, "nuvio.log").path)
-        env("NUVIO_LOG_ANTERIOR", File(dados, "nuvio-anterior.log").path)
+        env("NUVIO_LOG", File(logs, "nuvio.log").path)
+        env("NUVIO_LOG_ANTERIOR", File(logs, "nuvio-anterior.log").path)
         env("HOME", dados.path)
         env("NUVIO_ARTE", File(res, "art").path)
         env("NUVIO_LOCALE", java.util.Locale.getDefault().toLanguageTag())

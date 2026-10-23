@@ -3,9 +3,10 @@
 #include "../src/descoberta.c"
 #undef trakt_lista_cresc
 #include <assert.h>
-static int watchlists;
+static int watchlists, failLibrary;
 int bibfonte_remote_list(const char *which, CatItem **out, int max) {
   (void)max;
+  if (failLibrary) { *out = NULL; return -1; }
   if (strcmp(which, "watchlist")) return 0;
   watchlists++;
   *out = calloc(1, sizeof **out); assert(*out);
@@ -22,5 +23,13 @@ int bibfonte_discovery_watchlist(void) {
   fioListas(&job);
   if (job.nWl) assert(cat_acrescentar_lote(job.wl, job.nWl, NULL) == 1);
   free(job.wl); free(job.col);
+  failLibrary = 1;
+  int kept = 0;
+  CatItem *fallback = listaBuscar("watchlist", &kept);
+#ifndef BIBFONTE_BASELINE
+  assert(kept == 1 && fallback && !strcmp(fallback[0].imdb, "tt9999999"));
+#endif
+  free(fallback);
+  failLibrary = 0;
   return watchlists;
 }

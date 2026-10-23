@@ -535,7 +535,7 @@ int main(void) {
   assert(AJ_DISCORD == AJ_ICONE_APP + 1 && AJ_TAMANHO_AJUSTES == AJ_DISCORD + 1 && AJ_LOGO_TRAILER == AJ_TAMANHO_AJUSTES + 1 && AJ_LEG_LINGUA2 == AJ_LOGO_TRAILER + 1 && AJ_LEG_SYNC_AUDIO == AJ_LEG_LINGUA2 + 1 && AJ_CACHE_SEEK == AJ_LEG_SYNC_AUDIO + 1 && AJ_TRAILER_ZOOM_TPK == AJ_CACHE_SEEK + 1 && AJ_PLUGINS == AJ_TRAILER_ZOOM_TPK + 1 && AJ_JF_LIGADO == AJ_PLUGINS + 1 && AJ_JF_SAIR == AJ_PLUGINS + 4 && AJ_AVANCADAS == AJ_JF_SAIR + 1 && AJ_LEG2_POS == AJ_AVANCADAS + 1 && AJ_EM_SERVIDOR == AJ_LEG2_BORDA + 1 && AJ_PX_SAIR == AJ_EM_SERVIDOR + 5 && AJ_FONTE_PRIORIDADE == AJ_PX_SAIR + 1 && AJ_FONTE_HDR == AJ_ABERTURA - 2 && AJ_LOGO_APP == AJ_FONTE_HDR + 1 && AJ_ENQUETES == AJ_ABERTURA + 1 && AJ_ENQUETES == AJ_FONTE_ESCOPO - 14);
   assert(!strcmp(CHAVE[AJ_LOGO_APP], "logoAppLocal") && !strcmp(CHAVE[AJ_ABERTURA], "aberturaAppLocal") && OPCOES[AJ_LOGO_APP].n == 2 && OPCOES[AJ_ABERTURA].n == 3 && valorPadrao[AJ_LOGO_APP] == 0 && valorPadrao[AJ_ABERTURA] == 0 && somenteDesteAparelho(AJ_LOGO_APP) && somenteDesteAparelho(AJ_ABERTURA));
   { int u; for (u = AJ_LOGO_APP; u <= AJ_ABERTURA; u++) { int vz = 0, k; for (k = 0; k < AJ_N_TELA; k++) if (TELA[k].tipo == IT_OPC && TELA[k].op == u) vz++; assert(vz == 1); } }
-  assert(!strcmp(CHAVE[AJ_FONTE_PRIORIDADE], "fontePrioridadeLocal") && !strcmp(CHAVE[AJ_FONTE_HDR], "fonteHdrLocal") && OPCOES[AJ_FONTE_PRIORIDADE].n == 3 && OPCOES[AJ_FONTE_HDR].n == 3 && valorPadrao[AJ_FONTE_PRIORIDADE] == 0 && valorPadrao[AJ_FONTE_HDR] == 0 && somenteDesteAparelho(AJ_FONTE_HDR));
+  assert(!strcmp(CHAVE[AJ_FONTE_PRIORIDADE], "fontePrioridadeLocal") && !strcmp(CHAVE[AJ_FONTE_HDR], "fonteHdrLocal") && OPCOES[AJ_FONTE_PRIORIDADE].n == 4 && OPCOES[AJ_FONTE_HDR].n == 3 && valorPadrao[AJ_FONTE_PRIORIDADE] == 0 && valorPadrao[AJ_FONTE_HDR] == 0 && somenteDesteAparelho(AJ_FONTE_HDR));
   // N3: "Receber enquetes" is the LAST option: local, On by default, in "Notificações".
   assert(AJ_ENQUETES == AJ_ABERTURA + 1 && AJ_ENQUETES == AJ_FONTE_ESCOPO - 14);
   assert(!strcmp(CHAVE[AJ_ENQUETES], "enquetesLocal") && OPCOES[AJ_ENQUETES].n == 2 && valorPadrao[AJ_ENQUETES] == 0);
@@ -730,7 +730,8 @@ int main(void) {
          AJ_NT_EP == AJ_URL_REM + 1 && AJ_LIVETV_SUGERIR == AJ_NT_EP + 1 && AJ_AUDIO_OFFSET == AJ_LIVETV_SUGERIR + 1 &&
          AJ_BIB_HOME == AJ_GUIA_CATEGORIAS + 1 && AJ_AMPLIACAO_ALGO == AJ_BIB_HOME + 1 &&
          AJ_AMPLIACAO_NITIDEZ == AJ_AMPLIACAO_ALGO + 1 && AJ_HDR_INTERFACE == AJ_AMPLIACAO_NITIDEZ + 1 &&
-         AJ_HDR_INTERFACE == AJ_N - 1 && !strcmp(CHAVE[AJ_URL_REM], "-urlRem"));
+         AJ_LIMPAR_CACHE == AJ_HDR_INTERFACE + 1 && AJ_TUNNELING == AJ_LIMPAR_CACHE + 1 &&
+         AJ_N > AJ_TUNNELING && !strcmp(CHAVE[AJ_URL_REM], "-urlRem"));
   { static const char *CH[4] = { "fonteGrupoLocal", "fonteGrupoSessoesLocal", "linkReusarLocal", "linkPrazoLocal" };
     static const int PAD[4] = { 0, 0, 0, 5 }, NV[4] = { 2, 2, 2, 9 };
     for (int o = 0; o < 4; o++) {

@@ -624,12 +624,12 @@ static void menuDesenhar(GfxRect area, float a0) {
   MW = menuLargura(area.w - 40.0f);
   m = (GfxRect){ area.x + (area.w - MW) * 0.5f, area.y + VM_TOPO_ILHA, MW, mh };
   if (vmSo) {
-    m.y = (NV_TELA_H - mh) * 0.5f;
+    m.y = (area.h - mh) * 0.5f;
     // AO LADO DO CARD, alinhada ao topo dele, e inteira dentro da tela.
     if (vmTemAncora) {
-      m.x = ctx_menu_ao_lado(vmAncora, MW);
+      m.x = area.w > NV_TELA_W ? vmAncora.x + vmAncora.w + 24.0f : ctx_menu_ao_lado(vmAncora, MW);
       m.y = vmAncora.y;
-      if (m.y + mh > NV_TELA_H - VM_BORDA) m.y = NV_TELA_H - VM_BORDA - mh;
+      if (m.y + mh > area.h - VM_BORDA) m.y = area.h - VM_BORDA - mh;
       if (m.y < VM_BORDA) m.y = VM_BORDA;
       // Entra deslizando 16 px a partir do lado do card, como a do cartaz.
       m.x += (1.0f - a) * (m.x < vmAncora.x ? 16.0f : -16.0f);
@@ -639,12 +639,12 @@ static void menuDesenhar(GfxRect area, float a0) {
   if (vmSo && !vmModoTemp) {
     // Keep panel on the right even when the anchor sits at the screen edge.
     float pw = 676.0f, ph = 624.0f;
-    if (pw + MW + 24 > NV_TELA_W - 2 * VM_BORDA) pw = NV_TELA_W - 2 * VM_BORDA - MW - 24;
-    if (ph > NV_TELA_H - 2 * VM_BORDA) ph = NV_TELA_H - 2 * VM_BORDA;
-    if (m.x + MW + 24 + pw > NV_TELA_W - VM_BORDA) m.x = NV_TELA_W - VM_BORDA - MW - 24 - pw;
-    if (m.y + ph > NV_TELA_H - VM_BORDA) m.y = NV_TELA_H - VM_BORDA - ph;
-    float panelY=vmTemAncora ? vmAncora.y : (NV_TELA_H-ph)*.5f;
-    if (panelY+ph>NV_TELA_H-VM_BORDA) panelY=NV_TELA_H-VM_BORDA-ph;
+    if (pw + MW + 24 > area.w - 2 * VM_BORDA) pw = area.w - 2 * VM_BORDA - MW - 24;
+    if (ph > area.h - 2 * VM_BORDA) ph = area.h - 2 * VM_BORDA;
+    if (m.x + MW + 24 + pw > area.w - VM_BORDA) m.x = area.w - VM_BORDA - MW - 24 - pw;
+    if (m.y + ph > area.h - VM_BORDA) m.y = area.h - VM_BORDA - ph;
+    float panelY=vmTemAncora ? vmAncora.y : (area.h-ph)*.5f;
+    if (panelY+ph>area.h-VM_BORDA) panelY=area.h-VM_BORDA-ph;
     if (panelY<VM_BORDA) panelY=VM_BORDA;
     comentarios = (GfxRect){m.x + MW + 24, panelY, pw, ph};
   }
@@ -656,7 +656,7 @@ static void menuDesenhar(GfxRect area, float a0) {
   vmCaixa = m; vmTemCaixa = 1;
   // Sobre a pagina, o veu do menu do cartaz; dentro da ilha do player (que ja
   // recorta), so o bastante para a lista sair de cena.
-  if (vmSo) ctx_menu_veu(a);
+  if (vmSo) { ESCALA_INI(); ctx_menu_veu(a); ESCALA_FIM(); }
   else gfx_cor((GfxRect){ 0, 0, NV_TELA_W, NV_TELA_H }, 0, 0, 0, 0, 0.55f * a);
   if (vmFeito) meta = vmMsg;
   else if (vmModoTemp) { const CatItem *ci = cat_item(vmIdx); meta = ci ? ci->titulo : ""; }
@@ -1252,7 +1252,28 @@ void episodios_menu_desenhar(void) {
 }
 static void episodios_menu_desenharCorpo_(void) {
   if (vmAberto && vmSo) revalidar();
-  if (vmSo) menuDesenhar((GfxRect){ 0.0f, 0.0f, (float)NV_TELA_W, (float)NV_TELA_H }, 1.0f);
+  if (vmSo) {
+    float scale = gfx_escala(), fitted = scale;
+    GfxRect anchor = vmAncora;
+    if (!vmModoTemp && scale > 1.0f) {
+      // Fit complete controls beside the card; shrinking only the panel box
+      // leaves its fixed-width rating chart and review contents overflowing.
+      float right = vmTemAncora ? (anchor.x + anchor.w) * scale + 24.0f : 48.0f;
+      // An anchor near the right edge cannot reserve a right-hand column.
+      if (right > NV_LAYOUT_REAL_W * .5f) right = 48.0f;
+      fitted = fminf(fitted, (NV_LAYOUT_REAL_W - 48.0f - right) / (vmLarg + 24.0f + 676.0f));
+      fitted = fminf(fitted, (NV_LAYOUT_REAL_H - 96.0f) / fmaxf(menuAltura(), 624.0f));
+      gfx_escala_sair(fitted);
+      vmAncora = (GfxRect){anchor.x * scale / fitted, anchor.y * scale / fitted,
+                           anchor.w * scale / fitted, anchor.h * scale / fitted};
+    }
+    menuDesenhar((GfxRect){0, 0, NV_LAYOUT_REAL_W / fitted, NV_LAYOUT_REAL_H / fitted}, 1.0f);
+    if (vmTemCaixa && fitted != scale)
+      vmCaixa = (GfxRect){vmCaixa.x * fitted / scale, vmCaixa.y * fitted / scale,
+                          vmCaixa.w * fitted / scale, vmCaixa.h * fitted / scale};
+    vmAncora = anchor;
+    gfx_escala_sair(scale);
+  }
 }
 int  episodios_menu_pediu_fontes(void) { int v = vmFontesPed; vmFontesPed = 0; return v; }
 // O EPISODIO QUE O MENU ALMOFAVA quando "Fontes deste episodio" foi pedido.

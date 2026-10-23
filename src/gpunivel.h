@@ -21,40 +21,9 @@
 //   720p is selected separately: any effects level, never automatic.
 //   App upscaling uses SGSR 1 or sharp bilinear; weak GPUs use linear.
 //
-// COMO O NIVEL E ESCOLHIDO (.tpk, Android e LG webOS):
-//   Live FPS reports govern eligible Home/Settings continuously, revalidating
-//   saved levels: three reports below panel refresh minus 5 FPS reduce one
-//   effects tier; ten near refresh restore one, with failed-retry hysteresis.
-//   Loading/mixed scenes and >1-second stalls do not count. The per-frame
-//   comparison below remains the fallback until the first eligible report.
-//   - -DNV_TPK_NIVEL_FORCADO=N (tools/tpk.sh com NV_TPK_NIVEL=N): fixo, sem
-//     medir. E o canario de comparacao; a release nao usa.
-//   - senao ADAPTATIVO: in full Home or Settings, measures FPS and how much of the
-//     quadro e ESPERA (clr+swap) contra CPU (ev+bomb+upd+des). FPS < 45 com a
-//     espera dominando = GPU presa: desce UM nivel, espera assentar, mede de
-//     novo. So conserva a reducao com ganho >=15% E >=5 fps; caso contrario
-//     returns to the previous level and blocks retries only for this workload
-//     in this session. Scene/layout/glass/color changes start a fresh baseline.
-//     Compara antes de aceitar FPS bom ou CPU dominante no candidato.
-//     gpu-nivel.txt mantem versao=1/nivel para leitores antigos e acrescenta
-//     avaliacao=1, bloqueado e fps0/1/2. Nivel legado >0 e comparado uma vez
-//     com o 0 na mesma sessao. Candidato so e gravado depois da comparacao.
-//     Chave diferente (firmware novo, outra TV) = recomeca do 0.
-//   - Sem nada gravado: comeca no 0, inclusive em GPU fraca conhecida.
-//     Tres descartes >1 s na tentativa, mesmo intercalados, com Home cheia e
-//     espera de GPU dominante: GPU fraca fica no 2 so nesta sessao, sem gravar.
-//     Janela completa ou perda dessas condicoes zera a contagem.
-//   - Changing the measured scene, losing Home artwork, or suspending cancels
-//     the candidate and returns
-//     ao nivel anterior; a proxima comparacao mede uma referencia nova e
-//     preserva a reavaliacao pendente do legado ate concluir a comparacao.
-//   - a chave ganha "4k" com superficie acima de 1080p: o nivel aprendido em
-//     4K (4x os pixels) nao vale para 1080p, e vice-versa.
-//   - NUNCA vira 720p sozinho (pedido do dono, 06/10: "720p e o pior cenario,
-//     e o que fica mais feio"): o maximo automatico e o 2, em 1080p.
-//   - nos demais alvos: nivel 0 por padrao (.wgt nao muda). No Mac,
-//     NUVIO_GPU_NIVEL=N no ambiente forca o nivel, para ver o resultado.
-//
+// Automatic policy: see the ladder contract beside gpun_degrau below.
+// Manual effect levels and resolution remain independent.
+
 // GLES3 / EXTENSOES: o host cria contexto GLES 2.0 (Program.cs Version20,
 // Program40.cs TVGLApplication), mas o driver pode entregar um contexto maior
 // (a Mali do 8825 responde "OpenGL ES 3.2"). So se usa glInvalidateFramebuffer
@@ -86,6 +55,29 @@ void gpun_redimensionar(int w, int h);
 // Uma linha no log: [perfil] tpk mem=... gpu=... -> tex=... (so no .tpk).
 void gpun_log_perfil(long memMB, int texMb, int fios, int heroi);
 
+// Automatic ladder (only raw Automatic settings participate; forced values skip):
+// 0 full glass, frost on, full animations; 1 glass Performance; 2 frost off;
+// 3 reduced animations; 4 glass off. Each trial needs >=10% AND >=3 FPS gain
+// for three clean report windows, otherwise revert and skip it this boot. Only
+// accepted effects remain active. Step 2 persists foscoVetado in gpu-nivel.txt
+// under the existing GPU/driver/firmware/surface key after proven gain.
+// Explicit Frost Automatic resets the mark; recovery never clears it.
+// Existing ~3-second reports only: 3 consecutive FPS < min(refresh,60)-5
+// advance one rung (~9s), even when its effect is forced; never jump rungs.
+// 10 FPS >= min(refresh,60)-2 recover one
+// (~30s). Neutral/invalid/mixed/stall >1s reports break streaks. Only full
+// Home/browse frames without video qualify. Scene changes discard a window;
+// player/screen changes and texture work require 3 seconds to settle. Any
+// ineligible frame invalidates its report and cancels a pending trial.
+// Failed recovery delays retries for 100 eligible reports (~5min); no permanent
+// floor. Startup restores full recoverable quality; persisted frost stays off.
+// The gfx light budget engages only at step 3 with Automatic animations.
+// Global minimal is manual-only: its flat-glass/outline shortcuts override
+// forced frost/outline settings, so Automatic never enables it.
+int  gpun_degrau(void);
+int  gpun_efeito_ativo(int passo);
+void gpun_fosco_reiniciar(void);
+int  gpun_fosco_vetado(void);
 int  gpun_nivel(void);
 // Efeitos reduzidos pelo automatico, para a ajuda dos Ajustes.
 int  gpun_efeitos_automaticos(void);
@@ -111,15 +103,12 @@ int  gpun_alvo_1080_ativo(void);
 void gpun_quadro_inicio(void);
 void gpun_quadro_fim(void);
 
-// Previous frame phases. `cena` is a nonzero stable workload identity for
-// full Home/Settings (0 = ineligible); changed identity cancels comparison.
-// `cheia` requires artwork only on Home; Settings is eligible without it.
+// Accumulate clean frame timing; any ineligible frame invalidates the report.
 void gpun_medir(double dtms, double espera, double cpu, int cena, int cheia);
 // Live FPS/[gpu-modos] report (~3 seconds), same scene/artwork eligibility.
 // Three reports below refresh minus 5 FPS shed one effects tier; ten above
 // refresh minus 2 FPS restore one. Reports with >1-second stalls are ignored.
-// Saved levels are provisional; failed restorations cannot repeat per workload.
-// Once eligible, this reporter governs instead of the legacy frame comparison.
+// Failed recovery uses a bounded cooldown; see gpun_degrau above.
 void gpun_relatar(double fps, double pior, double periodo, int cena, int cheia);
 
 // Descarta a COR do alvo ligado agora, que vai ser sobrescrito inteiro.

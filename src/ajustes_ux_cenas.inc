@@ -615,6 +615,115 @@ static void ajcCenaMovimento(int op) {
       ajcTexto("20:30", 30, 1, 200 + 40 * k, 210, k); }
   }
 }
+// Formato no player (Ajustes > Formato no player): a fileira sob o titulo, num
+// estilo por vez (Texto, Pilula, Marcas, Selos). Original tira a fileira e poe as
+// marcas brancas no canto de cima, a esquerda da ilha do relogio. Desligado nao
+// poe nada. A troca cruza os estilos pela mola, e cada um sobe ao entrar; o 4K
+// (a resolucao) e sempre o que acende, no acento.
+static float ajcPeso(float v, int k) { float d = fabsf(v - (float)k); return d >= 1.0f ? 0.0f : 1.0f - d; }
+static void ajcTextoAcento(const char *t, float px, int forte, float x, float y, float a) {
+  float r, g, b;
+  ajc_acento(&r, &g, &b);
+  ajTextoMini(t, ajc_px(px), forte, ajc_x(x), ajc_y(y), (int)(r * 255), (int)(g * 255), (int)(b * 255), a);
+}
+// Texto pelo meio da linha (cy): a caixa do ajTextoMini comeca em y.
+static void ajcFmtTexto(const char *t, float px, float x, float cy, int acento, float a) {
+  if (acento) ajcTextoAcento(t, px, 1, x, cy - px * 0.62f, a);
+  else ajcTexto(t, px, 1, x, cy - px * 0.62f, a);
+}
+// A marca de formato do player (badges.h), branca ou no acento; h = a caixa no quadro.
+static float ajcMarcaW(FormatoMarca f, float h) { return marca_formato_largura(f, ajc_px(h)) / ajc_px(1.0f); }
+static void ajcMarca(FormatoMarca f, float x, float y, float h, int acento, float a) {
+  float r = 0.953f, g = 0.949f, b = 0.937f;
+  if (acento) ajc_acento(&r, &g, &b);
+  marca_formato(f, ajc_x(x), ajc_y(y), ajc_px(h), r, g, b, a * C.a);
+}
+// A pilula do player: o mesmo material escuro e de vidro do relogio.
+static void ajcPilula(float x, float cy, float w, float h, float a) {
+  ajc_ret(x, cy - h * 0.5f, w, h, h * 0.5f, 0.04f, 0.045f, 0.06f, 0.6f * a);
+  ajc_vidro(x, cy - h * 0.5f, w, h, h * 0.5f, a);
+}
+// O simbolo da Dolby num ladrilho escuro, branco, como a pilula.
+static void ajcTile(float x, float cy, float a) {
+  ajc_ret(x, cy - 17.0f, 34.0f, 34.0f, 9.0f, 0.04f, 0.045f, 0.06f, 0.6f * a);
+  ajc_icone("marca_dolby", x + 17.0f, cy, 24.0f, a);
+}
+// Selo do pacote (folha de Fontes): caixa cheia na cor do matiz; o 4K no acento.
+static float ajcSeloCheio(const char *t, float x, float cy, int m, int acento, float a) {
+  const float px = 15.0f, h = 28.0f;
+  float r, g, b, w = ajcLargura(t, px, 1) + 22.0f;
+  if (acento) ajc_acento(&r, &g, &b);
+  else { ajc_matiz(m, &r, &g, &b); r *= 0.85f; g *= 0.85f; b *= 0.85f; }
+  ajc_ret(x, cy - h * 0.5f, w, h, 9.0f, r, g, b, a);
+  if (acento) ajcTextoTinta(t, px, 1, x + 11.0f, cy - px * 0.62f, a);
+  else ajcTexto(t, px, 1, x + 11.0f, cy - px * 0.62f, a);
+  return w;
+}
+static void ajcCenaFormato(int op) {
+  float v = ajcValor(op);
+  float tx = ajcPeso(v, 0), pl = ajcPeso(v, 1), ma = ajcPeso(v, 2), se = ajcPeso(v, 3), og = ajcPeso(v, 4);
+  float linha = tx + pl + ma + se;             // a fileira sob o titulo
+  float ty = 220.0f + 30.0f * (1.0f - linha);  // sem fileira, o titulo desce ao lugar dela
+  float cy = 272.0f, k = ajc_onda(4.0f);       // o meio da fileira (pilula de 30)
+  float x;
+  ajc_vidro(500, 16, 120, 40, 20, 1);          // a ilha do relogio: sempre a direita
+  ajcTexto("20:30", 18, 1, 531, 25, 0.95f);
+  // o titulo: a barra grossa e a de baixo, como o nome e a linha do OSD
+  ajc_ret(40, ty, 220, 14, 7, 0.95f, 0.95f, 0.94f, 0.92f);
+  ajc_barra(40, ty + 21.0f, 140, 0.5f);
+  if (tx > 0.01f) {   // Texto: as marcas soltas, em negrito, sem fundo
+    float a = tx * (0.9f + 0.1f * k), c = cy + (1.0f - tx) * 8.0f;
+    x = 40;
+    ajcFmtTexto("4K", 17, x, c, 1, a); x += ajcLargura("4K", 17, 1) + 16.0f;
+    ajcFmtTexto("HDR10", 17, x, c, 0, 0.95f * a); x += ajcLargura("HDR10", 17, 1) + 16.0f;
+    ajcFmtTexto("ATMOS", 17, x, c, 0, 0.95f * a);
+  }
+  if (pl > 0.01f) {   // Pilula: pilulas separadas, como na hora: [4K] [Dolby Vision . Atmos] | [faixa]
+    float a = pl, c = cy + (1.0f - pl) * 8.0f, h = 30.0f;
+    float w1 = ajcLargura("4K", 17, 1) + 28.0f;
+    float wDv = ajcLargura("Dolby Vision", 17, 1), wAt = ajcLargura("Atmos", 17, 1);
+    float w2 = 110.0f + wDv + wAt, w3 = 122.0f;
+    float x1 = 40.0f, x2 = x1 + w1 + 10.0f, x3 = x2 + w2 + 12.0f;
+    float pA = x2 + 14.0f, pB = pA + 52.0f + wDv;
+    ajc_acento_ret(x1, c - h * 0.5f, w1, h, h * 0.5f, a);
+    ajcTextoTinta("4K", 17, 1, x1 + 14.0f, c - 17.0f * 0.62f, a);
+    ajcPilula(x2, c, w2, h, a);
+    ajc_icone("marca_dolby", pA + 11.0f, c, 22.0f, a);
+    ajcFmtTexto("Dolby Vision", 17, pA + 30.0f, c, 0, a);
+    ajc_bolinha(pA + 41.0f + wDv, c, 5.0f, 1, 1, 1, 0.5f * a);
+    ajc_icone("marca_dolby", pB + 11.0f, c, 22.0f, a);
+    ajcFmtTexto("Atmos", 17, pB + 30.0f, c, 0, a);
+    ajc_ret(x3 - 6.0f, c - 13.0f, 2.0f, 26.0f, 1.0f, 1, 1, 1, 0.3f * a);
+    ajcPilula(x3, c, w3, h, a);
+    ajc_icone("aj_audio-lines", x3 + 23.0f, c, 18.0f, (0.55f + 0.45f * k) * a);
+    ajc_barra(x3 + 42.0f, c - 3.5f, 66.0f, 0.9f * a);
+  }
+  if (ma > 0.01f) {   // Marcas: o 4K, e o simbolo da Dolby em ladrilho branco com o nome ao lado
+    float a = ma * (0.9f + 0.1f * k), c = cy + (1.0f - ma) * 8.0f;
+    x = 40;
+    ajcFmtTexto("4K", 17, x, c, 1, a); x += ajcLargura("4K", 17, 1) + 18.0f;
+    ajcTile(x, c, a); x += 42.0f;
+    ajcFmtTexto("Dolby Vision", 17, x, c, 0, a); x += ajcLargura("Dolby Vision", 17, 1) + 18.0f;
+    ajcTile(x, c, a); x += 42.0f;
+    ajcFmtTexto("Atmos", 17, x, c, 0, a);
+  }
+  if (se > 0.01f) {   // Selos: caixas cheias na cor de cada selo, o 4K no acento
+    float a = se * (0.85f + 0.15f * ajc_onda(2.4f)), c = cy + (1.0f - se) * 8.0f;
+    x = 40;
+    x += ajcSeloCheio("4K", x, c, 0, 1, a) + 8.0f;
+    x += ajcSeloCheio("HDR10", x, c, 1, 0, a) + 8.0f;
+    ajcSeloCheio("ATMOS", x, c, 3, 0, a);
+  }
+  if (og > 0.01f) {   // Original: as marcas brancas no canto de cima, a esquerda da ilha, e o codec do audio
+    float a = og, h = 30.0f, my = 21.0f - (1.0f - og) * 8.0f;   // centradas na ilha (y 36); entram de cima
+    ajc_veu(0, 0, 640, 110, 1, 0.5f * a);   // a sombra de cima, como o OSD
+    x = 20;
+    ajcMarca(FMT_4K, x, my, h, 1, a); x += ajcMarcaW(FMT_4K, h) + 12.0f;
+    ajcMarca(FMT_HDR10, x, my, h, 0, a); x += ajcMarcaW(FMT_HDR10, h) + 12.0f;
+    ajcMarca(FMT_ATMOS, x, my, h, 0, a); x += ajcMarcaW(FMT_ATMOS, h) + 14.0f;
+    ajc_barra(x, my + h * 0.5f - 3.5f, 56.0f, 0.9f * a);
+  }
+}
 // Player: o video com a barra de tempo; cada opcao acende a sua peca.
 static void ajcCenaPlayer(int op) {
   float f = ajc_fase(6.0f);
@@ -660,6 +769,7 @@ static void ajcCenaPlayer(int op) {
       if (k > 0.3f) ajc_foco(640 - (640 - 440) * k, 360 - (360 - 250) * k, 640 - 460 * k, 360 - 260 * k, 14, k);
       if (op == AJ_MANTER_VIDEO) ajcChaveCanto(ajcLig(op));
       break; }
+    case AJ_PLR_FORMATO: ajcCenaFormato(op); break;
     case AJ_CW_CONCLUIDO: {
       ajc_ladrilho("aj_check", 600, 40, 44, 1, ajc_onda(4.0f) > 0.85f ? 1 : 0.25f);
       break; }

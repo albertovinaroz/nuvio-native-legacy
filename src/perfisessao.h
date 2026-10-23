@@ -18,6 +18,7 @@ extern uint64_t perfis_sessao_geracao(void) NV_PERFIL_OPCIONAL;
 extern int perfis_sessao_atual(uint64_t) NV_PERFIL_OPCIONAL;
 extern int perfis_sessao_travar(uint64_t) NV_PERFIL_OPCIONAL;
 extern void perfis_sessao_destravar(void) NV_PERFIL_OPCIONAL;
+extern int contapend_lista_pendente(const char *) NV_PERFIL_OPCIONAL;
 static inline uint64_t nv_perfil_sessao_ler(void) {
   return perfis_sessao_geracao ? perfis_sessao_geracao() : 0;
 }
@@ -43,6 +44,9 @@ __attribute__((weak)) void perfis_sessao_destravar(void) {}
 #ifdef NV_DUBLE_CONTAPEND
 __attribute__((weak)) int contapend_estado(const char *id, const char *tipo, int t, int e, long long ms, int remoto) {
   (void)id; (void)tipo; (void)t; (void)e; (void)ms; return remoto;
+}
+__attribute__((weak)) int contapend_lista_pendente(const char *id) {
+  (void)id; return 0;
 }
 #endif
 #else

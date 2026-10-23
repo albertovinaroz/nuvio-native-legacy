@@ -871,6 +871,7 @@ static int armarPoliticaFonteAberta(int indice, int servico, const char *url) {
 #include "segurar.h"
 #include "servidores.h"
 #include "partes.h"
+#include "logrede.h"
 #include <stdio.h>
 
 static Tela tela = TELA_HOME;
@@ -4785,6 +4786,8 @@ void app_atualizar(float dt, Uint32 agora) {
   // "Preferir o mesmo grupo de fonte" governa as duas memorias: a escolha a
   // mao (o titulo inteiro, 180 dias) e a do automatico.
   fontepref_configurar(ajustes_fonte_grupo(), 0, ajustes_fonte_grupo(), ajustes_fonte_grupo_sessoes());
+  // Pagina de registro na rede local (logrede.h): Ajustes > Sobre e ajuda > Registro.
+  logrede_configurar(ajustes_log_rede(), registro_arquivo());
   fontevolta_configurar(ajustes_link_reusar(), ajustes_link_prazo_s());
   // Pausa entre quadros medida uma vez, antes de qualquer tela perguntar se o
   // OK segurado venceu (segurar.h, #387).
@@ -5603,6 +5606,7 @@ void app_atualizar(float dt, Uint32 agora) {
         cwEspera = 0;
         if (cw && !strcmp(cw->tipo, "series")) {
           cwTocarT = cw->temporada; cwTocarE = cw->episodio;
+          if (cw->episodio <= 0) tocar = 0;
           // EPISODIO TERMINADO NUNCA TOCA DE NOVO DO COMECO. O card ja anuncia
           // o proximo quando a lista existe; sem lista (a copia do card nao
           // tem), a pagina abre e o toque espera a lista (cwEsperarProximo).

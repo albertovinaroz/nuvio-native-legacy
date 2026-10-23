@@ -17,6 +17,8 @@ static VideoLegendaEstilo estilo;
 static int tocou, mudou;
 VideoLegendaEstilo *player_leg_estilo(void) { return &estilo; }
 void player_leg_estilo_mudou(void) { mudou++; }
+int player_leg_estilo_tocado(int field) { (void)field; return 0; }
+unsigned ajustes_leg_borda_rgb(int color) { (void)color; return 0; }
 void player_leg_estilo_tocou(int m) { if (m == PLR_LEG_COR) tocou++; }
 static int ass;
 int assrender_ativo(void) { return ass; }
@@ -100,10 +102,10 @@ int main(void) {
   irPara(8); tecla(SDLK_RETURN, 0); assert(ctl == -1 && estilo.negrito == 1);
   irPara(9); tecla(SDLK_RETURN, 0); assert(estilo.tamanho == 120 && estilo.familia == TXT_FAMILIA_INTER);
 
-  // ASS drawn by libass keeps font/colour/position: those rows do not open.
+  // Authored ASS starts preserved; an explicit user choice opens its override.
   ass = 1;
-  irPara(1); tecla(SDLK_RETURN, 0); assert(ctl == -1);
-  irPara(2); tecla(SDLK_RETURN, 0); assert(ctl == -1);
+  irPara(1); tecla(SDLK_RETURN, 0); assert(ctl == 1); tecla(SDLK_ESCAPE, 0);
+  irPara(2); tecla(SDLK_RETURN, 0); assert(ctl == 2); tecla(SDLK_ESCAPE, 0);
   irPara(0); tecla(SDLK_RETURN, 0); assert(ctl == 0);                 // size stays a slider
   puts("estilo controls: sliders, palette and font list open in place ok");
   return 0;

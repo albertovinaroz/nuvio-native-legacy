@@ -163,6 +163,7 @@ object NvPlayer {
     // --- natives (src/video_android.c, Java_space_nuvio_nativelegacy_NvPlayer_*) ---
     @JvmStatic external fun nativeIniciar()
     @JvmStatic external fun nativeLimitedStatus(): Int
+    @JvmStatic external fun nativeTunneling(): Boolean
     @JvmStatic external fun nativeEvento(tipo: Int, a: Int, b: Int)
     // flags (#287): 1 = forcada (SELECTION_FLAG_FORCED), 2 = SDH
     // (ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND); nome = Format.label.
@@ -1354,7 +1355,11 @@ object NvPlayer {
             // Renderer teardown runs on Media3's playback thread. Bound UI waits.
             .setReleaseTimeoutMs(200)
             .setDetachSurfaceTimeoutMs(200)
-        if (r.idiomaAudio.isNotEmpty()) builder.setTrackSelector(SeletorAudioPreparo(act, r.idiomaAudio))
+        val seletor = if (r.idiomaAudio.isNotEmpty()) SeletorAudioPreparo(act, r.idiomaAudio)
+                      else DefaultTrackSelector(act)
+        seletor.parameters = seletor.parameters.buildUpon()
+            .setTunnelingEnabled(nativeTunneling()).build()
+        builder.setTrackSelector(seletor)
         r.fioPreparo?.let { builder.setPlaybackLooper(it.looper) }
         r.bandaPreparo?.let { builder.setBandwidthMeter(it) }
         r.p = builder.build()

@@ -9,6 +9,7 @@
 #include "p2pmotor.h"
 #include "p2p.h"
 #include "dados.h"
+#include "androidcache.h"
 #include "ajustes.h"
 #include "rede.h"
 #include <ctype.h>
@@ -519,6 +520,9 @@ static int pastasInternas(char *raiz, unsigned nr, char *mae, unsigned nm) {
   if (raizInjetada[0]) snprintf(raiz, nr, "%s", raizInjetada);
   else {
     d = dados_dir();
+#ifdef NV_ANDROID
+    d = getenv("NUVIO_P2P_CACHE");
+#endif
     if (!d || !d[0]) return 0;
     if (snprintf(raiz, nr, "%s/p2p", d) >= (int)nr) return 0;
   }

@@ -87,6 +87,11 @@ class CacheMidia private constructor(
         }
 
         // App start: crash leftovers of earlier processes, off the main thread.
+        fun limparTudo(dirCache: File) {
+            fio.schedule({ raiz(dirCache).deleteRecursively() },
+                ESPERA_LIBERAR_MS + 100, TimeUnit.MILLISECONDS)
+        }
+
         fun limparSobras(dirCache: File) {
             fio.execute {
                 val n = CacheSessao.limparSobras(raiz(dirCache), boot)

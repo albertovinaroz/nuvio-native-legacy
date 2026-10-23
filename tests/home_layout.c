@@ -3,6 +3,9 @@
 #include <assert.h>
 #include <string.h>
 // Antes do home.c: os dois acessores viram os do teste (ver homeCom).
+#define ajustes_posteres_deitados teste_posteres_deitados
+static int testeDeitados;
+static int teste_posteres_deitados(void) { return testeDeitados; }
 #define ajustes_home_layout teste_home_layout
 #define ajustes_hero_ligado teste_hero_ligado
 #define ajustes_espaco_titulos teste_espaco_titulos
@@ -56,6 +59,9 @@ int   dados_apagar(const char *nome) { (void)nome; return 1; }
 void  dados_marcar_sujo(int leve) { (void)leve; }
 void  sync_proteger_ajustes_locais(void) {}
 int   perfis_ativo(void) { return 1; }
+int   contalib_tem_conta(void) { return 0; }
+int   trakt_ativo(void) { return 0; }
+int   simkl_ativo(void) { return 0; }
 const char *addons_base_por_id(const char *id) { (void)id; return ""; }
 const char *addons_nome_por_id(const char *id) { (void)id; return ""; }
 // fileiras.c declara estas como NV_PERFIL_OPCIONAL (weak_import); sem
@@ -709,6 +715,26 @@ int main(void) {
   assert(!strcmp(arte_por_identidade(0,1),"own-backdrop.jpg"));
   assert(!strcmp(arte_por_identidade(1,0),"other-poster.jpg"));
   assert(arte_por_identidade(999,0)==NULL);
+
+  // Ranked rows keep portrait artwork and geometry with landscape posters on.
+  {
+    Fileira saved = fileiras[0];
+    int savedRows = nFileiras, savedFocus = foco.fileira;
+    int savedHero = testeHero;
+    nFileiras = 1; foco.fileira = 0; testeHero = 0;
+    for (int t = 0; t < 2; t++) {
+      fileiras[0] = (Fileira){.tipo = t ? FILEIRA_TOP10 : FILEIRA_TOP10_NUM,
+                              .ini = 0, .n = 1, .escala = 1.0f};
+      float w = larguraFil(0), h = alturaFil(0);
+      for (testeDeitados = 0; testeDeitados <= 1; testeDeitados++) {
+        assert(!strcmp(dinArteDaCor(), "own-poster.jpg"));
+        assert(larguraFil(0) == w && alturaFil(0) == h);
+      }
+    }
+    testeDeitados = 0;
+    fileiras[0] = saved; nFileiras = savedRows;
+    foco.fileira = savedFocus; testeHero = savedHero;
+  }
 
   // A integracao de segunda ordem retargeta sem overshoot, e reduced motion
   // pode saltar ao destino sem deixar velocidade residual.

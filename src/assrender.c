@@ -502,21 +502,6 @@ static int ass_frame_copiar(ASS_Image *im, AssCpuFrame *out) {
   return 1;
 }
 
-/* #335: negrito sintetico do libass (FT_Outline_Embolden) sobre o Noto Naskh,
- * que so tem Regular, funde as letras ligadas e borra os pontos. Trilha com
- * texto arabe fica em peso Regular. Detecta por bytes UTF-8: U+0600-06FF
- * (D8-DB), U+0740-07BF (DD), U+FB50-FDFF e U+FE70-FEFF (EF AD-B7 / B9-BB). */
-static int assArabe;
-static void ass_trilha_arabe_sem_negrito(ASS_Track *t) {
-  int i, arabe = 0;
-  for (i = 0; i < t->n_events && !arabe; i++) arabe = bidi_tem_arabe(t->events[i].Text);
-  assArabe = arabe && !assNaskhBold;   /* com a face Bold real, Bold=1 e \b1 a usam */
-  if (!arabe || assNaskhBold) return;
-  for (i = 0; i < t->n_styles; i++) t->styles[i].Bold = 0;
-  ass_diag("libass: trilha com arabe: negrito sintetico desligado");
-}
-
-
 static void ass_trilha_tailandes(ASS_Track *t) {
   int i;
   if (!assVistoThai) return;
@@ -563,7 +548,7 @@ static void ass_plain_style_locked(const PlainAssStyle *p) {
       if ((p->overrides & PLAIN_ASS_OUTLINE) && s->BorderStyle == 1)
         s->BackColour = ((uint32_t)p->outlineRgb << 8) | (s->BackColour & 255u);
       if (p->overrides & PLAIN_ASS_POS) s->MarginV = p->marginV * assTrack->PlayResY / 1080;
-      if (p->overrides & PLAIN_ASS_BOLD) s->Bold = p->bold && !assArabe;
+      if (p->overrides & PLAIN_ASS_BOLD) s->Bold = p->bold;
     }
     /* Flush cached event layout after an explicit style change or reset. */
     ass_set_selective_style_override_enabled(assRenderer, ASS_OVERRIDE_BIT_MARGINS);
@@ -584,7 +569,7 @@ static void ass_plain_style_locked(const PlainAssStyle *p) {
   // Without that box, BackColour is the shadow, at its original opacity.
   s->BackColour = p->background ? (unsigned)(255 - (p->background * 255 * 16 / 100))
                    : (p->border == 2 ? (uint32_t)p->outlineRgb << 8 : 0u) | 46u;
-  s->Bold = (p->bold && !assArabe) ? 1 : 0;
+  s->Bold = p->bold ? 1 : 0;
   s->BorderStyle = p->background ? 4 : 1;
   s->Outline = p->border == 1 ? 2 : 0;
   s->Shadow = p->border == 2 ? 4 : 0;
@@ -841,7 +826,6 @@ static int ass_carregar(const char *corpo, size_t tamanho, unsigned geracao, int
   ass_authored_styles_free();
   if (assTrack) ass_free_track(assTrack);
   assTrack = track;
-  ass_trilha_arabe_sem_negrito(track);
   ass_trilha_tailandes(track);
   plainTimingValid = 0;
   /* Authored ASS retains its own margins after a converted plain track. */
@@ -912,7 +896,7 @@ static void ass_garantir_naskh(void) {
     if (access(caminho, R_OK) == 0) { pronto = 1; return; }
   }
   if (!dados_dir() || !dados_dir()[0]) return;
-  snprintf(pasta, sizeof pasta, "%s/fontes", dados_dir());
+  if (!dados_caminho(pasta, sizeof pasta, "fontes")) goto falhou;
   snprintf(caminho, sizeof caminho, "%s/NotoNaskhArabic-Regular.ttf", pasta);
   if (access(caminho, R_OK) != 0) {
     if (NV_VERSAO[0] < '0' || NV_VERSAO[0] > '9') { pronto = 1; return; }

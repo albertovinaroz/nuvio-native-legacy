@@ -114,6 +114,10 @@ list(FILTER NUVIO_SRC EXCLUDE REGEX "/(video_tizen|video_tpk|tpk)\\.c$")
 add_library(main SHARED ${NUVIO_SRC})
 target_include_directories(main PRIVATE "${NUVIO_RAIZ}/src" "${CMAKE_BINARY_DIR}/inc")
 target_compile_definitions(main PRIVATE NV_ANDROID NV_TOUCH_UI)
+option(NV_APK_LITE "Build Lite APK updater identity" OFF)
+if(NV_APK_LITE)
+  target_compile_definitions(main PRIVATE NV_APK_LITE)
+endif()
 if(ANDROID_ABI STREQUAL "arm64-v8a" OR ANDROID_ABI STREQUAL "x86_64")
   # Both modes ship in one APK; NDK r27 needs a 16KB-aligned RELRO end.
   foreach(t main SDL2)
@@ -139,7 +143,7 @@ target_link_libraries(main PRIVATE SDL2::SDL2 SDL2_image SDL2_ttf webpdemux webp
 # Todo pthread_create do nucleo passa por __wrap_pthread_create (src/android.c):
 # sem atributo de pilha, o fio nasce com 8 MB como no glibc da LG/Tizen, e nao
 # com o ~1 MB do bionic. O nucleo tem vetores grandes na pilha dos fios.
-target_link_options(main PRIVATE "-Wl,--wrap=pthread_create")
+target_link_options(main PRIVATE "-Wl,--wrap=pthread_create" "-Wl,--wrap=fclose" "-Wl,--wrap=rename")
 
 # Nucleo EBML/NAL do mkv.c em Rust (piloto, docs/plans/rust-mapa.md): so com a
 # pasta informada; vazio = o caminho C de sempre.

@@ -1925,7 +1925,7 @@ static void desenhaResultados(Uint32 agora) {
         float tx, ty, bloco;
         if (!ci->backdrop[0]) art.w = art.h * 2.0f / 3.0f;
         if (buTelefone()) art.w = fminf(art.w, fmaxf(1.0f, (t.w - 68.0f) * 0.45f));
-        buArte(art, ci->backdrop[0] ? url : posterprov_card_addon(ci->origem, ci->imdb, ci->tmdb, ci->tipo, url),
+        buArte(art, posterprov_card_formato(ci->origem, ci->imdb, ci->tmdb, ci->tipo, url, ci->backdrop[0] != 0),
                14.0f, 1.0f);
         tx = art.x + art.w + 28.0f;
         { float tw = t.x + t.w - tx - 26.0f;

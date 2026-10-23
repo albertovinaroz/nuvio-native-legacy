@@ -285,8 +285,8 @@ namespace NuvioTpk
 
         protected override void OnPause()
         {
-            video?.PausarPeloSistema();
             NvLib.Ciclo?.Invoke(0);
+            video?.PausarPeloSistema();
             base.OnPause();
         }
 

@@ -1,4 +1,5 @@
 #include "addons.h"
+#include "plugins.h"
 #include "idbase.h"
 #include "idcanal.h"
 #include "idioma.h"
@@ -687,6 +688,24 @@ unsigned addons_versao(void) { return versaoLista; }
 // O id do manifesto ("com.frostview"), ou "" enquanto a sonda nao o leu. E o
 // prefixo da homeCatalogKey dos catalogos deste addon — e por isso a poda de
 // fantasmas de fileiras.c pede por ele.
+// Preserve the first instance's legacy row settings; further instances use URL keys.
+void addons_catalogo_chave(const char *id, const char *base, const char *tipo,
+                           const char *catalogo, char *dst, unsigned tam) {
+  int matches = 0;
+  char instance[32];
+  addons_lista_travar();
+  for (int i = 0; id && *id && i < nAddon; i++) {
+    if (!strcmp(addon[i].base, base)) break;
+    if (!strcmp(addon[i].id, id)) matches++;
+  }
+  addons_lista_destravar();
+  if (matches || !id || !*id) {
+    nv_addon_chave(base, instance, sizeof instance);
+    id = instance;
+  }
+  snprintf(dst, tam, "%s_%s_%s", id, tipo, catalogo);
+}
+
 const char *addons_id_manifesto(int i) {
   return (i >= 0 && i < nAddon) ? addon[i].id : "";
 }
@@ -1385,7 +1404,8 @@ static void *buscarUmAddon(void *u) {
       Legenda *d = &lote->itens[lote->n];
       if (!f || f <= q) break;
       js_texto(q, f, "id", id, sizeof id);
-      if (!strncmp(id, "error.", 6)) { q = js_prox(f); continue; }
+      // Subtitle Sync serves explanatory SRTs as notice-* entries, not dialogue.
+      if (!strncmp(id, "error.", 6) || !strncmp(id, "notice-", 7)) { q = js_prox(f); continue; }
       if (*q == '{' && episodioCorreto(q, f, B->temporada, B->episodio) &&
           js_texto(q, f, "lang", l, sizeof l)) {
         // "PORTUGUESE" / "Portuguese (Brazil)" / "por" / "pt-BR" viram um
@@ -1412,6 +1432,10 @@ static void *buscarUmAddon(void *u) {
           else
             snprintf(d->rotulo, sizeof d->rotulo, "%s%s%.36s",
                      i18n(ling_nome(cod)), nome[0] ? "  \xc2\xb7  " : "", nome);
+          // Stremio labels carry sync status and release details for providers
+          // that omit subtitleFileName. Keep them separate from release matching.
+          js_texto(q, f, "label", nome, sizeof nome);
+          if (nome[0]) snprintf(d->rotulo, sizeof d->rotulo, "%s", nome);
           lote->grupo[lote->n++] = (unsigned char)gi;
           noGrupo++;
         }
@@ -2388,12 +2412,43 @@ static int prazoDoAddon(const Consulta *c, int i) {
   return s;
 }
 
+// Diagnose stream failures without logging provider URLs or payloads.
+static char *baixarStream(const char *nome, const char *url, int segundos) {
+  int status = 0;
+  char *corpo = rede_baixar_st(url, segundos, NULL, &status);
+  if (status >= 400) {
+    printf("[addons] %s: stream HTTP %d\n", nome, status);
+    free(corpo); return NULL;
+  }
+  if (!corpo) {
+    int curl = 0;
+    const char *erro = rede_ultimo_erro();
+    if (erro) sscanf(erro, "curl %d", &curl);
+    printf("[addons] %s: stream transport failure (HTTP %d, curl %d)\n", nome, status, curl);
+    return NULL;
+  }
+  {
+    const char *fim = corpo + strlen(corpo);
+    char curto[4];
+    // js_array devolve o primeiro ITEM: [] legítimo (addon sem fonte para o
+    // titulo) sai NULL e precisa ser distinguido de resposta sem o resource
+    // "streams" — o primeiro respondeu e conta como resposta, o segundo e
+    // erro de parse. js_bruto so cabe em 4 bytes quando o valor e `[]`.
+    if (!js_array(corpo, fim, "streams") &&
+        !(js_bruto(corpo, fim, "streams", curto, sizeof curto) && curto[0] == '[')) {
+      printf("[addons] %s: stream parse error (missing streams array, HTTP %d)\n", nome, status);
+      free(corpo); return NULL;
+    }
+  }
+  return corpo;
+}
+
 static void *fioFontes(void *u) {
   Consulta *c = u;
   for (;;) {
     int meu, i, n, prazoS;
     const AddonPedido *origem;
-    char url[NV_ADDON_PEDIDO_MAX], idUrl[768], *corpo;
+    char url[NV_ADDON_PEDIDO_MAX], idUrl[3 * IDCANAL_LONGO_MAX + 1], *corpo;
     const char *t1;
     const char *tipos[7];
     int nTipos;
@@ -2410,7 +2465,10 @@ static void *fioFontes(void *u) {
     if (semStreamSondado(c, i)) continue;   // a sonda terminou depois dos baldes
     // Id codificado como o Nuvio web (nv_addon_id): "tt123:1:2" sai igual.
     { char longo[IDCANAL_LONGO_MAX + 1];   // apelido de canal longo (idcanal.h)
-      if (!nv_addon_id(idUrl, sizeof idUrl, idcanal_longo(c->id, longo, sizeof longo))) idUrl[0] = 0; }
+      if (!nv_addon_id(idUrl, sizeof idUrl, idcanal_longo(c->id, longo, sizeof longo)) || !idUrl[0]) {
+        printf("[addons] %s: stream build error (invalid or oversized ID; request not sent)\n", origem->nome);
+        continue;
+      } }
     // #588: preserve the clicked type, then the exact catalog type, before
     // legacy channel names. Movie/series requests keep their single type.
     t1 = c->tipo;
@@ -2424,7 +2482,7 @@ static void *fioFontes(void *u) {
     Uint32 inicioAddon = SDL_GetTicks();
     corpo = nv_addon_pedido_coube(origem->nome, nv_addon_url(url, sizeof url, origem->base, "/stream/%s/%s.json",
                                     t1, idUrl), sizeof url) && idUrl[0]
-            ? rede_baixar(url, prazoS) : NULL;
+            ? baixarStream(origem->nome, url, prazoS) : NULL;
     if (consultaCancelada(c)) { free(corpo); break; }
     achados = NULL; n = 0;
     if (corpo) n = stream_extrair(corpo, origem->nome, &achados);
@@ -2465,7 +2523,7 @@ static void *fioFontes(void *u) {
       char *alt;
       alt = nv_addon_pedido_coube(origem->nome, nv_addon_url(url, sizeof url, origem->base, "/stream/%s/%s.json",
                                     t2, idUrl), sizeof url) && idUrl[0]
-            ? rede_baixar(url, restanteS) : NULL;
+            ? baixarStream(origem->nome, url, restanteS) : NULL;
       if (consultaCancelada(c)) { free(alt); free(corpo); free(achados); return NULL; }
       if (alt) {
         Stream *a2 = NULL;
@@ -2483,13 +2541,8 @@ static void *fioFontes(void *u) {
     }
     if (!corpo) {
       free(achados);
-      // O MOTIVO NA MESMA LINHA (#202): "curl 28: Operation timed out after
-      // 12002 ms" ou o HTTP (a linha "[rede] HTTP 403 em <host>" sai antes, sem
-      // o nome do addon). Prazo junto: diz se foi a 1a ou a 2a rodada.
-      { const char *erro = rede_ultimo_erro();
-        printf("[addons] %s: sem resposta (%u ms, prazo %d s)%s%s\n", origem->nome,
-               (unsigned)(SDL_GetTicks() - c->inicio), prazoS,
-               erro && erro[0] ? ": " : "", erro ? erro : ""); }
+      printf("[addons] %s: stream query failed (%u ms, budget %d s; reason above)\n",
+             origem->nome, (unsigned)(SDL_GetTicks() - inicioAddon), prazoS);
       // Desistiu de vez quando nao ha segunda chance pela frente: a mesma regra
       // de segundaChance (mudoSeg ainda e o da consulta anterior aqui).
       if (c->progresso)
@@ -3127,7 +3180,7 @@ static void *fioConsultaCapturada(void *u) {
     if (!nv_perfil_sessao_atual(c->snapshot->sessao) || (c->cancelado && c->cancelado(c->ctx))) break;
     const AddonCapturado *a = &c->snapshot->addons[i];
     if (!a->ativo || !a->fonte) { c->baldes[i].respondeu = 1; continue; }
-    char url[NV_ADDON_PEDIDO_MAX], idUrl[768];
+    char url[NV_ADDON_PEDIDO_MAX], idUrl[3 * IDCANAL_LONGO_MAX + 1];
     char longo[IDCANAL_LONGO_MAX + 1];
     if (!nv_addon_id(idUrl, sizeof idUrl, idcanal_longo(c->id, longo, sizeof longo)) ||
         !nv_addon_url(url, sizeof url, a->base, "/stream/%s/%s.json", c->tipo, idUrl)) continue;
@@ -3301,7 +3354,15 @@ int addons_motivo_vazio(char *dst, unsigned n) {
               !strcmp(alvoTipo, "channels") || !strcmp(alvoTipo, "live") ||
               !strcmp(alvoTipo, "iptv");
   if (!dst || !n || !r->valido) return 0;
-  if (!r->instalados || !r->comFonte)
+  PlugResumo plugins;
+  plugins_resumo(alvoId, alvoTipo, &plugins);
+  if (plugins.enfileirados && !r->comFontes)
+    snprintf(dst, n, i18n("Plugins não encontraram fontes (%d de %d scrapers verificados)"),
+             plugins.terminados, plugins.enfileirados);
+  // Other extra providers are absent from the Stremio summary. Let callers
+  // use their generic source wording while one is active.
+  else if (addons_origem_extra_ativa()) return 0;
+  else if (!r->instalados || !r->comFonte)
     snprintf(dst, n, "%s", i18n("Nenhum add-on de fontes instalado"));
   else if (!r->ligadosComFonte)
     snprintf(dst, n, "%s", i18n("Os add-ons de fontes estão desligados"));

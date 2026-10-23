@@ -283,9 +283,8 @@ static void retryGravar(const char *retry,int tentativasAteAgora){
 }
 static long malMapeado(const char *id,long tmdb,int t,int *ep){
   char arq[1024],retry[1024];long mal=0;int melhor=-1;struct stat st;time_t agora=time(NULL);
-  const char *dir=dados_dir();if(!dir||!*dir)return 0;
-  snprintf(arq,sizeof arq,"%s/%s",dir,MAP_ARQ);
-  snprintf(retry,sizeof retry,"%s/anime-fribb.retry",dir);
+  if (!dados_caminho(arq,sizeof arq,MAP_ARQ) ||
+      !dados_caminho(retry,sizeof retry,"anime-fribb.retry")) return 0;
   pthread_mutex_lock(&mapTrava);
   int valido=mapaLer(arq,imdbNumero(id),tmdb,t,*ep,&mal,&melhor);
   // SEM indice util o retry e CURTO e cresce a cada falha (10 min, 1 h, 6 h):

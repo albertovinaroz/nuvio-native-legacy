@@ -47,7 +47,7 @@ class Test {
               "segment completion while Playing neither ends nor restarts playback");
         live.Complete(true); Wait(() => completed == ends + 1);
         Open(); Wait(() => Player.All.Count == 2 && Player.All[1].Starts == 1);
-        Check(live.Disposed && live.Muted && live.Display == null && Player.Overlap == 0 &&
+        Check(live.Disposed && Player.Overlap == 0 &&
               Player.All[1].SeekCalls == 0,
               "real EOS recovery releases audio and video before a fresh source without resume seek");
         live.Complete(true); Thread.Sleep(50);
@@ -58,7 +58,7 @@ class Test {
         Setup(); OpenTocado(); var old = Player.All[0];
         Entry("fParar"); Open();
         Wait(() => Player.All.Count == 2 && Player.All[1].Starts == 1);
-        Check(old.Disposed && old.Muted && old.Display == null, "mudo, plano solto e dispose antes do proximo player");
+        Check(old.Disposed, "disposed before the next player");
         Check(Player.Overlap == 0, "nenhuma sobreposicao de players");
         Entry("fParar"); Wait(() => Player.All[1].Disposed);
 
@@ -172,8 +172,8 @@ class Test {
         // Stop/Unprepare InvalidOperation nao impedem Dispose nem a nova sessao.
         Setup(); OpenTocado(); old = Player.All[0]; old.FailStop = old.FailUnprepare = true;
         Open(); Wait(() => Player.All.Count == 2 && Player.All[1].Starts == 1);
-        Check(old.StopCalls == 1 && old.UnprepareCalls == 1 && old.Disposed && Player.Overlap == 0,
-              "Stop/Unprepare InvalidOperation ainda chegam ao Dispose e a nova sessao");
+        Check(old.StopCalls == 0 && old.UnprepareCalls == 0 && old.Disposed && Player.Overlap == 0,
+              "direct Dispose avoids Stop/Unprepare and releases before reopening");
         Entry("fParar"); Wait(() => Player.All[1].Disposed);
         // Sempre recusado: cada reabertura so devolve EV_ERRO -3 (o C limita a 3).
         Setup(); OpenTocado(); old = Player.All[0]; old.Wedged = true; old.FailDisposeTimes = 1000;

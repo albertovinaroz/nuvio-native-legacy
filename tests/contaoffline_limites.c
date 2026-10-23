@@ -15,7 +15,7 @@
 #undef contalib_ler_biblioteca
 
 static int perfilTeste = 1, trocaResposta, paginaStatus, paginaN;
-static int vistosTeste;
+static int vistosTeste, repeatPage;
 static char *paginaTeste;
 static int leiturasBibTeste, bibAtivaTeste = 900;
 
@@ -37,7 +37,7 @@ char *sessao_tabela(const char *t, const char *q, int *st) {
 }
 char *sessao_rpc(const char *funcao, const char *corpo, int *st) {
   if (paginaTeste && !strcmp(funcao, vistosTeste ? "sync_pull_watched_items" : "sync_pull_library")) {
-    if (paginaN++) { *st = paginaStatus; return strdup("falha de pagina"); }
+    if (paginaN++ && !repeatPage) { *st = paginaStatus; return strdup("falha de pagina"); }
     *st = 200;
     return strdup(paginaTeste);
   }
@@ -86,7 +86,15 @@ void extras_abrir_sessao(void) {}
 void perfis_invalidar_sessao(void) {}
 void recomenda_esquecer_conta(void) {}
 int sessao_token_copiar(char *dst, size_t n) { if (dst && n) dst[0] = 0; return 0; }
+#include "../src/contalib.h"
 void ajustes_perfil_padrao(void) {}
+int ajustes_fonte_biblioteca(void) { return 0; }
+int contalib_n(void) { return 0; }
+const ContaLibItem *contalib_item(int i) { (void)i; return NULL; }
+void iptv_contas_esquecer_todas(void) {}
+void m3u_fontes_invalidar(void) {}
+void stalker_fontes_invalidar(void) {}
+void xtream_fontes_invalidar(void) {}
 
 // Os pontos de cache sao estaticos; incluir a implementacao permite controlar
 // a resposta no instante preciso, sem sleeps nem corrida entre fios do teste.
@@ -146,7 +154,10 @@ static void paginaIncompleta(int vistos, int st, int temCopia) {
       confere("500 linhas seguidas de HTTP 503 preservam a biblioteca ativa sem cache",
               !leiturasBibTeste && bibAtivaTeste == 900 && !bibBlob);
     }
-  } else confere("recusa 400 nao se passa por indisponibilidade do servidor", foraCiclo == 0);
+  } else {
+    confere("recusa 400 nao se passa por indisponibilidade do servidor", foraCiclo == 0);
+    confere("hard page failure never publishes a partial library", n == -1 && b == NULL);
+  }
   free(c); free(b); free(paginaTeste); paginaTeste = NULL;
 }
 
@@ -178,6 +189,8 @@ int main(void) {
   paginaIncompleta(1, 429, 1);
   paginaIncompleta(0, 503, 0);
   paginaIncompleta(0, 400, 1);
+  repeatPage = 1;
+  paginaIncompleta(0, 200, 1);
   printf("%s\n", falhas ? "FALHOU" : "PASSOU");
   return falhas ? 1 : 0;
 }

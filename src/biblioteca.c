@@ -524,7 +524,7 @@ static int nLinhas(void) { return (nCelulas + colunas() - 1) / colunas(); }
 #ifdef NV_TOUCH_UI
 static float toqueBibliotecaMax(void) {
   int linhas = nLinhas();
-  if (linhas > BIB_MAX_LINHAS) linhas = BIB_MAX_LINHAS;
+  if (estado() != EST_ITENS && linhas > BIB_MAX_LINHAS) linhas = BIB_MAX_LINHAS;
   return linhas > 0 ? fmaxf(0.0f, gradeY() + (linhas - 1) * passoLinha() + alturaLinha() - BIB_GRADE_BASE) : 0.0f;
 }
 static int toqueBibliotecaRolar(const PonteiroRolagem *e) {
@@ -568,7 +568,7 @@ static int contarCelulas(void) {
   if (estado() == EST_TITULOS) return nFiltro;
   if (estado() == EST_LISTAS)  return lst_n();
   n = lst_itens_n();
-  return n > LST_ITENS_MAX * 8 ? LST_ITENS_MAX * 8 : n;
+  return n;
 }
 
 // Refaz o mapa de foco. Chamada a cada troca de modo, fonte, tipo, ordem,
@@ -1077,22 +1077,31 @@ static void eventoAberta(SDL_Keycode k) {
     if (k == SDLK_RIGHT && acaoSel < 2) { acaoSel++; foco.coluna = acaoSel; return; }
     if (k == SDLK_LEFT  && acaoSel > 0) { acaoSel--; foco.coluna = acaoSel; return; }
     if (k == SDLK_LEFT) { sair = 1; return; }   // comeco da fileira: o app abre a barra
-    if (k == SDLK_DOWN) { if (nCelulas) focus_mover_grade(&foco, 0, 1); return; }
+    if (k == SDLK_DOWN) { if (nCelulas) { foco.fileira = 1; foco.coluna = 0; } return; }
     if (k == SDLK_UP && ajustes_menu_topo()) { sair = 1; return; }
     if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) executarAcao(acaoSel);
     return;
   }
   if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE) return;  // KEYUP
-  if (k == SDLK_RIGHT)     focus_mover_grade(&foco, 1, 0);
-  else if (k == SDLK_LEFT) { if (!focus_mover_grade(&foco, -1, 0)) sair = 1; }
+  // Open lists can exceed the fixed focus map. Navigate their regular grid
+  // directly, without allocating another map per title.
+  int row = foco.fileira - 1, nc = colunas();
+  int cols = nCelulas - row * nc;
+  if (cols > nc) cols = nc;
+  if (k == SDLK_RIGHT) { if (foco.coluna + 1 < cols) foco.coluna++; }
+  else if (k == SDLK_LEFT) { if (foco.coluna > 0) foco.coluna--; else sair = 1; }
   else if (k == SDLK_DOWN) {
-    focus_mover_grade(&foco, 0, 1);
+    if (row + 1 < nLinhas()) {
+      foco.fileira++;
+      int rest = nCelulas - (row + 1) * nc;
+      if (foco.coluna >= rest) foco.coluna = rest - 1;
+    }
     // Chegou ao fim do que baixou: pede a proxima pagina. O modulo recusa
     // sozinho quando a anterior veio curta.
     if (foco.fileira >= foco.nFileiras - 2) lst_itens_mais();
   } else if (k == SDLK_UP) {
     if (foco.fileira == 1) { foco.fileira = 0; foco.coluna = acaoSel; }
-    else focus_mover_grade(&foco, 0, -1);
+    else foco.fileira--;
   }
 }
 
@@ -2339,7 +2348,7 @@ static void desenhaResumo(void) {
   // O TETO DA GRADE NUNCA E CALADO. Com a exibicao de lista (uma coluna) a
   // grade para em BIB_MAX_LINHAS titulos; o contador acima continua dizendo
   // quantos existem, e esta parte diz onde esta o resto.
-  if (txt == resumo && nCelulas > BIB_MAX_LINHAS * colunas()) {
+  if (estado() != EST_ITENS && txt == resumo && nCelulas > BIB_MAX_LINHAS * colunas()) {
     size_t k = strlen(resumo);
     snprintf(resumo + k, sizeof resumo - k, "   ·   %s",
              i18n("o resto na exibição em grade"));
@@ -2419,7 +2428,7 @@ static void biblioteca_desenhar_(Uint32 agora) {
   }
 
   linhas = nLinhas();
-  if (linhas > BIB_MAX_LINHAS) linhas = BIB_MAX_LINHAS;
+  if (estado() != EST_ITENS && linhas > BIB_MAX_LINHAS) linhas = BIB_MAX_LINHAS;
   passoC = passoColuna(); passoL = passoLinha(); gy = gradeY();
   if (ondaArmada) { ondaEm = agora ? agora : 1u; ondaArmada = 0; }
   if (ondaEm && revela_onda_fim(ondaEm, agora)) ondaEm = 0;
@@ -2463,7 +2472,8 @@ static void biblioteca_desenhar_(Uint32 agora) {
         int i = r * nc + c;
         float f, entra, ac, ty;
         if (i >= nCelulas) break;
-        f = (c < BIB_COLUNAS_MAX) ? animFoco[r][c] : 0.0f;
+        f = (r < BIB_MAX_LINHAS && c < BIB_COLUNAS_MAX) ? animFoco[r][c]
+            : (float)focus_indice(&foco, gradeIni() + r, c);
         tex_pedido_fora(fora && f <= 0.01f ? fora : 0);
         // O alvo e a celula em REPOUSO (sem a escala do foco nem a onda), uma
         // vez por celula, recortado a janela da grade.

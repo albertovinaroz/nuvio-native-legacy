@@ -258,6 +258,11 @@ const Stream *stream_item(int i);
 // = nada, e quem chama usa a mascara de badges.h.
 int   stream_selos_ha(const Stream *s);
 float stream_selos_fileira(const Stream *s, float x, float y, float maxW, float h, float tom, float a);
+// A mesma fileira para o que esta TOCANDO (OSD do player): o pacote ativo casado
+// com `texto`, os formatos medidos pelo pipeline ("4K Dolby Vision Dolby Atmos").
+// `medir` = so a largura. 0 = o pacote nao casou nada.
+float stream_selos_medidos(const char *texto, float x, float y, float maxW, float h, float tom,
+                           float a, int medir);
 
 // Indice do stream que o modo automatico escolhe, ou -1 se a lista esta vazia.
 int  stream_automatico(void);

@@ -892,9 +892,7 @@ static int colarArray(char **acum, const char *pagina) {
 
 // `sync_pull_library` inteira, em paginas de CONTALIB_PAGINA, ate uma vir
 // incompleta ou CONTALIB_PAGINAS paginas. Devolve o total de linhas (-1 quando
-// a PRIMEIRA pagina falhou — as seguintes falhando so encurtam a lista, e a
-// lista curta ainda e melhor que nenhuma: o contalib guarda as mais recentes do
-// que chegou).
+// any page fails). An incomplete snapshot must never replace membership.
 static int puxarBiblioteca(int perfil, char **destino) {
   char corpo[160];
   char *acum = NULL, *pag = NULL;
@@ -905,25 +903,25 @@ static int puxarBiblioteca(int perfil, char **destino) {
              perfil, CONTALIB_PAGINA, pagina * CONTALIB_PAGINA);
     c = puxarBlob("sync_pull_library", corpo, pagina ? &pag : &acum);
     if (c < 0) {
-      if (!pagina) return -1;
-      printf("[sync] biblioteca: pagina %d falhou; ficando com %d linhas\n",
-             pagina + 1, total);
-      break;
+      printf("[sync] biblioteca: pagina %d failed; partial snapshot discarded\n", pagina + 1);
+      free(acum); free(pag);
+      return -1;
     }
     if (pagina && pag) {
       if (!colarArray(&acum, pag)) {
-        printf("[sync] biblioteca: pagina %d nao colou; ficando com %d linhas\n",
-               pagina + 1, total);
-        free(pag); pag = NULL;
-        break;
+        printf("[sync] biblioteca: page %d assembly failed; partial snapshot discarded\n", pagina + 1);
+        free(acum); free(pag);
+        return -1;
       }
       free(pag); pag = NULL;
     }
     total += c;
     if (c < CONTALIB_PAGINA) break;
-    if (pagina + 1 == CONTALIB_PAGINAS)
-      printf("[sync] biblioteca: %d linhas baixadas e a conta tem mais; o "
-             "resto nao foi pedido\n", total);
+    if (pagina + 1 == CONTALIB_PAGINAS) {
+      printf("[sync] biblioteca: page cap reached; partial snapshot discarded\n");
+      free(acum);
+      return -1;
+    }
   }
   free(pag);
   if (destino) { free(*destino); *destino = acum; }
@@ -993,6 +991,7 @@ static int copiaBlob(const char *sup, int perfil, int st, char **destino) {
 // devolveu; o retorno e o que fica valendo.
 static int guardarOuCopia(const char *sup, int perfil, int n, char **blob) {
   if (!perfilDoCicloAtual()) return -1;
+  if (n < 0) { free(*blob); *blob = NULL; }
   // Uma pagina posterior pode falhar depois de n linhas chegarem. Essa lista
   // parcial nao substitui a ultima copia boa nem esconde a queda do servidor.
   if (contacache_falha_transitoria(ultimoSt)) {
@@ -1795,7 +1794,21 @@ void sync_passo(unsigned agoraMs) {
   // LOCAL (secao 1.6, regra 2). O que a pessoa tirou e ainda nao saiu da conta
   // fica fora daqui pelo filtro de contalib_aplicar_catalogo.
   if (temBibBlob && bibBlob) {
-    if (contalib_ler_biblioteca(bibBlob) > 0) contalib_aplicar_catalogo();
+    int before = contalib_n(), kept = 0;
+    for (int i = 0; i < before; i++) {
+      const ContaLibItem *old = contalib_item(i);
+      for (const char *p = js_raiz_array(bibBlob); p; p = js_prox(js_fim(p))) {
+        char id[24];
+        if (js_texto(p, js_fim(p), "content_id", id, sizeof id) && !strcmp(old->id, id)) {
+          kept++; break;
+        }
+      }
+    }
+    int accepted = contalib_ler_biblioteca(bibBlob);
+    if (accepted > 0) contalib_aplicar_catalogo();
+    printf("[library-sync] source=account profile=%d effective=%d added=%d removed=%d kept=%d accepted=%d\n",
+           perfilDoCiclo, ajustes_fonte_biblioteca(), accepted > 0 ? accepted - kept : 0,
+           accepted > 0 ? before - kept : 0, accepted > 0 ? kept : before, accepted >= 0);
     free(bibBlob); bibBlob = NULL; temBibBlob = 0;
   }
   spMarcar(SP_BIBLIOTECA);
@@ -1990,7 +2003,25 @@ const char *sync_resumo(void) {
   }
 }
 unsigned    sync_ultimo_ok(void)   { return ultimoOk; }
-void        sync_sujar_progresso(void) { sujoProgresso = 1; }
+// Push only progress during playback; the full catalog sync stays deferred.
+static int pontoEmVoo;
+static struct { int perfil; uint64_t sessao; } pontoPedido;
+static void *empurrarPonto(void *arg) {
+  (void)arg;
+  syncprog_empurrar_sessao(pontoPedido.perfil, pontoPedido.sessao);
+  __atomic_store_n(&pontoEmVoo, 0, __ATOMIC_RELEASE);
+  return NULL;
+}
+void sync_sujar_progresso(void) {
+  sujoProgresso = 1;
+  if (!sessao_logada() || !ajustes_hist_conta() || nuvem_freio_ativo() ||
+      __atomic_exchange_n(&pontoEmVoo, 1, __ATOMIC_ACQUIRE)) return;
+  pontoPedido.perfil = perfis_ativo();
+  pontoPedido.sessao = nv_perfil_sessao_ler();
+  pthread_t fioPonto;
+  if (pthread_create(&fioPonto, NULL, empurrarPonto, NULL) == 0) pthread_detach(fioPonto);
+  else __atomic_store_n(&pontoEmVoo, 0, __ATOMIC_RELEASE);
+}
 // Addon flag state, per account (see addonsAplicar for the merge order):
 //  - CC_ADDONS_TOGGLES, keyed by the ACTIVE profile: each addon the user
 //    toggled, until the account acknowledges that row (PATCH 2xx) or drops it.

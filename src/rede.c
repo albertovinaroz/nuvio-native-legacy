@@ -1243,6 +1243,42 @@ static int   (*curl_getinfo)(void *, int, ...);
 static void  (*curl_reset)(void *);
 static time_t (*curl_getdate_fn)(const char *, const time_t *);
 
+#ifdef NV_TPK
+static void *dnsShare;
+static pthread_mutex_t dnsTrava = PTHREAD_MUTEX_INITIALIZER;
+static void dnsLock(void *c, int data, int access, void *arg) {
+  (void)c; (void)data; (void)access; (void)arg;
+  pthread_mutex_lock(&dnsTrava);
+}
+static void dnsUnlock(void *c, int data, void *arg) {
+  (void)c; (void)data; (void)arg;
+  pthread_mutex_unlock(&dnsTrava);
+}
+static void prepararDns(void *h, const char *ares) {
+  void *(*init)(void);
+  int (*option)(void *, int, ...);
+  int (*cleanup)(void *);
+  void *s;
+  /* #630: c-ares 1.17 uses retrans: in milliseconds, retry: (not
+     timeout:/attempts:). Two rounds at 250/500 ms per nameserver fit
+     the usual 1-2 server setup inside the 2 s connect deadline. Keep
+     nameserver order, dual-stack and explicit operator RES_OPTIONS. */
+  if (ares && !strncmp(ares, "1.17.", 5))
+    setenv("RES_OPTIONS", "retrans:250 retry:2", 0);
+  *(void **)(&init) = dlsym(h, "curl_share_init");
+  *(void **)(&option) = dlsym(h, "curl_share_setopt");
+  *(void **)(&cleanup) = dlsym(h, "curl_share_cleanup");
+  if (!init || !option || !cleanup || !(s = init())) return;
+  /* CURLSHOPT_LOCKFUNC/UNLOCKFUNC/SHARE; CURL_LOCK_DATA_DNS only.
+     Process-lifetime cache survives failed handles and worker exits.
+     Connections and TLS sessions remain private to each worker. */
+  if (option(s, 3, dnsLock) || option(s, 4, dnsUnlock) || option(s, 1, 3)) {
+    cleanup(s); return;
+  }
+  dnsShare = s;
+}
+#endif
+
 // Chamado depois da repeticao existente do GET, diretamente nos demais caminhos.
 // So falha de TRANSPORTE que falhou RAPIDO: conexao recusada (7), aperto de mao
 // TLS que nao fechou (35), resposta vazia (52) e recepcao que caiu (56). O curl
@@ -1312,6 +1348,7 @@ static int    pronto;
 // pedidos do mesmo fio sem partilhar nada entre fios — `curl_easy_*` nao pode
 // ser usado por dois fios ao mesmo tempo, e assim nunca e. `curl_easy_reset`
 // limpa as opcoes do pedido anterior e PRESERVA conexoes, DNS e sessoes TLS.
+// On TPK, opcoesComuns attaches a shared DNS cache across these handles (#630).
 //
 // Bonus: `curl_easy_cleanup` era onde o OpenSSL 1.0 morria (ver
 // prepararOpenSSL); agora ele so roda no fim do fio.
@@ -1558,6 +1595,9 @@ static unsigned long conexaoMs(unsigned long prazoMs) {
   return m < prazoMs ? m : prazoMs;
 }
 static void opcoesComuns(void *c, unsigned long prazoMs) {
+#ifdef NV_TPK
+  if (dnsShare) curl_setopt(c, 10100 /* CURLOPT_SHARE */, dnsShare);
+#endif
   curl_setopt(c, OPT_TIMEOUT_MS, (long)prazoMs);
   curl_setopt(c, OPT_CONNECTTIMEOUT_MS, (long)conexaoMs(prazoMs));
   // O app roda com fios; sem NOSIGNAL a libcurl usa alarmes para o timeout de
@@ -1961,6 +2001,9 @@ static int abrirReal(void) {
                   (v->features & (1 << 7)) ? "threaded" : "no (synchronous)",
                   v->age >= 1 && v->ares ? v->ares : "");
     else printf("[rede] curl_version_info indisponivel\n");
+#ifdef NV_TPK
+    prepararDns(h, v && v->age >= 1 ? v->ares : NULL);
+#endif
     fflush(stdout);
   }
   // DEPOIS do global_init e ANTES de soltar a trava: a partir daqui qualquer fio
@@ -3097,7 +3140,11 @@ typedef struct {
   Balde body;
   int status, valid, overflow, range_headers;
   int64_t start, end, total, requested, limit;
-  volatile int *cancel;
+  volatile int *cancel, *urgent;
+  uint64_t progress_ms;
+  long long progress_bytes;
+  unsigned idle_ms;
+  int *stalled;
 } DtsRange;
 /* Reject values outside int64_t instead of relying on overflowing scanf. */
 static int dtsRangeNumber(const char **text, int64_t *value) {
@@ -3183,8 +3230,18 @@ static size_t dtsRangeBody(void *data, size_t size, size_t count, void *user) {
 static int dtsRangeProgress(void *user, long long dt, long long dn,
                             long long ut, long long un) {
   DtsRange *r = user;
-  (void)dt; (void)dn; (void)ut; (void)un;
-  return r->cancel && __atomic_load_n(r->cancel, __ATOMIC_RELAXED);
+  (void)dt; (void)ut; (void)un;
+  if(r->cancel && __atomic_load_n(r->cancel,__ATOMIC_RELAXED)) return 1;
+  uint64_t now=pedidoAgoraMs();
+  if(dn!=r->progress_bytes) { r->progress_bytes=dn; r->progress_ms=now; }
+  if(r->urgent && r->idle_ms && now>=r->progress_ms &&
+     now-r->progress_ms>=r->idle_ms && __atomic_load_n(r->urgent,__ATOMIC_RELAXED)) {
+    if(r->stalled) *r->stalled=1;
+    printf("[range-stall] start=%lld idleMs=%llu got=%llu\n",(long long)r->requested,
+           (unsigned long long)(now-r->progress_ms),(unsigned long long)r->body.n);
+    fflush(stdout); return 1;
+  }
+  return 0;
 }
 static void *dtsRangeHeaders(const char *raw, int public_only) {
   char *copy, *line, *ctx = NULL;
@@ -3211,12 +3268,14 @@ static void *dtsRangeHeaders(const char *raw, int public_only) {
 /* `final` (8192 bytes, optional) receives the address that answered 206 when
  * at least one redirect was followed, "" otherwise; `cross` says whether that
  * address is on another origin (credential headers were NOT sent to it). */
-char *rede_baixar_trecho64_final(const char *url, const char *headers,
+char *rede_baixar_trecho64_vigiado(const char *url, const char *headers,
                               int64_t start, int64_t end, long *size,
                               int64_t *total, int *status,
-                              volatile int *cancelled, char *final, int *cross) {
+                              volatile int *cancelled, char *final, int *cross,
+                              volatile int *urgent,unsigned idle_ms,int *stalled) {
   char current[8192], range[64], origin[128];
   int hop, public_only = 0, downgraded = 0;
+  if(stalled) *stalled=0;
   if (size) *size = 0;
   if (total) *total = -1;
   if (status) *status = 0;
@@ -3237,6 +3296,7 @@ char *rede_baixar_trecho64_final(const char *url, const char *headers,
     if (cancelled && __atomic_load_n(cancelled, __ATOMIC_RELAXED)) return NULL;
     memset(&r, 0, sizeof r);
     r.requested = start; r.limit = end - start + 1; r.total = -1; r.cancel = cancelled;
+    r.urgent=urgent; r.idle_ms=idle_ms; r.stalled=stalled; r.progress_ms=pedidoAgoraMs();
     c = pegarHandle(current);
     if (!c) return NULL;
     opcoesComuns(c, 15000);
@@ -3299,10 +3359,26 @@ char *rede_baixar_trecho64_final(const char *url, const char *headers,
       if (cross) *cross = public_only;
       return baldeFinal(&r.body);
     }
+    /* Numeric only: identify failed interval, response validation and discarded
+     * partial bytes without exposing URL, request headers or response payload. */
+    if(!cancelled || !__atomic_load_n(cancelled,__ATOMIC_RELAXED)) {
+      printf("[range-http] start=%lld end=%lld curl=%d http=%ld got=%llu "
+             "valid=%d overflow=%d responseStart=%lld responseEnd=%lld total=%lld\n",
+             (long long)start,(long long)end,result,http,(unsigned long long)r.body.n,
+             r.valid,r.overflow,(long long)r.start,(long long)r.end,(long long)r.total);
+      fflush(stdout);
+    }
     free(r.body.p);
     return NULL;
   }
   return NULL;
+}
+char *rede_baixar_trecho64_final(const char *url,const char *headers,
+                              int64_t start,int64_t end,long *size,
+                              int64_t *total,int *status,
+                              volatile int *cancelled,char *final,int *cross) {
+  return rede_baixar_trecho64_vigiado(url,headers,start,end,size,total,status,cancelled,
+                                    final,cross,NULL,0,NULL);
 }
 char *rede_baixar_trecho64_cab(const char *url, const char *headers,
                               int64_t start, int64_t end, long *size,
@@ -3472,12 +3548,23 @@ int rede_fluxo64(const char *u, const char *h, int64_t s, int (*sk)(void *, cons
   if (b) *b = 0;
   return -1;
 }
+char *rede_baixar_trecho64_vigiado(const char *u,const char *h,int64_t s,int64_t e,
+ long *n,int64_t *t,int *st,volatile int *c,char *f,int *x,volatile int *urgent,unsigned idle,int *stalled) {
+ (void)urgent;(void)idle;if(stalled)*stalled=0;
+ return rede_baixar_trecho64_final(u,h,s,e,n,t,st,c,f,x);
+}
 char *rede_baixar_trecho64_cab(const char *u, const char *h, int64_t s, int64_t e, long *n, int64_t *t, int *st, volatile int *c) {
   (void)u; (void)h; (void)s; (void)e; (void)c;
   if (n) *n = 0;
   if (t) *t = -1;
   if (st) *st = 0;
   return NULL;
+}
+char *rede_baixar_trecho64_final(const char *u, const char *h, int64_t s, int64_t e, long *n, int64_t *t, int *st,
+                                 volatile int *c, char *f, int *x) {
+  if (f) f[0] = 0;
+  if (x) *x = 0;
+  return rede_baixar_trecho64_cab(u, h, s, e, n, t, st, c);
 }
 #endif
 

@@ -23,8 +23,9 @@ static int chaveFonte(const ColSource *s, char *dst) {
     if (!id || !id[0]) id = s->base;
   }
   if (!id || !id[0]) return 0;
-  int n = snprintf(dst, FIL_CHAVE, "%s_%s_%s", id, s->type, s->catId);
-  return n > 0 && n < FIL_CHAVE;
+  addons_catalogo_chave(id, s->base[0] ? s->base : addons_base_por_id(id),
+                        s->type, s->catId, dst, FIL_CHAVE);
+  return dst[0] != 0;
 }
 
 // #294: WHICH PROFILE THE ACCOUNT COLLECTIONS IN MEMORY BELONG TO. On a switch

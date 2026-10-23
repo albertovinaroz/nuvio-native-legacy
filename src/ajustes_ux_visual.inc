@@ -178,6 +178,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_PLR_CLASSIF: return "aj_shield";
     case AJ_TELA_ABERTURA: return "aj_clapperboard";
     case AJ_ABERTURA_ADDON: return "aj_clapperboard";
+    case AJ_PLR_FORMATO: return "aj_monitor-play";
     case AJ_ABERTURA_FUNDO: case AJ_ABERTURA_ESTILO: return "aj_clapperboard";
     case AJ_EP_TAMANHO: return "aj_layout-dashboard";
     case AJ_HERO_SINOPSE_TAM: return "aj_layout-dashboard";
@@ -309,7 +310,7 @@ static const char *ajVisualIcone(int op) {
     case AJ_AVISO_LEGAL: return "aj_file-text";
     case AJ_VER_REGISTRO: return "aj_scroll-text";
     case AJ_ENVIAR_LOG: return "aj_send";
-    case AJ_ENVIO_AUTO: return "aj_scroll-text";
+    case AJ_ENVIO_AUTO: case AJ_LOG_REDE: return "aj_scroll-text";
     case AJ_LOG_DESTINO: return "aj_send";
     case AJ_GPU_EFEITOS: return "aj_zap";
     default: return "aj_settings-2";

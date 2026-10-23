@@ -5,7 +5,8 @@ static int desktop(int display, SDL_DisplayMode *mode) {
   (void)display; mode->w = desktopW; mode->h = desktopH; return 0;
 }
 #include "../src/gpunivel.h"
-static int supported(void) { return 1; }
+static int gpuSupported = 1;
+static int supported(void) { return gpuSupported; }
 #define gpun_upscale_suportado supported
 #define SDL_GetDesktopDisplayMode desktop
 #include "../src/ajustes.c"
@@ -29,6 +30,15 @@ int main(int argc, char **argv) {
     if (TELA[i].tipo == IT_OPC && TELA[i].op == AJ_AMPLIAR_UI) row = i;
   assert(row >= 0 && visivel(row) == eligible);
   assert(ajustes_ampliar_app() == eligible);
+  valor[AJ_RESOLUCAO] = RES_720;
+  assert(ajOpcaoDisponivel(AJ_AMPLIAR_UI) == eligible);
+  assert(visivel(row) == eligible);
+  assert(!inativa(AJ_AMPLIAR_UI));
+  assert(ajustes_720p() && ajustes_ampliar_app() == eligible);
+  gpuSupported = 0;
+  assert(inativa(AJ_AMPLIAR_UI));
+  assert(ajustes_720p() && ajustes_ampliar_app() == eligible);
+  gpuSupported = 1;
   valor[AJ_AMPLIAR_UI] = 0;
   assert(ajustes_ampliar_app() == 0);
   ajustes_ui_saida(1920, 1080);

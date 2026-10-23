@@ -632,7 +632,7 @@ static int sCanalAdd(int f, const GCru *c) {
       nc++;
       if (sCats[i].fonte == f && !strcmp(sCats[i].nome, grupo)) found = 1;
     }
-    if (sNCanais >= sTeto || sNCanais >= GUIACORTE_MAX_CANAL ||
+    if (sNCanais >= sTeto ||
         (!found && nc >= GUIACORTE_MAX_CAT)) {
       sLtvF[f].cortada = 1; return 0;
     }
@@ -661,7 +661,7 @@ static int sCanalAdd(int f, const GCru *c) {
   // Full descriptions belong to display slots, not the 30000-candidate scan.
   // Overflow winners retain playback metadata and may publish without a description.
   int slot = quem == GF_TROCA ? velho : sNCanais;
-  g->desc = slot < sTeto && slot < GUIACORTE_MAX_CANAL ?
+  g->desc = slot < sTeto ?
     ltv_dupn(&sArena, c->desc, c->desc ? strnlen(c->desc, 1024) : 0) : "";
   g->epgId = ltv_dup(&sArena, c->epgId);
   g->tvgNome = ltv_dup(&sArena, c->tvgNome);
@@ -1448,7 +1448,7 @@ static int sCotaCompleta(void) {
       if (nc == GUIACORTE_MAX_CAT) continue;
       visiveis[nc++] = g->cat;
     }
-    if (++n >= sTeto || n >= GUIACORTE_MAX_CANAL) return 1;
+    if (++n >= sTeto) return 1;
   }
   return 0;
 }
@@ -2292,7 +2292,7 @@ static void selecionarSecoes(void) {
   for (int i = 0, j; i < sNCanais; i++) {
     GCanal *g = &sCanais[i];
     for (j = 0; j < nc && visiveis[j] != g->cat; j++) {}
-    if ((j == nc && nc >= GUIACORTE_MAX_CAT) || w >= sTeto || w >= GUIACORTE_MAX_CANAL) {
+    if ((j == nc && nc >= GUIACORTE_MAX_CAT) || w >= sTeto) {
       sLtvF[g->fonte].cortada = 1; continue;
     }
     if (j == nc) visiveis[nc++] = g->cat;

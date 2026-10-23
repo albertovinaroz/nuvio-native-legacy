@@ -176,6 +176,82 @@ int mkvfix_montar(const uint32_t *id, const int64_t *pos, int n, unsigned char *
   return k == len ? entrou : 0;
 }
 
+// ---- legendas de texto escondidas da TV (ver mkvfix.h) ----------------------
+#define ID_TRACKS     0x1654AE6Bu
+#define ID_TRACKENTRY 0xAEu
+#define ID_TRACKTYPE  0x83u
+#define ID_CODECID    0x86u
+
+static int codecTexto(const char *c) {
+  return !strncmp(c, "S_TEXT/", 7) || !strcmp(c, "S_ASS") || !strcmp(c, "S_SSA");
+}
+static int codecAss(const char *c) {
+  return !strcmp(c, "S_TEXT/ASS") || !strcmp(c, "S_TEXT/SSA") || !strcmp(c, "S_ASS") || !strcmp(c, "S_SSA");
+}
+
+int mkvfix_legendas_texto(const unsigned char *b, long n, int64_t *off, int max) {
+  int ui = 0, us = 0, k = 0, ass = 0;
+  int64_t s, o, ini;
+  if (lerId(b, n, &ui) != ID_TRACKS) return -1;
+  s = lerTam(b + ui, n - ui, &us);
+  if (s < 0 || ui + us + s > n) return -1;
+  ini = ui + us; o = 0;
+  while (o < s) {
+    int a = 0, c = 0;
+    uint32_t id = lerId(b + ini + o, (long)(s - o), &a);
+    int64_t s2;
+    if (!id) return -1;
+    s2 = lerTam(b + ini + o + a, (long)(s - o - a), &c);
+    if (s2 < 0 || o + a + c + s2 > s) return -1;
+    if (id == ID_TRACKENTRY) {
+      const unsigned char *v = b + ini + o + a + c;
+      int64_t q = 0, tipoEm = -1; uint64_t tipo = 0; char codec[40] = "";
+      while (q < s2) {
+        int x = 0, y = 0;
+        uint32_t i3 = lerId(v + q, (long)(s2 - q), &x);
+        int64_t s3;
+        if (!i3) break;
+        s3 = lerTam(v + q + x, (long)(s2 - q - x), &y);
+        if (s3 < 0 || q + x + y + s3 > s2) break;
+        if (i3 == ID_TRACKTYPE && s3 <= 8) {
+          tipo = lerUint(v + q + x + y, s3);
+          tipoEm = s3 == 1 ? (int64_t)(v - b) + q + x + y : -1;   // so o valor de 1 byte se troca
+        }
+        else if (i3 == ID_CODECID && s3 < (int64_t)sizeof codec) {
+          memcpy(codec, v + q + x + y, (size_t)s3); codec[s3] = 0;
+        }
+        q += x + y + s3;
+      }
+      // TrackType 0x11 = legenda, num byte: vira 0x20 sem mexer em tamanho.
+      if (tipo == MKVFIX_TIPO_LEGENDA && codecTexto(codec)) {
+        if (codecAss(codec)) ass = 1;
+        if (tipoEm >= 0 && k < max) off[k++] = tipoEm;
+      }
+    }
+    o += a + c + s2;
+  }
+  return ass ? k : 0;
+}
+
+int64_t mkvfix_tracks_pos(const unsigned char *b, long n, const MkvfixCab *c) {
+  int64_t p = mkvfix_entrada(c->id, c->pos, c->n, ID_TRACKS), o;
+  if (p >= 0) return c->segIni + p;
+  // Sem entrada no SeekHead: os elementos do topo, em ordem, dentro do trecho.
+  o = c->segIni;
+  while (o < n) {
+    int ui = 0, us = 0;
+    uint32_t id = lerId(b + o, (long)(n - o), &ui);
+    int64_t s;
+    if (!id) return -1;
+    if (id == ID_TRACKS) return o;
+    if (id == 0x1F43B675u) return -1;   // Cluster: os dados comecaram, nao ha Tracks antes
+    s = lerTam(b + o + ui, (long)(n - o - ui), &us);
+    if (s < 0) return -1;
+    o += ui + us + s;
+  }
+  return -1;
+}
+
 // ---- servidor ----------------------------------------------------------------
 #if defined(__EMSCRIPTEN__) || defined(NV_ANDROID) || defined(NV_MKVFIX_SEM_REDE)   // tests: no network
 void mkvfix_sondar(const char *u, const char *c, const char *o) { (void)u; (void)c; (void)o; }
@@ -183,6 +259,7 @@ void mkvfix_sondar_arquivo(const char *u, const char *c, int usenet, int item, i
   (void)usenet; (void)item; (void)file; mkvfix_sondar(u, c, NULL);
 }
 int  mkvfix_estado(void) { return MKVFIX_NADA; }
+int  mkvfix_ocultas(void) { return 0; }
 int  mkvfix_url(char *out, size_t n) { (void)out; (void)n; return 0; }
 int  mkvfix_e_url(const char *u) { (void)u; return 0; }
 void mkvfix_parar(void) {}
@@ -210,6 +287,7 @@ void mkvfix_parar(void) {}
 #define MF_VIVOS      8          // conexoes do player ao mesmo tempo
 #define MF_PARADO_MS  25000L     // o CDN sem mandar byte por isto: desiste da conexao
 #define MF_CAB        4096
+#define MF_TRACKS_MAX (4L * 1024 * 1024)   // Tracks maior que isto: nao esconde (nunca visto: 243 KB)
 
 typedef struct {
   unsigned id;
@@ -223,6 +301,8 @@ typedef struct {
   int64_t total;
   int64_t regiao; int regiaoN;
   unsigned char conserto[512];
+  int64_t oculta[MKVFIX_OCULTAS];  // byte (absoluto) do valor do TrackType de cada legenda escondida
+  int nOculta;                     // publicado antes do estado final
   atomic_int estado;
   volatile int cancelar;
   atomic_int refs;
@@ -254,6 +334,13 @@ static Sess *sessPegarAtual(void) {
   if (s) atomic_fetch_add(&s->refs, 1);
   pthread_mutex_unlock(&G);
   return s;
+}
+
+// O player so le pelo servidor quando ha o que trocar: o SeekHead (seek) ou
+// TrackEntry de legenda escondidas (mkvfix.h).
+static int servivel(Sess *s) {
+  int e = atomic_load(&s->estado);
+  return s->total > 0 && (e == MKVFIX_PRECISA || (e != MKVFIX_SONDANDO && s->nOculta > 0));
 }
 
 static const char *nomeId(uint32_t id) {
@@ -297,15 +384,53 @@ static unsigned char *ler(Sess *s, int64_t ini, int64_t fim, long *n, int64_t *t
   return b;
 }
 
+// A legenda de texto de um arquivo com ASS/SSA: le o Tracks e marca as
+// TrackEntry a esconder da TV (mkvfix.h). Antes do estado final.
+static void sondaLegendas(Sess *s, const unsigned char *b, long n, const MkvfixCab *c, int64_t total) {
+  int64_t tp = mkvfix_tracks_pos(b, n, c), off[MKVFIX_OCULTAS];
+  long m = 0; int st = 0, k, ui = 0, us = 0;
+  int64_t tam;
+  unsigned char *q = NULL;
+  const unsigned char *t;
+  if (tp < 0 || total <= 0 || tp >= total) {
+    printf("[mkvfix] subtitles: no Tracks element found, subtitle tracks left to the TV\n"); fflush(stdout); return;
+  }
+  // O Tracks quase sempre ja veio no primeiro trecho; senao, um Range so dele.
+  if (tp + 12 <= n && lerId(b + tp, n - tp, &ui) == ID_TRACKS &&
+      (tam = lerTam(b + tp + ui, (long)(n - tp - ui), &us)) >= 0 && tp + ui + us + tam <= n) {
+    t = b + tp; m = (long)(ui + us + tam);
+  } else {
+    q = ler(s, tp, tp + 15 < total ? tp + 15 : total - 1, &m, NULL, &st);
+    if (s->cancelar || !q || lerId(q, m, &ui) != ID_TRACKS || (tam = lerTam(q + ui, m - ui, &us)) < 0 ||
+        ui + us + tam > MF_TRACKS_MAX) {
+      printf("[mkvfix] subtitles: Tracks not readable (HTTP %d), subtitle tracks left to the TV\n", st);
+      fflush(stdout); free(q); return;
+    }
+    free(q);
+    q = ler(s, tp, tp + ui + us + tam - 1, &m, NULL, &st);
+    if (s->cancelar || !q) { free(q); return; }
+    t = q;
+  }
+  k = mkvfix_legendas_texto(t, m, off, MKVFIX_OCULTAS);
+  if (k > 0) {
+    for (int i = 0; i < k; i++) s->oculta[i] = tp + off[i];
+    s->nOculta = k;
+    printf("[mkvfix] subtitles: %d text subtitle track(s) with ASS/SSA hidden from the TV player (the app draws them); "
+           "the file plays through the local server\n", k);
+  } else if (k < 0) printf("[mkvfix] subtitles: Tracks element unreadable, subtitle tracks left to the TV\n");
+  fflush(stdout);
+  free(q);
+}
+
 static void *fioSonda(void *u) {
   Sess *s = u;
   MkvfixCab c;
   long n = 0, m = 0;
-  int st = 0, nSh2, nTodas = 0, entrou;
+  int st = 0, nSh2, nTodas = 0, entrou = 0, est = MKVFIX_NORMAL;
   int64_t total = -1, sh2, cues;
   uint32_t id2[MKVFIX_ENTRADAS], ids[MKVFIX_ENTRADAS * 2 + 1];
   int64_t pos2[MKVFIX_ENTRADAS], poss[MKVFIX_ENTRADAS * 2 + 1];
-  char a[24], b2[24], d[24];
+  char a[24], b2[24], d[24], msg[420] = "";
   uint64_t t0 = agoraMs();
   unsigned char *b = ler(s, 0, MF_JANELA - 1, &n, &total, &st), *q = NULL;
   if (s->cancelar) goto fim;
@@ -314,16 +439,18 @@ static void *fioSonda(void *u) {
     definirEstado(s, MKVFIX_FALHOU, x); goto fim;
   }
   if (!mkvfix_ler_inicio(b, n, &c)) { definirEstado(s, MKVFIX_NORMAL, "not a Matroska file: nothing to do"); goto fim; }
-  if (c.regiao < 0) { definirEstado(s, MKVFIX_NORMAL, "no SeekHead at the start of the Segment: left to the player"); goto fim; }
+  // Daqui em diante o indice (abaixo) e as legendas (sondaLegendas) sao
+  // independentes: o estado so e publicado no fim, com as duas respostas.
+  if (c.regiao < 0) { snprintf(msg, sizeof msg, "no SeekHead at the start of the Segment: left to the player"); goto legendas; }
   if (mkvfix_entrada(c.id, c.pos, c.n, ID_CUES) >= 0) {
-    char x[96]; snprintf(x, sizeof x, "the first SeekHead lists the Cues (%d entries): nothing to fix (%u ms)",
-                         c.n, (unsigned)(agoraMs() - t0));
-    definirEstado(s, MKVFIX_NORMAL, x); goto fim;
+    snprintf(msg, sizeof msg, "the first SeekHead lists the Cues (%d entries): nothing to fix (%u ms)",
+             c.n, (unsigned)(agoraMs() - t0));
+    goto legendas;
   }
   sh2 = mkvfix_entrada(c.id, c.pos, c.n, ID_SEEKHEAD);
   if (sh2 < 0 || total <= 0) {
-    char x[120]; snprintf(x, sizeof x, "the first SeekHead (%d entries) has no Cues and no second SeekHead: no index to point to", c.n);
-    definirEstado(s, MKVFIX_SEM_INDICE, x); goto fim;
+    snprintf(msg, sizeof msg, "the first SeekHead (%d entries) has no Cues and no second SeekHead: no index to point to", c.n);
+    est = MKVFIX_SEM_INDICE; goto legendas;
   }
   // O fim do pedido nunca passa do arquivo (o segundo SeekHead mora no fim).
   q = ler(s, c.segIni + sh2, c.segIni + sh2 + 4095 < total ? c.segIni + sh2 + 4095 : total - 1, &m, NULL, &st);
@@ -332,15 +459,18 @@ static void *fioSonda(void *u) {
   cues = nSh2 > 0 ? mkvfix_entrada(id2, pos2, nSh2, ID_CUES) : -1;
   free(q); q = NULL;
   if (cues < 0) {
-    char x[120]; snprintf(x, sizeof x, "second SeekHead %s: no Cues listed", nSh2 < 0 ? "unreadable" : "read");
-    definirEstado(s, nSh2 < 0 ? MKVFIX_FALHOU : MKVFIX_SEM_INDICE, x); goto fim;
+    snprintf(msg, sizeof msg, "second SeekHead %s: no Cues listed", nSh2 < 0 ? "unreadable" : "read");
+    est = nSh2 < 0 ? MKVFIX_FALHOU : MKVFIX_SEM_INDICE; goto legendas;
   }
   // Confere que ha um Cues de verdade la (nao se aponta o player para lixo).
   q = ler(s, c.segIni + cues, c.segIni + cues + 15 < total ? c.segIni + cues + 15 : total - 1, &m, NULL, &st);
   if (s->cancelar) goto fim;
   { int ui = 0;
-    if (!q || m < 4 || lerId(q, m, &ui) != ID_CUES) {
-      definirEstado(s, MKVFIX_SEM_INDICE, "the second SeekHead points to Cues, but no Cues element is there"); goto fim;
+    int achou = q && m >= 4 && lerId(q, m, &ui) == ID_CUES;
+    free(q); q = NULL;
+    if (!achou) {
+      snprintf(msg, sizeof msg, "the second SeekHead points to Cues, but no Cues element is there");
+      est = MKVFIX_SEM_INDICE; goto legendas;
     } }
   // Ordem: o Cues primeiro, depois o que o 1o SeekHead ja tinha (o caminho
   // para o segundo), depois o resto do segundo, enquanto couber.
@@ -349,25 +479,31 @@ static void *fioSonda(void *u) {
   for (int i = 0; i < nSh2; i++) { ids[nTodas] = id2[i]; poss[nTodas++] = pos2[i]; }
   if (c.regiaoN > (int)sizeof s->conserto ||
       !(entrou = mkvfix_montar(ids, poss, nTodas, s->conserto, c.regiaoN))) {
-    char x[120]; snprintf(x, sizeof x, "the SeekHead region (%d B) has no room for a Cues entry", c.regiaoN);
-    definirEstado(s, MKVFIX_SEM_INDICE, x); goto fim;
+    snprintf(msg, sizeof msg, "the SeekHead region (%d B) has no room for a Cues entry", c.regiaoN);
+    est = MKVFIX_SEM_INDICE; goto legendas;
   }
-  s->total = total; s->regiao = c.regiao; s->regiaoN = c.regiaoN;
+  s->regiao = c.regiao; s->regiaoN = c.regiaoN;
   mb(a, sizeof a, c.segIni + sh2); mb(b2, sizeof b2, c.segIni + cues); mb(d, sizeof d, total);
-  { char x[420];
-    snprintf(x, sizeof x, "the first SeekHead (region %d B at %lld, %d entr%s) only points to a second SeekHead at %s, "
-             "which lists the Cues at %s (file %s). The TV player does not follow it, so seeks go through the "
-             "local fix: %d-byte region rewritten with %d entries (%u ms)",
-             c.regiaoN, (long long)c.regiao, c.n, c.n == 1 ? "y" : "ies", a, b2, d, c.regiaoN, entrou,
-             (unsigned)(agoraMs() - t0));
-    definirEstado(s, MKVFIX_PRECISA, x); }
-  { char lista[160] = ""; size_t k = 0;
+  snprintf(msg, sizeof msg, "the first SeekHead (region %d B at %lld, %d entr%s) only points to a second SeekHead at %s, "
+           "which lists the Cues at %s (file %s). The TV player does not follow it, so seeks go through the "
+           "local fix: %d-byte region rewritten with %d entries (%u ms)",
+           c.regiaoN, (long long)c.regiao, c.n, c.n == 1 ? "y" : "ies", a, b2, d, c.regiaoN, entrou,
+           (unsigned)(agoraMs() - t0));
+  est = MKVFIX_PRECISA;
+legendas:
+  sondaLegendas(s, b, n, &c, total);
+  if (s->cancelar) goto fim;
+  s->total = total;
+  definirEstado(s, est, msg);
+  if (est == MKVFIX_PRECISA) {
+    char lista[160] = ""; size_t k = 0;
     uint32_t idN[MKVFIX_ENTRADAS]; int64_t posN[MKVFIX_ENTRADAS];
     int nN = mkvfix_ler_seekhead(s->conserto, s->regiaoN, idN, posN, MKVFIX_ENTRADAS);
     for (int i = 0; i < nN && k < sizeof lista - 16; i++)
       k += (size_t)snprintf(lista + k, sizeof lista - k, "%s%s", k ? ", " : "", nomeId(idN[i]));
     printf("[mkvfix] new SeekHead lists: %s\n", lista);
-    fflush(stdout); }
+    fflush(stdout);
+  }
 fim:
   free(b); free(q);
   sessSoltar(s);
@@ -417,6 +553,14 @@ int mkvfix_estado(void) {
   e = atual ? atomic_load(&atual->estado) : MKVFIX_NADA;
   pthread_mutex_unlock(&G);
   return e;
+}
+
+int mkvfix_ocultas(void) {
+  int k = 0;
+  pthread_mutex_lock(&G);
+  if (atual && atomic_load(&atual->estado) != MKVFIX_SONDANDO) k = atual->nOculta;
+  pthread_mutex_unlock(&G);
+  return k;
 }
 
 void mkvfix_parar(void) {
@@ -492,6 +636,10 @@ static int ralo(void *u, const char *dados, size_t n) {
     a = e->prox > e->s->regiao ? e->prox : e->s->regiao;
     z = e->prox + (int64_t)k < e->s->regiao + e->s->regiaoN ? e->prox + (int64_t)k : e->s->regiao + e->s->regiaoN;
     if (a < z) memcpy(tmp + (a - e->prox), e->s->conserto + (a - e->s->regiao), (size_t)(z - a));
+    // Legenda escondida: o TrackType dela vira "controle" (mkvfix.h).
+    for (int i = 0; i < e->s->nOculta; i++)
+      if (e->s->oculta[i] >= e->prox && e->s->oculta[i] < e->prox + (int64_t)k)
+        tmp[e->s->oculta[i] - e->prox] = MKVFIX_TIPO_ESCONDIDA;
     if (!enviar(e->sock, tmp, k, e->s)) { e->falhouEnvio = 1; return 0; }
     e->prox += (int64_t)k; dados += k; n -= k;
   }
@@ -572,7 +720,7 @@ static void *atender(void *u) {
   if (sscanf(b, "%7s %255s", met, alvo) != 2) goto sai;
   s = sessPegarAtual();
   // GET /<token>/v.mkv — so a sessao atual e so ja consertada.
-  if (!s || atomic_load(&s->estado) != MKVFIX_PRECISA || alvo[0] != '/' ||
+  if (!s || !servivel(s) || alvo[0] != '/' ||
       strncmp(alvo + 1, s->token, strlen(s->token)) || alvo[1 + strlen(s->token)] != '/') {
     responder(sock, 404, "Not Found", 0); goto sai;
   }
@@ -615,13 +763,14 @@ static void *atender(void *u) {
     break;
   }
   { int64_t len = e.prox - e.ini;
-    int tocou = e.ini < s->regiao + s->regiaoN && e.prox > s->regiao;
+    int tocou = s->regiaoN > 0 && e.ini < s->regiao + s->regiaoN && e.prox > s->regiao;
+    for (int i = 0; i < s->nOculta; i++) if (s->oculta[i] >= e.ini && s->oculta[i] < e.prox) tocou = 2;
     // Uma linha por pedido curto (cabecalho, Cues) e por pedido que tocou a
     // regiao; os longos (o video andando) so no fim, se pararem sem fim.
     if (tocou || (e.fim - e.ini) < 4 * 1024 * 1024 || e.nr <= 3)
       printf("[mkvfix] #%u %s bytes %lld-%lld: sent %lld in %u ms%s\n", e.nr, e.parcial ? "Range" : "whole",
              (long long)e.ini, (long long)e.fim, (long long)len, (unsigned)(agoraMs() - t0),
-             tocou ? " (SeekHead rewritten)" : e.falhouEnvio ? " (player closed)" : "");
+             tocou == 2 ? " (subtitle tracks hidden)" : tocou ? " (SeekHead rewritten)" : e.falhouEnvio ? " (player closed)" : "");
     fflush(stdout); }
 sai:
   shutdown(sock, SHUT_RDWR);
@@ -675,7 +824,7 @@ static int subir(void) {
 int mkvfix_url(char *out, size_t n) {
   int ok = 0;
   pthread_mutex_lock(&G);
-  if (atual && atomic_load(&atual->estado) == MKVFIX_PRECISA && subir()) {
+  if (atual && servivel(atual) && subir()) {
     snprintf(out, n, "http://127.0.0.1:%d/%s/v.mkv", porta, atual->token);
     ok = 1;
   }

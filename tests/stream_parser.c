@@ -46,6 +46,22 @@ int main(void) {
   assert(strstr(v[0].descricao,"\n") && v[0].dolbyVision && v[0].dolbyAtmos);
   assert(!strcmp(v[1].descricao,"Show 1080p\n1.4 GB") && v[1].altura==1080);
   free(v);
+  // Plugin bridge fields are siblings; nested metadata must not name a stream.
+  // Official Nuvio keeps title and description separately (toPluginStream).
+  count=stream_extrair("{\"streams\":["
+    "{\"url\":\"https://example.invalid/bridge\","
+    "\"meta\":{\"name\":\"Error getting meta. Please try again later.\"},"
+    "\"name\":\"4K\",\"title\":\"CastleTVProvider HDR10 DDP 5.1\",\"description\":\"2.1 GB\"},"
+    "{\"url\":\"https://example.invalid/nested\","
+    "\"meta\":{\"name\":\"Error getting meta. Please try again later.\"},"
+    "\"title\":\"HDHub4u 1080p\"}]}","CNCVerse Bridge",&v);
+  assert(count==2);
+  assert(!strcmp(v[0].rotulo,"4K"));
+  assert(!strcmp(v[0].descricao,"CastleTVProvider HDR10 DDP 5.1\n2.1 GB"));
+  assert(v[0].altura==2160 && v[0].tamanhoMB>2000);
+  assert(!strcmp(v[1].rotulo,"CNCVerse Bridge"));
+  assert(!strcmp(v[1].descricao,"HDHub4u 1080p"));
+  free(v);
   // #499: only explicit add-on signals claim cache; negatives win conflicts.
   count=stream_extrair("{\"streams\":["
     "{\"url\":\"https://example.invalid/1\",\"name\":\"⚡️ AIOStreams FHD\"},"

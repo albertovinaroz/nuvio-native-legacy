@@ -351,7 +351,11 @@ __attribute__((unused)) static void publicarCacheDisco(void) {
 #ifdef __EMSCRIPTEN__
 #define NV_CACHE_DISCO_MAX (48L * 1024L * 1024L)
 #else
+#ifdef NV_ANDROID
+#define NV_CACHE_DISCO_MAX (64L * 1024L * 1024L)
+#else
 #define NV_CACHE_DISCO_MAX (512L * 1024L * 1024L)
+#endif
 #define NV_CACHE_DISCO_RESERVA (128UL * 1024UL * 1024UL)
 // TETO PROPORCIONAL AO ESPACO, no LG (22/09/2026). 512 MB fixos era mais da
 // metade do que a C9 tinha: 497 MB de arte em 3309 arquivos numa particao de
@@ -644,6 +648,7 @@ static void soltarCpu(int falhas);
 static int pressaoAtiva(void);
 static int pressaoSevera(void);
 static volatile int pressaoPlay = 100;   // tex_pressao_reproducao (abaixo)
+static int pressaoPlayLigada;
 // webOS/.tpk: faixa do piso de reproducao, alimentada pelo relatorio de 3 s
 // (tex_memoria_livre). 100 = memoria de sobra, sem piso. O Android nao a usa:
 // la o piso e fixo por MemTotal (tex_pressao_play_pct).
@@ -862,6 +867,7 @@ sai:
 // Escrito pelo fio da JNI, lido pelo fio de desenho; int de 32 bits, sem trava.
 #define NV_TEX_PRESSAO_MS 30000u
 static volatile int pressaoPct = 100;
+static int pressaoLivrePct = 100; // Sampled MemAvailable pressure lasts until recovery.
 static volatile Uint32 pressaoAte;
 // REPRODUCAO NO ANDROID: o trim (abaixo) expira em 30 s porque onTrimMemory
 // avisa na transicao; o video toca por horas e a arte da home fica residente
@@ -872,20 +878,31 @@ static volatile Uint32 pressaoAte;
 // com o video; no webOS/.tpk so com a TV sem memoria (tex_memoria_livre).
 // `pressaoPlay` foi declarado junto das forward declarations (a poda a le).
 static int pressaoAtiva(void) {
-  if (pressaoPct >= 100) return 0;
+  if (pressaoPct >= 100) return pressaoLivrePct < 100;
   if ((int)(SDL_GetTicks() - pressaoAte) >= 0) {
     pressaoPct = 100;
-    printf("[tex] pressao de memoria passou: teto de volta a %ld MB\n", orcamento / (1024L * 1024L));
+    printf("[tex] timed memory trim expired\n");
     fflush(stdout);
-    return 0;
+    return pressaoLivrePct < 100;
   }
   return 1;
 }
-static int pressaoSevera(void) { return pressaoAtiva() && pressaoPct <= 25; }
+static int pressaoSevera(void) {
+  return pressaoAtiva() && (pressaoPct <= 25 || pressaoLivrePct <= 25);
+}
 static long limiteBytes(void) {
-  long lim = pressaoAtiva() ? orcamento / 100 * pressaoPct : orcamento;
+  (void)pressaoAtiva(); // Expire timed trims before combining the caps.
+  int pct = pressaoPct < pressaoLivrePct ? pressaoPct : pressaoLivrePct;
+  long lim = pct < 100 ? orcamento / 100 * pct : orcamento;
   if (pressaoPlay < 100 && orcamento / 100 * pressaoPlay < lim)
     lim = orcamento / 100 * pressaoPlay;
+  // Pressure must never make the current screen exceed its own cap.
+  if (lim < orcamento) {
+    long tela = 0;
+    for (int i = 0; i < nMax; i++)
+      if (quente(&itens[i])) tela += bytesTextura(&itens[i]);
+    if (tela > lim) lim = tela;
+  }
   return lim;
 }
 // % do teto que fica enquanto um video esta aberto (reproduzindo ou nao:
@@ -907,6 +924,7 @@ int tex_pressao_play_pct(void) {
 #endif
 }
 void tex_pressao_reproducao(int ligada) {
+  pressaoPlayLigada = ligada;
   int pct = ligada ? tex_pressao_play_pct() : 100;
   if (pct == pressaoPlay) return;
   pressaoPlay = pct;
@@ -983,7 +1001,9 @@ static void podar(void) {
 // webOS/.tpk nao tem onTrimMemory: o relatorio de 3 s (main.c) passa o
 // MemAvailable. #415 (LG G4, webOS 9, MemTotal 1965 MB): 127 MB de arte
 // residente com o video 4K em tela cheia (tela=0), e o webOS fechou o app com
-// 92 MB livres. Abaixo de 150 MB o teto vai a 25%; abaixo de 300, a 50%. O
+// 92 MB livres.
+// The 150/300 MiB thresholds scale down below 1965 MiB RAM; recovery needs
+// another 60 MiB (also scaled). Sampled pressure does not use the trim timer.
 // MESMO relatorio arma a faixa do piso de reproducao (pressaoPlayMin): abrir
 // video com a TV apertada ja comeca com o cache no piso — o pico de alocacao
 // do pipeline acontece ANTES de a memoria cair de vez, e esperar era deixar
@@ -991,12 +1011,21 @@ static void podar(void) {
 // ligado; afrouxar so no fechar (video aberto nao recupera arte sob pressao
 // intermitente). A home redecodifica do disco ao voltar.
 void tex_memoria_livre(long livreMb) {
-  int nivel;
   if (livreMb < 0) return;
-  nivel = livreMb < 150 ? 80 : livreMb < 300 ? 20 : 0;
-  pressaoPlayMin = livreMb < 150 ? 20 : livreMb < 300 ? (orcMemTotal >= 3500 ? 35 : 20) : 100;
-  if (pressaoPlayMin < pressaoPlay) pressaoPlay = pressaoPlayMin;
-  if (nivel && !(pressaoAtiva() && pressaoPct <= tex_pressao_pct(nivel))) tex_pressao_memoria(nivel);
+  long ram = orcMemTotal > 0 && orcMemTotal < 1965 ? orcMemTotal : 1965;
+  long duro = 150 * ram / 1965, baixo = 300 * ram / 1965;
+  long folga = 60 * ram / 1965;
+  int pct = livreMb < duro ? 25 : livreMb < baixo ? 50 : 100;
+  // Stay in each band until available memory clears its recovery margin.
+  if (pressaoLivrePct == 25 && livreMb < duro + folga) pct = 25;
+  else if (pressaoLivrePct < 100 && pct == 100 && livreMb < baixo + folga) pct = 50;
+  if (pct != pressaoLivrePct) {
+    pressaoLivrePct = pct;
+    printf("[tex] MemAvailable=%ld MB: texture cap at %d%%\n", livreMb, pct);
+    fflush(stdout);
+  }
+  pressaoPlayMin = pct == 25 ? 20 : pct == 50 ? (orcMemTotal >= 3500 ? 35 : 20) : 100;
+  if (pressaoPlayLigada && pressaoPlayMin < pressaoPlay) pressaoPlay = pressaoPlayMin;
 }
 void tex_aliviar(void) {
   tex_pressao_memoria(80);
@@ -4449,6 +4478,7 @@ static void uplAbortar(void) {
 
 int tex_bombear(int max_por_quadro) {
   int subiu = 0, trabalhou = 0, porClasse[3] = {0};
+  unsigned char blocked[MAX_ITENS_ABS] = {0};
   // UMA LINHA POR SESSAO com o caminho da piramide e a GPU: e o que separa,
   // num log de usuario, "lixo com mip=gpu" de "lixo com mip=cpu".
   { static int logado;
@@ -4462,7 +4492,7 @@ int tex_bombear(int max_por_quadro) {
     } }
   Uint64 inicio = SDL_GetPerformanceCounter();
   double freq = (double)SDL_GetPerformanceFrequency();
-  for (int passo = 0; passo < max_por_quadro + 16; passo++) {
+  for (int passo = 0; passo < max_por_quadro + nMax + 16; passo++) {
     if (trabalhou &&
         (double)(SDL_GetPerformanceCounter() - inicio) * 1000.0 / freq >=
             NV_TEX_UPLOAD_BUDGET_MS)
@@ -4525,7 +4555,7 @@ int tex_bombear(int max_por_quadro) {
     char uploadPath[512] = "";
     SDL_LockMutex(mtx);
     for (int i = 0; i < nMax; i++)
-      if (itens[i].estado == DECODIFICADO && itens[i].sup && itens[i].urgente > nivel) {
+      if (!blocked[i] && itens[i].estado == DECODIFICADO && itens[i].sup && itens[i].urgente > nivel) {
         alvo = i; nivel = itens[i].urgente;
         if (nivel >= 2) break;
       }
@@ -4539,6 +4569,20 @@ int tex_bombear(int max_por_quadro) {
           (trabalhou && (classe == 2 || gasto + uplPiorMs[classe] > NV_TEX_UPLOAD_BUDGET_MS))) {
         SDL_UnlockMutex(mtx);
         break;
+      }
+      // Pruning cannot free current/last-frame artwork. Reserve room before
+      // allocating on the GPU; keep the decoded result queued if only hot
+      // textures remain, so drawing never triggers another download/decode.
+      long extra = bytesTexturaMip(s->w, s->h,
+                                  temPiramide(s->w, s->h, itens[alvo].card));
+      if (itens[alvo].tex) extra -= bytesTextura(&itens[alvo]);
+      long lim = limiteBytes();
+      while (bytesUsados + extra > lim)
+        if (despejar(0) < 0) break;
+      if (bytesUsados + extra > lim) {
+        blocked[alvo] = 1;  // Retry next frame; smaller uploads may still fit.
+        SDL_UnlockMutex(mtx);
+        continue;
       }
       sup = s;
       filaEm = itens[alvo].filaUploadEm; itens[alvo].filaUploadEm = 0;

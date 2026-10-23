@@ -96,6 +96,8 @@ int addons_consulta_filme(const AddonsConsulta *consulta, const char *id,
                           int (*cancelado)(void *), void *ctx);
 void addons_consulta_liberar(AddonsConsulta *consulta);
 const char *addons_base(int i);   // URL base, sem /manifest.json
+void addons_catalogo_chave(const char *id, const char *base, const char *tipo,
+                           const char *catalogo, char *dst, unsigned tam);
 const char *addons_id_manifesto(int i);   // "id" do manifesto; "" ate a sonda ler
 const char *addons_nome_por_id(const char *id);   // nome de exibicao; "" se nao ha
 const char *addons_base_por_id(const char *idManifesto);   // "" ate a sonda conhecer o id

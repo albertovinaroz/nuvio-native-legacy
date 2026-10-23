@@ -66,6 +66,14 @@ void android_baixar_registro(const char *arquivo, const char *sucesso, const cha
   (*env)->DeleteLocalRef(env, act);
 }
 
+JNIEXPORT void JNICALL
+Java_space_nuvio_nativelegacy_NuvioActivity_nativeCheckpoint(JNIEnv *env, jobject act) {
+  (void)env; (void)act;
+  SDL_Event e = {0};
+  e.type = SDL_APP_WILLENTERBACKGROUND;
+  SDL_PushEvent(&e);
+}
+
 #ifdef NV_TOUCH_UI
 static SDL_atomic_t toqueCancelEvento;
 
@@ -136,7 +144,14 @@ static void *espelho(void *arg) {
   (void)arg;
   while ((n = read(fdLeitura, buf, sizeof buf)) > 0) {
     ssize_t i;
-    if (fdArquivo >= 0) { ssize_t off = 0; while (off < n) { ssize_t w = write(fdArquivo, buf + off, (size_t)(n - off)); if (w <= 0) break; off += w; } }
+    if (fdArquivo >= 0) {
+      /* Keep a bounded current log even during days of idle diagnostics. */
+      off_t at = lseek(fdArquivo, 0, SEEK_CUR);
+      if (at >= 0 && at + n > (2L << 20)) {
+        ftruncate(fdArquivo, 0); lseek(fdArquivo, 0, SEEK_SET);
+      }
+      ssize_t off = 0; while (off < n) { ssize_t w = write(fdArquivo, buf + off, (size_t)(n - off)); if (w <= 0) break; off += w; }
+    }
     for (i = 0; i < n; i++) {
       if (buf[i] == '\n' || nl + 1 >= sizeof linha) {
         linha[nl] = 0;
@@ -192,7 +207,7 @@ static void drenarNaQueda(void) {
 }
 
 static void armarRelatorDeQueda(void) {
-  const char *d = getenv("NUVIO_DADOS");
+  const char *d = getenv("NUVIO_CACHE");
   char arq[600];
   int api = android_get_device_api_level();
   if (!d || !d[0]) return;
@@ -223,6 +238,21 @@ void android_iniciar(void) {
 // composta pelo SurfaceFlinger no espaco FISICO; se o plano de graficos da TV
 // aceitar, a UI sai em 4K de verdade. O que a TV concedeu aparece na linha
 // `janela=... drawable=...` do main.c.
+#include "androidcache.h"
+void android_limpar_cache(void) {
+  nv_android_cache_clear();
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act = (jobject)SDL_AndroidGetActivity();
+  if (!env || !act) return;
+  jclass cls = (*env)->GetObjectClass(env, act);
+  jmethodID m = cls ? (*env)->GetMethodID(env, cls, "limparCache", "()V") : NULL;
+  if (m) (*env)->CallVoidMethod(env, act, m);
+  if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
+  if (fdArquivo >= 0) { ftruncate(fdArquivo, 0); lseek(fdArquivo, 0, SEEK_SET); }
+}
+
 int android_hdr_interface(int ativa) {
   JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
   jobject act = (jobject)SDL_AndroidGetActivity();
@@ -253,6 +283,21 @@ int android_pedir_superficie(int w, int h) {
   (*env)->DeleteLocalRef(env, act);
   printf("[4k] android: superficie %dx%d %s\n", w, h, ok ? "concedida" : "NAO veio (segue o tamanho da tela)");
   fflush(stdout);
+  return ok;
+}
+
+int android_preparar_apk(const char *caminho) {
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject act = (jobject)SDL_AndroidGetActivity();
+  if (!env || !act || !caminho) return 0;
+  jclass cls = (*env)->GetObjectClass(env, act);
+  jmethodID m = cls ? (*env)->GetMethodID(env, cls, "prepararApk", "(Ljava/lang/String;)Z") : NULL;
+  jstring js = (*env)->NewStringUTF(env, caminho);
+  int ok = m && js && (*env)->CallBooleanMethod(env, act, m, js);
+  if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionClear(env); ok = 0; }
+  if (js) (*env)->DeleteLocalRef(env, js);
+  if (cls) (*env)->DeleteLocalRef(env, cls);
+  (*env)->DeleteLocalRef(env, act);
   return ok;
 }
 

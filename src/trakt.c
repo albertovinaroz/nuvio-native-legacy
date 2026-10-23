@@ -15,6 +15,9 @@
 #include "traktscrobble.h"
 #include "traktult.h"
 #include "metaep.h"
+#include "simkl.h"
+
+extern int simkl_e_a_seguir(const char *) NV_PERFIL_OPCIONAL;
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -591,10 +594,10 @@ static int enfeitar(CatItem *d, const char *tipo, uint64_t sessao) {
   // medido 2,1 s no Mac com paralelismo, e pior: se o Cinemeta falhava o
   // item SUMIA da fileira (compactacao). Metahub e deterministico pelo tt.
   arte_metahub_preencher(d);
-  // Id de addon de anime ("kitsu:41370"): o Cinemeta nao o conhece, e o corte
-  // no primeiro ':' pedia /meta/series/kitsu.json. Fica com o que o registro
-  // trouxe (sem arte, o item nao entra na fileira, como sempre).
-  if (strncmp(d->imdb, "tt", 2)) return d->poster[0] != 0;
+  // Cinemeta only understands IMDb. Keep confirmed Simkl next-up entries
+  // with their title even when the provider has no artwork for a fallback ID.
+  if (strncmp(d->imdb, "tt", 2))
+    return d->poster[0] || (d->titulo[0] && simkl_e_a_seguir && simkl_e_a_seguir(d->imdb));
   snprintf(serie, sizeof serie, "%s", d->imdb);
   dp = strchr(serie, ':');
   if (dp) *(char *)dp = 0;
@@ -2183,7 +2186,7 @@ static int listaNucleo(const char *qual, CatItem **pv, int *cap, int cresce,
         snprintf(url, sizeof url, "https://api.trakt.tv/sync/%s/%s", qual, tipo);
       if (!historicoPedidoAtual(pedido)) break;
       corpo = provedorGet(url, 25, cab, NULL, &proxima, pagina);
-      if (!corpo) break;
+      if (!corpo) { free(anterior); return -1; }
       if (anterior && !strcmp(anterior, corpo)) { free(corpo); break; }
       paginas++;
       p = strchr(corpo, '[');
@@ -2257,7 +2260,7 @@ int trakt_lista(const char *qual, CatItem *saida, int max) {
   if (max <= 0) return 0;
   n = listaNucleo(qual, &v, &cap, 0, max, &pag, &total);
   listaLog(qual, n, total, pag, max);
-  return n;
+  return n < 0 ? 0 : n;
 }
 
 int trakt_lista_cresc(const char *qual, CatItem **saida, int max) {

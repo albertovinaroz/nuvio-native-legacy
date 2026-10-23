@@ -27,6 +27,9 @@ int  plugins_disponivel(void);           // motor + transporte neste alvo
 int  plugins_ligado(void);
 void plugins_definir_ligado(int ligado);
 unsigned plugins_geracao(void);          // muda a cada troca de conta/perfil
+// Current target's last foreground round. Cut counts include unstarted scrapers.
+typedef struct { int enfileirados, terminados, cortados; } PlugResumo;
+void plugins_resumo(const char *id, const char *tipo, PlugResumo *saida);
 
 // Repositorios (para a tela e o sync).
 typedef struct { char url[600]; char nome[96]; int ativo; char tipo[24]; } PlugRepo;

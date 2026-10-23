@@ -9,6 +9,8 @@ int debrid_tb_link(int usenet, int item, int file, char *dst, unsigned n) {
   if (n) dst[0] = 0;
   return 0;
 }
+int ajustes_audio_offset_ms(void) { return 0; }
+void dts_remux_set_audio_offset_ms(int ms) { (void)ms; }
 const char *i18n(const char *s) { return s; }
 const char *ling_nome(const char *s) { return s; }
 const char *ling_audio(void) { return ""; }
@@ -147,5 +149,14 @@ int main(void) {
   nv_tpk_video_evento(9,1347033,0);nv_tpk_video_evento(9,-1,0);passo(1);
   assert(recon.pendente && recon.alvo==1347.033);
   passo(3000);prontoHost();passo(1);assert(busca==1347033 && pausa==1);video_parar();
-  puts("ok: pausa/buffer/seek, retomada na posicao, limite e cancelamento");
+  // EOS wins over a queued recovery and late polling failure.
+  video_definir_reconexao(1);video_tocar("http://test/movie");prontoHost();
+  posicao=3599750;passo(1);nv_tpk_video_evento(9,-1,0);passo(1);
+  antes=aberturas;stops=paradas;
+  nv_tpk_video_evento(4,0,0);nv_tpk_video_evento(9,-1,0);passo(30000);
+  assert(video_terminou() && video_pos()==3600.0 && !video_reconectando() && !video_falhou());
+  assert(aberturas==antes && paradas==stops);
+  video_buscar(3500);assert(!video_terminou() && busca==3500000);
+  video_parar();
+  puts("ok: pause/buffer/seek, bounded recovery, EOS cancels reconnect");
 }

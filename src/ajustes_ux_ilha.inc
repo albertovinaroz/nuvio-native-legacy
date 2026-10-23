@@ -2179,6 +2179,7 @@ static void ajDesenharPlugins(const AjPluginsVista *v) {
 void ajustes_ui_fundo(void) { ajFundo(); }
 void ajustes_ui_arte(int n) { ajArteFundoN = n; }
 void ajustes_ui_ilha(GfxRect r, float raioPx, int modal) { ajIlha(r, raioPx, 1, modal); }
+void ajustes_ui_ilha_a(GfxRect r, float raioPx, int modal, float a) { ajIlha(r, raioPx, a, modal); }
 void ajustes_ui_veu(void) { ajVeuModal(); }
 float ajustes_ui_kicker(const char *s, float x, float y, float a) { return ajKicker(s, x, y, a); }
 float ajustes_ui_meta(const char *k, const char *v, float x, float y, float w) { return ajMeta(k, v, x, y, w, 1); }

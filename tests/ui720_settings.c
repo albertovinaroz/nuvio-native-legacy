@@ -28,7 +28,7 @@ void ui720_settings(int width, int height, int app, int weak, int sourceHeight) 
   panelW = width; panelH = height;
   valor[AJ_AMPLIAR_UI] = app;
   valor[AJ_RESOLUCAO] = sourceHeight == 720 ? RES_720 : RES_1080;
-  assert(ajOpcaoDisponivel(AJ_AMPLIAR_UI) == (width >= 3840 && height >= 2160 && sourceHeight != 720));
+  assert(ajOpcaoDisponivel(AJ_AMPLIAR_UI) == (width >= 3840 && height >= 2160));
   assert(inativa(AJ_AMPLIAR_UI) == weak);
   assert(ajustes_ampliar_app() == (app && width >= 3840 && height >= 2160));
   assert(somenteDesteAparelho(AJ_AMPLIAR_UI));
@@ -53,9 +53,8 @@ void ui720_settings(int width, int height, int app, int weak, int sourceHeight) 
   for (int i = 0; i < AJ_N_TELA; i++)
     if (TELA[i].tipo == IT_OPC && TELA[i].op == AJ_AMPLIAR_UI) row = i;
   assert(row >= 0);
-  // 720p hides the row: the TV scaler already does the whole upscale for free.
-  assert(ajustes_teste_focar_opcao(width >= 3840 && height >= 2160 && sourceHeight != 720 && !weak ? AJ_AMPLIAR_UI : AJ_RESOLUCAO));
-  assert(visivel(row) == (width >= 3840 && height >= 2160 && sourceHeight != 720));
+  assert(ajustes_teste_focar_opcao(width >= 3840 && height >= 2160 && !weak ? AJ_AMPLIAR_UI : AJ_RESOLUCAO));
+  assert(visivel(row) == (width >= 3840 && height >= 2160));
   ajustes_teste_layout(1);
   for (int n = 0; n < 90; n++) ajustes_atualizar(1.f / 60, 10000);
 }

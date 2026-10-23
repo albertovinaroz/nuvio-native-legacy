@@ -15,6 +15,7 @@
 
 void *tpk_gl_criar(void);
 void  tpk_gl_trocar(void);
+int   tpk_gl_intervalo(int intervalo);
 void  tpk_tamanho(int *w, int *h);
 void  tpk_pedir_saida(int w, int h);
 int   tpk_gl_atributo(SDL_GLattr a, int *v);
@@ -25,7 +26,7 @@ int   tpk_gl_atributo(SDL_GLattr a, int *v);
 #define SDL_GL_CreateContext(w)            ((void)(w), (SDL_GLContext)tpk_gl_criar())
 #define SDL_GL_DeleteContext(c)            ((void)(c))
 #define SDL_GL_SwapWindow(w)               ((void)(w), tpk_gl_trocar())
-#define SDL_GL_SetSwapInterval(i)          ((void)(i), 0)
+#define SDL_GL_SetSwapInterval(i)          tpk_gl_intervalo(i)
 #define SDL_GL_SetAttribute(a, v)          ((void)(a), (void)(v), 0)
 #define SDL_GL_GetAttribute(a, v)          tpk_gl_atributo((a), (v))
 #define SDL_GL_GetDrawableSize(w, a, b)    ((void)(w), tpk_tamanho((a), (b)))

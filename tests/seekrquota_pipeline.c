@@ -6,6 +6,7 @@
 #include <SDL2/SDL.h>
 #include <assert.h>
 #include <stdio.h>
+int perftv_enabled, perftv_uploads;
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>

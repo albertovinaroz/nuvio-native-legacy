@@ -1565,7 +1565,7 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida) {
     // Nao tocar URL cortada; sem url e sem hash nao ha o que tocar.
     if ((s.infoHash[0] || !strncmp(s.url, "http", 4)) &&
         strlen(s.url) < sizeof s.url - 1) {
-      js_texto(p, fim, "name", s.rotulo, sizeof s.rotulo);
+      js_texto_raiz_em(p, fim, "name", s.rotulo, sizeof s.rotulo);
       // So o name da PROPRIA fonte, inteiro, conta para o FHD (#402): o
       // rotulo de 192 bytes pode cortar "...FHDx" em "...FHD", e o provedor
       // entra no lugar do name que falta mais abaixo.
@@ -1602,7 +1602,14 @@ int stream_extrair(const char *json, const char *provedor, Stream **saida) {
           js_texto_raiz_em(bh, fim, "videoHash", s.videoHash, sizeof s.videoHash);
           lerProxyHeaders(bh, fim, s.cabecalhos, sizeof s.cabecalhos);
         } }
-      if (!s.descricao[0]) snprintf(s.descricao, sizeof s.descricao, "%s", titulo);
+      // Preserve both sibling fields, as official Nuvio does. Title often
+      // carries the provider/release while description carries size/language.
+      if (titulo[0] && strcmp(titulo, s.descricao)) {
+        char descricao[sizeof s.descricao];
+        snprintf(descricao, sizeof descricao, "%s", s.descricao);
+        snprintf(s.descricao, sizeof s.descricao, "%s%s%s", titulo,
+                 descricao[0] ? "\n" : "", descricao);
+      }
       // Antes do provedor entrar no rotulo: o nome do addon nao diz idioma.
       idiomasLer(&s, titulo, p, fim);
       if (!s.rotulo[0]) snprintf(s.rotulo, sizeof s.rotulo, "%s", provedor);

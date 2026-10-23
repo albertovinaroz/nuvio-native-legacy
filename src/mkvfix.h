@@ -22,6 +22,28 @@
 // arquivo normal nunca passa por aqui. O link do CDN vencido: o servidor pede
 // de novo ao link de origem e segue.
 //
+// LEGENDAS DE TEXTO ESCONDIDAS DA TV (dono, 20/10/2026, S01E03 Itsuki Gang).
+//
+// O Tizen.Multimedia.Player decodifica SEMPRE a faixa de legenda padrao do MKV,
+// mesmo com o app desenhando a legenda (o .tpk nao tem como desligar a
+// legenda nativa: "legenda nativa desligada" so parava de escrever a faixa).
+// Num evento ASS de desenho vetorial gigante (\p1 de 71 KB com \move, aos
+// 22:15.08, nas duas faixas do arquivo; o resto do episodio nao passa de 640
+// bytes por evento) o player da TV trava inteiro: o relogio para ~2 s depois,
+// GetPlayPosition leva 5 s e o app via "conexao caiu". Mesma temporada inteira,
+// sempre no mesmo quadro, com legenda desligada ou externa. O AVPlay (outros
+// apps, NuvioTVSmart) silencia o motor de legenda da TV e passa.
+//
+// O CONSERTO: o mesmo servidor local serve o arquivo byte a byte, mas o
+// TrackType de cada legenda de texto vira "controle" (0x11 -> 0x20: um byte,
+// mesmo tamanho, nenhum deslocamento muda). A TV nao cria a faixa e ignora os
+// blocos dela; o app segue lendo e desenhando a legenda pelo link original
+// (mkvass). So arquivos com faixa ASS/SSA passam por aqui.
+// Medido no corte do S01E03 (dono, 20/10): GStreamer (base do player nativo
+// do Tizen) e FFmpeg entregam video e audio identicos ao original, byte a
+// byte. Trocar a TrackEntry inteira por Void NAO serve: o FFmpeg acusa
+// "Invalid track number" e joga fora o resto do Cluster (metade do video).
+//
 // Nunca vai para log: link, cabecalhos, token.
 #ifndef NV_MKVFIX_H
 #define NV_MKVFIX_H
@@ -58,6 +80,18 @@ int64_t mkvfix_entrada(const uint32_t *id, const int64_t *pos, int n, uint32_t a
 // couberem; repetidas pelo id ficam de fora) e um Void no resto. Devolve
 // quantas entradas entraram (0 = nao coube nem a primeira).
 int  mkvfix_montar(const uint32_t *id, const int64_t *pos, int n, unsigned char *out, int len);
+// O elemento Tracks inteiro (cabecalho incluso) em `b`. Quando ha ao menos uma
+// legenda ASS/SSA, devolve quantas legendas de TEXTO (S_TEXT/*, S_ASS, S_SSA)
+// esconder e, em `off`, a posicao (relativa a `b`) do byte de VALOR do
+// TrackType de cada uma (hoje 0x11; o servidor manda 0x20). 0 = nada a
+// esconder; -1 = nao e Tracks / esta cortado.
+#define MKVFIX_TIPO_LEGENDA  0x11
+#define MKVFIX_TIPO_ESCONDIDA 0x20
+#define MKVFIX_OCULTAS 16
+int  mkvfix_legendas_texto(const unsigned char *b, long n, int64_t *off, int max);
+// Posicao absoluta do Tracks a partir do inicio do arquivo ja lido (pelo
+// SeekHead ou pelos elementos do topo dentro de `n`); -1 se nao achou.
+int64_t mkvfix_tracks_pos(const unsigned char *b, long n, const MkvfixCab *c);
 
 // ---- o servidor (fio do app) ----------------------------------------------
 // Sonda `url` (o link que o player tocou) num fio. `origem` (pode ser NULL ou
@@ -67,8 +101,12 @@ void mkvfix_sondar(const char *url, const char *cabecalhos, const char *origem);
 // Selected-file refresh identity is copied before the probe thread starts.
 void mkvfix_sondar_arquivo(const char *url, const char *cabecalhos, int usenet, int item, int file);
 int  mkvfix_estado(void);
+// Legendas de texto que a sessao atual esconde da TV (0 = nenhuma ou sondando).
+// > 0: o arquivo deve tocar pelo servidor (mkvfix_url) desde a abertura.
+int  mkvfix_ocultas(void);
 // O endereco local do arquivo consertado (sobe o servidor na primeira vez).
-// 0 se a sessao atual nao e MKVFIX_PRECISA ou o servidor nao subiu.
+// 0 se a sessao atual nao e MKVFIX_PRECISA nem esconde legendas, ou o servidor
+// nao subiu.
 int  mkvfix_url(char *out, size_t n);
 int  mkvfix_e_url(const char *url);
 // Fim do video: cancela a sessao e as conexoes (o servidor fica de pe).
