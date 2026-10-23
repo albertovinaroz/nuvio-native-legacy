@@ -1407,9 +1407,11 @@ void faixas_atualizar(float dt, Uint32 agora) {
     }
   }
   // Buraco na colheita (ver legOverlayBuraco). So com o overlay desenhando de
-  // fato: falha e recuo ja tem o "TV por enquanto" deles.
+  // fato: falha e recuo ja tem o "TV por enquanto" deles. NUNCA ASS (2.0.8,
+  // #638): o decodificador de legenda da TV trava a reproducao nelas, e o
+  // mkvfix as esconde da TV; o buraco fica so para texto simples e PGS.
   if (legOverlay >= 0 && !legOverlayTV && !legOverlayRetomar && !mkvass_nogo() &&
-      agora - legBuracoTroca >= BURACO_TROCA_MS) {
+      !ehAss(video_legenda(legOverlay)) && agora - legBuracoTroca >= BURACO_TROCA_MS) {
     double cob = mkvass_coberto_ate(), pos = video_pos();
     if (!legOverlayBuraco && cob >= 0 && cob < 1e8 && pos >= cob - 0.5) {
       legOverlayBuraco = 1; legBuracoTroca = agora;
